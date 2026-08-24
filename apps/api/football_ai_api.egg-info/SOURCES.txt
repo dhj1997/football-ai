@@ -1,0 +1,14 @@
+pyproject.toml
+app/__init__.py
+app/config.py
+app/data.py
+app/database.py
+app/main.py
+app/prediction.py
+app/provider.py
+football_ai_api.egg-info/PKG-INFO
+football_ai_api.egg-info/SOURCES.txt
+football_ai_api.egg-info/dependency_links.txt
+football_ai_api.egg-info/requires.txt
+football_ai_api.egg-info/top_level.txt
+tests/test_prediction.py

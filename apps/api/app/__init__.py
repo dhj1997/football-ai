@@ -1,0 +1,2 @@
+"""Football AI API package."""
+
