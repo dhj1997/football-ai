@@ -13,6 +13,7 @@ from .prediction import predict
 from .evidence_provider import ApiFootballEvidenceProvider
 from .provider import ApiFootballProvider
 from .schedule_provider import TheSportsDbProvider
+from .schedule_sync import ScheduleSyncService
 
 
 app = FastAPI(title="足球赛前分析 API", version="0.1.0")
@@ -27,6 +28,12 @@ evidence_provider = ApiFootballEvidenceProvider(
     settings.thesportsdb_base_url,
 )
 schedule_provider = TheSportsDbProvider(settings.thesportsdb_api_key, settings.thesportsdb_base_url)
+schedule_sync = ScheduleSyncService(
+    schedule_provider,
+    repository,
+    settings.schedule_lookback_days,
+    settings.schedule_cache_ttl_minutes,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,13 +72,14 @@ def health() -> dict:
         mode = "cached"
     elif settings.use_demo_data:
         mode = "demo"
-    elif provider.configured:
+    elif schedule_provider.configured:
         mode = "empty"
     else:
         mode = "unconfigured"
     return {
         "status": "ok",
-        "provider_configured": provider.configured,
+        "provider_configured": schedule_provider.configured,
+        "evidence_provider_configured": evidence_provider.configured,
         "schedule_provider": settings.schedule_provider,
         "schedule_provider_configured": schedule_provider.configured,
         "mode": mode,
@@ -80,12 +88,13 @@ def health() -> dict:
 
 
 @app.get("/api/fixtures")
-def fixtures(
+async def fixtures(
     date_filter: Annotated[Literal["today", "tomorrow", "history"], Query(alias="date")] = "today",
     league: Literal["all", "epl", "laliga", "csl"] = "all",
 ) -> dict:
     """List cached fixtures for one browse view."""
 
+    sync_state = await schedule_sync.ensure_fresh()
     now = datetime.now(CHINA_TZ).date()
     start_date: str | None
     end_date: str | None
@@ -96,10 +105,16 @@ def fixtures(
     else:
         start_date = None
         end_date = (now - timedelta(days=1)).isoformat()
+    all_rows = repository.list_fixtures(start_date, end_date)
     league_key = None if league == "all" else league
-    rows = repository.list_fixtures(start_date, end_date, league_key)
+    rows = all_rows if league_key is None else [row for row in all_rows if row["league_key"] == league_key]
     if date_filter == "history":
         rows.reverse()
+
+    league_counts = {
+        key: sum(1 for row in all_rows if row["league_key"] == key)
+        for key in schedule_provider.LEAGUE_IDS
+    }
 
     sync = repository.fixture_sync()
     if not rows and not sync and settings.use_demo_data:
@@ -113,16 +128,25 @@ def fixtures(
         if league_key:
             rows = [item for item in rows if item["league_key"] == league_key]
         mode = "demo"
-    elif sync:
+    elif rows:
         mode = "cached"
-    elif provider.configured:
+    elif sync:
+        mode = "empty"
+    elif sync_state["status"] == "failed":
+        mode = "error"
+    elif schedule_provider.configured:
         mode = "empty"
     else:
         mode = "unconfigured"
     return {
         "items": rows,
         "mode": mode,
-        "provider_configured": provider.configured,
+        "provider_configured": schedule_provider.configured,
+        "evidence_provider_configured": evidence_provider.configured,
+        "schedule_provider": settings.schedule_provider,
+        "schedule_provider_configured": schedule_provider.configured,
+        "sync_status": sync_state["status"],
+        "league_counts": league_counts,
         "last_synced_at": sync["synced_at"] if sync else None,
     }
 
@@ -133,7 +157,19 @@ def fixture_detail(fixture_id: str) -> dict:
 
     fixture = _fixture_or_404(fixture_id)
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
-    return {"fixture": fixture, "context": context, "prediction": repository.latest(fixture_id)}
+    for side in ("home", "away"):
+        team = fixture[f"{side}_team"]
+        profile = context["teams"].setdefault(side, {})
+        profile["name"] = profile.get("name") or team["name"]
+        profile["original_name"] = profile.get("original_name") or team.get("original_name") or team["name"]
+        profile["logo"] = profile.get("logo") or team.get("logo")
+        profile["venue"] = profile.get("venue") or fixture.get("venue")
+    return {
+        "fixture": fixture,
+        "context": context,
+        "prediction": repository.latest(fixture_id),
+        "capabilities": {"evidence_sync": evidence_provider.configured},
+    }
 
 
 @app.get("/api/fixtures/{fixture_id}/predictions/latest")
@@ -185,25 +221,13 @@ async def sync_fixtures() -> dict:
 
     if not schedule_provider.configured:
         raise HTTPException(status_code=409, detail="请先配置免费赛程数据源；当前没有真实赛程缓存")
-    today = datetime.now(CHINA_TZ).date()
-    start_date = today - timedelta(days=settings.schedule_lookback_days)
-    end_date = today + timedelta(days=1)
     try:
         if settings.schedule_provider != "thesportsdb":
             raise RuntimeError(f"不支持的赛程数据源: {settings.schedule_provider}")
-        rows = await schedule_provider.fixtures(start_date, end_date)
+        result = await schedule_sync.force_refresh()
     except Exception as error:
         raise HTTPException(
             status_code=502,
             detail=f"{settings.schedule_provider} 同步失败：{error}",
         ) from error
-    synced_at = datetime.now(UTC).replace(microsecond=0).isoformat()
-    repository.replace_fixtures(start_date.isoformat(), end_date.isoformat(), rows, synced_at)
-    return {
-        "status": "synced",
-        "item_count": len(rows),
-        "request_count": len(provider.LEAGUE_IDS),
-        "from": start_date.isoformat(),
-        "to": end_date.isoformat(),
-        "synced_at": synced_at,
-    }
+    return {"status": "synced", **result, "synced_at": result["last_synced_at"]}

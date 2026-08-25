@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     thesportsdb_api_key: str = "123"
     thesportsdb_base_url: str = "https://www.thesportsdb.com/api/v1/json"
     schedule_lookback_days: int = 1
+    schedule_cache_ttl_minutes: int = 60
 
     @property
     def sqlite_path(self) -> str:

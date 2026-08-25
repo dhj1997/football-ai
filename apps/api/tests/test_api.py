@@ -1,7 +1,7 @@
 """HTTP-level coverage for the assembled fixture workflow."""
 
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 TEST_DATABASE = Path("test_football_ai.db")
@@ -34,7 +34,7 @@ def seed_real_fixture() -> dict:
         fixture["fixture_date"],
         fixture["fixture_date"],
         [fixture],
-        "2026-08-24T10:00:00+00:00",
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
     )
     return fixture
 
@@ -50,6 +50,8 @@ def test_fixture_list_and_detail_are_consistent() -> None:
     detail = detail_response.json()
     assert detail["fixture"]["id"] == fixture["id"]
     assert detail["context"]["odds"] is None
+    assert detail["context"]["teams"]["home"]["name"] == fixture["home_team"]["name"]
+    assert detail["capabilities"]["evidence_sync"] is provider.configured
     assert fixture_response.json()["mode"] == "cached"
 
 
@@ -91,5 +93,5 @@ def test_sync_persists_provider_fixtures(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["item_count"] == 1
-    assert response.json()["request_count"] == 3
+    assert response.json()["request_count"] == 9
     assert repository.fixture("api-123") is not None

@@ -4,7 +4,9 @@ export type LeagueFilter = "all" | "epl" | "laliga" | "csl";
 export interface Team {
   provider_id?: number;
   name: string;
+  original_name?: string;
   code: string;
+  logo?: string | null;
 }
 
 export interface RecentMatch {
@@ -139,4 +141,5 @@ export interface FixtureDetail {
   fixture: Fixture;
   context: EvidenceContext;
   prediction: Prediction | null;
+  capabilities: { evidence_sync: boolean };
 }

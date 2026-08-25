@@ -22,12 +22,13 @@ import {
   Users,
 } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { fetchFixtureDetail, fetchFixtures } from "@/lib/api";
 import type { DateFilter, Fixture, FixtureDetail, LeagueFilter, LineupPlayer, Prediction, RecentMatch, SquadPlayer, TeamProfile } from "@/lib/types";
 
-type DataMode = "cached" | "demo" | "empty" | "unconfigured";
+type DataMode = "cached" | "demo" | "empty" | "error" | "unconfigured";
+type SyncStatus = "fresh" | "updated" | "stale" | "failed" | "unconfigured";
 
 const dateTabs: Array<{ key: DateFilter; label: string }> = [
   { key: "today", label: "今日" },
@@ -104,6 +105,9 @@ function ParsedScoreline({ score }: { score: string }) {
 }
 
 function TeamMark({ team, tone }: { team: Fixture["home_team"]; tone: "home" | "away" }) {
+  if (team.logo) {
+    return <Image className={`team-mark team-badge ${tone}`} src={team.logo} alt="" width={28} height={28} unoptimized />;
+  }
   return <span className={`team-mark ${tone}`} aria-hidden="true">{team.code.slice(0, 3)}</span>;
 }
 
@@ -225,7 +229,8 @@ function LineupColumn({ teamName, formation, players }: { teamName: string; form
 }
 
 function TeamLogo({ profile, team, tone }: { profile: TeamProfile; team: Fixture["home_team"]; tone: "home" | "away" }) {
-  return profile.logo ? <Image className={`team-logo ${tone}`} src={profile.logo} alt={`${team.name}队徽`} width={46} height={46} unoptimized /> : <TeamMark team={team} tone={tone} />;
+  const logo = profile.logo ?? team.logo;
+  return logo ? <Image className={`team-logo ${tone}`} src={logo} alt={`${team.name}队徽`} width={46} height={46} unoptimized /> : <TeamMark team={team} tone={tone} />;
 }
 
 const positionLabels: Record<string, string> = {
@@ -416,6 +421,7 @@ function ProbabilityPanel({ prediction, fixture }: { prediction: Prediction; fix
 function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, actionRef, onPredict, onSyncEvidence }: { detail: FixtureDetail; operatorMode: boolean; running: boolean; syncingEvidence: boolean; success: Prediction | null; actionRef: React.RefObject<HTMLButtonElement | null>; onPredict: () => void; onSyncEvidence: () => void }) {
   const { fixture, context, prediction } = detail;
   const realEvidencePending = !fixture.is_demo && !context.synced_at;
+  const canSyncEvidence = detail.capabilities.evidence_sync;
   return (
     <aside className="detail-panel">
       <div className="match-summary">
@@ -430,8 +436,8 @@ function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, 
 
       {operatorMode && fixture.status !== "finished" && (
         <div className="operator-actions">
-          <div><strong>{realEvidencePending ? "真实赛前证据尚未同步" : prediction ? "生成新预测版本" : "这场比赛尚未预测"}</strong><small>{realEvidencePending ? "当前只完成真实赛程，暂不使用演示证据生成判断" : context.lineup.confirmed ? "确认首发已纳入，可以生成最终赛前版" : "首发未确认，将生成初步预测"}</small></div>
-          <button className="icon-button secondary" title="同步这场比赛的赛前数据" aria-label="同步赛前数据" onClick={onSyncEvidence} disabled={syncingEvidence}>{syncingEvidence ? <LoaderCircle className="spin" size={18} /> : <RefreshCw size={18} />}</button>
+          <div><strong>{realEvidencePending ? canSyncEvidence ? "真实赛前证据尚未同步" : "赛前证据源未配置" : prediction ? "生成新预测版本" : "这场比赛尚未预测"}</strong><small>{realEvidencePending ? canSyncEvidence ? "赛程与双方身份已就绪，等待拉取近期状态、伤停和赔率" : "赛程与双方身份已就绪；近期状态、伤停和赔率暂不可用" : context.lineup.confirmed ? "确认首发已纳入，可以生成最终赛前版" : "首发未确认，将生成初步预测"}</small></div>
+          <button className="icon-button secondary" title={canSyncEvidence ? "同步这场比赛的赛前数据" : "请先配置 API-Football"} aria-label="同步赛前数据" onClick={onSyncEvidence} disabled={syncingEvidence || !canSyncEvidence}>{syncingEvidence ? <LoaderCircle className="spin" size={18} /> : <RefreshCw size={18} />}</button>
           <button ref={actionRef} className="primary-action" onClick={onPredict} disabled={running || realEvidencePending} aria-describedby={success ? "prediction-success" : undefined}>
             {running ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}
             {running ? "计算中" : realEvidencePending ? "先同步证据" : "发起预测"}
@@ -446,7 +452,15 @@ function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, 
         </div>
       )}
 
-      <AnalysisSnapshot detail={detail} />
+      {context.synced_at ? <AnalysisSnapshot detail={detail} /> : (
+        <section className="analysis-snapshot evidence-pending" aria-label="赛前证据状态">
+          <Database size={21} aria-hidden="true" />
+          <div>
+            <strong>双方基础信息已就绪</strong>
+            <p>{canSyncEvidence ? "赛前证据尚未同步，暂不计算近期表现、伤停影响或概率。" : "API-Football 未配置，暂不展示近期表现、伤停影响或概率。"}</p>
+          </div>
+        </section>
+      )}
 
       <EvidenceRail detail={detail} />
 
@@ -492,6 +506,9 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   const [running, setRunning] = useState(false);
   const [success, setSuccess] = useState<Prediction | null>(null);
   const [dataMode, setDataMode] = useState<DataMode>("unconfigured");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("unconfigured");
+  const [scheduleProvider, setScheduleProvider] = useState("thesportsdb");
+  const [leagueCounts, setLeagueCounts] = useState<Record<string, number>>({});
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncingEvidence, setSyncingEvidence] = useState(false);
@@ -507,6 +524,9 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         if (!active) return;
         setFixtures(response.items);
         setDataMode(response.mode);
+        setSyncStatus(response.sync_status);
+        setScheduleProvider(response.schedule_provider);
+        setLeagueCounts(response.league_counts ?? {});
         setLastSyncedAt(response.last_synced_at);
         setSelectedId((current) => response.items.some((item) => item.id === current) ? current : response.items[0]?.id ?? null);
       })
@@ -530,11 +550,6 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "比赛详情加载失败"); });
     return () => { active = false; };
   }, [selectedId]);
-
-  const leagueCounts = useMemo(() => fixtures.reduce<Record<string, number>>((counts, fixture) => {
-    counts[fixture.league_key] = (counts[fixture.league_key] ?? 0) + 1;
-    return counts;
-  }, {}), [fixtures]);
 
   async function runPrediction() {
     if (!selectedId) return;
@@ -597,19 +612,20 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
     }
   }
 
-  const modeLabel = {
-    cached: "真实赛程缓存",
-    demo: "演示数据模式",
-    empty: "等待首次同步",
-    unconfigured: "未配置 API 密钥",
-  }[dataMode];
+  const syncLabel = {
+    fresh: "真实赛程已自动更新",
+    updated: "真实赛程刚刚更新",
+    stale: "显示上次可用赛程",
+    failed: "赛程自动更新失败",
+    unconfigured: "赛程数据源未配置",
+  }[syncStatus];
 
   return (
     <main>
-      <div className="status-strip">
+      <div className={`status-strip sync-${syncStatus}`}>
         <span><i />系统就绪</span>
-        <span><Database size={14} />{modeLabel}</span>
-        <span className="status-note">{lastSyncedAt ? `最后同步 ${formatPreciseTimestamp(lastSyncedAt)}` : "公开页只读取本地缓存，不消耗上游额度"}</span>
+        <span><Database size={14} />{dataMode === "demo" ? "演示数据模式" : syncLabel}</span>
+        <span className="status-note">{lastSyncedAt ? `${scheduleProvider} · 更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : `${scheduleProvider} · 首次访问自动获取`}</span>
         {operatorMode && <button className="sync-action" onClick={() => void syncFixtures()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{syncing ? "同步中" : "同步赛程"}</button>}
       </div>
       {syncMessage && <div className="sync-success" role="status" aria-live="polite"><Check size={16} />{syncMessage}</div>}
@@ -641,7 +657,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
           </div>
           {loading ? <div className="loading-state"><LoaderCircle className="spin" />正在读取赛程</div> : fixtures.length ? fixtures.map((fixture) => (
             <FixtureRow key={fixture.id} fixture={fixture} selected={fixture.id === selectedId} onSelect={() => { setSuccess(null); setSelectedId(fixture.id); }} />
-          )) : <div className="loading-state"><CalendarDays />{dataMode === "unconfigured" ? "请在 API 服务中配置免费赛程数据源" : dataMode === "empty" ? "请在操作台执行首次赛程同步" : "当前筛选下没有比赛"}</div>}
+          )) : <div className="loading-state"><CalendarDays />{dataMode === "unconfigured" ? "请在 API 服务中配置免费赛程数据源" : dataMode === "error" ? "自动获取赛程失败，请稍后刷新" : "当前筛选下没有比赛"}</div>}
         </section>
         {detail && selectedId === detail.fixture.id ? <DetailPanel detail={detail} operatorMode={operatorMode} running={running} syncingEvidence={syncingEvidence} success={success} actionRef={actionRef} onPredict={() => void runPrediction()} onSyncEvidence={() => void syncEvidence()} /> : selectedId ? (
           <aside className="detail-panel detail-loading"><LoaderCircle className="spin" />读取比赛证据</aside>

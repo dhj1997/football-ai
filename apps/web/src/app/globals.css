@@ -61,6 +61,8 @@ main { width: min(1480px, 100%); margin: 0 auto; padding: 0 clamp(16px, 3.2vw, 5
 .status-strip { min-height: 36px; margin-inline: calc(clamp(16px, 3.2vw, 52px) * -1); padding: 0 clamp(16px, 3.2vw, 52px); display: flex; align-items: center; gap: 22px; color: #4e5b53; background: #e5e9e2; border-bottom: 1px solid var(--line); font-size: 11px; }
 .status-strip span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .status-strip i { width: 7px; height: 7px; background: #2f925e; border-radius: 50%; box-shadow: 0 0 0 3px rgba(47,146,94,.13); }
+.status-strip.sync-stale i { background: #b57a18; box-shadow: 0 0 0 3px rgba(181,122,24,.14); }
+.status-strip.sync-failed i, .status-strip.sync-unconfigured i { background: #b34c42; box-shadow: 0 0 0 3px rgba(179,76,66,.14); }
 .status-strip .status-note { margin-left: auto; color: #748078; overflow: hidden; text-overflow: ellipsis; }
 .sync-action { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid #b9c3ba; border-radius: 4px; color: var(--green-dark); background: #fff; cursor: pointer; font-size: 10px; font-weight: 700; }
 .sync-action:disabled { cursor: wait; opacity: .65; }
@@ -108,6 +110,7 @@ main { width: min(1480px, 100%); margin: 0 auto; padding: 0 clamp(16px, 3.2vw, 5
 .fixture-teams b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-mark { width: 28px; height: 28px; display: inline-grid; place-items: center; color: #fff; background: var(--green); border: 1px solid rgba(0,0,0,.1); border-radius: 4px; font-size: 7px; font-weight: 850; line-height: 1; }
 .team-mark.away { color: #173044; background: var(--blue-soft); border-color: #b7d0df; }
+.team-mark.team-badge { object-fit: contain; padding: 3px; background: #fff; }
 .fixture-state { display: flex; align-items: center; justify-content: flex-end; gap: 7px; min-width: 0; color: #7a857d; }
 .fixture-state em { color: #7a857d; font-size: 10px; font-style: normal; white-space: nowrap; }
 .fixture-state .state-ready { color: var(--green); font-weight: 700; }
@@ -236,6 +239,10 @@ main { width: min(1480px, 100%); margin: 0 auto; padding: 0 clamp(16px, 3.2vw, 5
 .team-profile dt { color: var(--muted); font-size: 8px; }
 .team-profile dd { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
 .analysis-snapshot { padding: 17px 24px; border-bottom: 1px solid var(--line); background: #fbfcf9; }
+.evidence-pending { min-height: 88px; display: flex; align-items: center; gap: 12px; color: var(--green-dark); }
+.evidence-pending div { min-width: 0; }
+.evidence-pending strong { display: block; color: var(--ink); font-size: 12px; }
+.evidence-pending p { margin: 4px 0 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
 .analysis-compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .analysis-team { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 9px; padding: 9px 10px; border: 1px solid var(--line); background: var(--surface); }
 .analysis-team > div { min-width: 0; display: grid; gap: 2px; }

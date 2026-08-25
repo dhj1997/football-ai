@@ -90,12 +90,16 @@ class TheSportsDbProvider:
             "home_team": {
                 "provider_id": _optional_int(item.get("idHomeTeam")),
                 "name": to_chinese_team_name(item.get("strHomeTeam") or "待定"),
+                "original_name": item.get("strHomeTeam") or "待定",
                 "code": (item.get("strHomeTeam") or "待定")[:3].upper(),
+                "logo": item.get("strHomeTeamBadge") or None,
             },
             "away_team": {
                 "provider_id": _optional_int(item.get("idAwayTeam")),
                 "name": to_chinese_team_name(item.get("strAwayTeam") or "待定"),
+                "original_name": item.get("strAwayTeam") or "待定",
                 "code": (item.get("strAwayTeam") or "待定")[:3].upper(),
+                "logo": item.get("strAwayTeamBadge") or None,
             },
             "score": {"home": home_score, "away": away_score}
             if home_score is not None and away_score is not None

@@ -10,7 +10,15 @@ async function readJson<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function fetchFixtures(date: DateFilter, league: LeagueFilter): Promise<{ items: Fixture[]; mode: "cached" | "demo" | "empty" | "unconfigured"; last_synced_at: string | null }> {
+export async function fetchFixtures(date: DateFilter, league: LeagueFilter): Promise<{
+  items: Fixture[];
+  mode: "cached" | "demo" | "empty" | "error" | "unconfigured";
+  schedule_provider: string;
+  schedule_provider_configured: boolean;
+  sync_status: "fresh" | "updated" | "stale" | "failed" | "unconfigured";
+  league_counts: Record<Exclude<LeagueFilter, "all">, number>;
+  last_synced_at: string | null;
+}> {
   const response = await fetch(`${apiBase}/api/fixtures?date=${date}&league=${league}`, { cache: "no-store" });
   return readJson(response);
 }
