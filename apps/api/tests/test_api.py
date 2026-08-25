@@ -11,8 +11,8 @@ os.environ["USE_DEMO_DATA"] = "false"
 
 from fastapi.testclient import TestClient
 
-from app.data import CHINA_TZ, demo_fixtures
-from app.main import app, provider, repository, schedule_provider
+from app.data import CHINA_TZ, demo_fixtures, unavailable_context
+from app.main import app, evidence_provider, provider, repository, schedule_provider
 
 
 client = TestClient(app)
@@ -53,6 +53,31 @@ def test_fixture_list_and_detail_are_consistent() -> None:
     assert detail["context"]["teams"]["home"]["name"] == fixture["home_team"]["name"]
     assert detail["capabilities"]["evidence_sync"] is provider.configured
     assert fixture_response.json()["mode"] == "cached"
+
+
+def test_fixture_detail_auto_syncs_evidence(monkeypatch) -> None:
+    fixture = seed_real_fixture()
+    fixture["status"] = "scheduled"
+    fixture["external_ids"] = {"api_football": 123}
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        "2026-08-24T10:00:00+00:00",
+    )
+    context = unavailable_context()
+    context["synced_at"] = "2026-08-24T11:00:00+00:00"
+    context["source"] = "test"
+
+    async def fake_fetch(_fixture):
+        return context
+
+    monkeypatch.setattr(evidence_provider, "fetch", fake_fetch)
+    response = client.get("/api/fixtures/api-123")
+
+    assert response.status_code == 200
+    assert response.json()["context"]["synced_at"] == context["synced_at"]
+    assert repository.fixture("api-123")["evidence"]["source"] == "test"
 
 
 def test_prediction_requires_admin_key() -> None:

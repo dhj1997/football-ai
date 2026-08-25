@@ -153,10 +153,26 @@ async def fixtures(
 
 
 @app.get("/api/fixtures/{fixture_id}")
-def fixture_detail(fixture_id: str) -> dict:
+async def fixture_detail(fixture_id: str) -> dict:
     """Return a fixture, its current evidence, and its latest prediction."""
 
     fixture = _fixture_or_404(fixture_id)
+    evidence_error: str | None = None
+    external_id = (fixture.get("external_ids") or {}).get("api_football")
+    if (
+        not fixture.get("is_demo")
+        and fixture.get("status") in {"scheduled", "live"}
+        and not fixture.get("evidence")
+        and external_id
+        and evidence_provider.configured
+    ):
+        try:
+            context = await evidence_provider.fetch(fixture)
+            updated = repository.save_fixture_evidence(fixture_id, context)
+            if updated is not None:
+                fixture = updated
+        except Exception as error:
+            evidence_error = str(error)
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
     free_team_data = fixture.get("free_team_data") or {}
     for side in ("home", "away"):
@@ -177,6 +193,7 @@ def fixture_detail(fixture_id: str) -> dict:
         "context": context,
         "prediction": repository.latest(fixture_id),
         "capabilities": {"evidence_sync": evidence_provider.configured},
+        "evidence_error": evidence_error,
     }
 
 
