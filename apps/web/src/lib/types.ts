@@ -7,6 +7,55 @@ export interface Team {
   code: string;
 }
 
+export interface RecentMatch {
+  date: string;
+  home: string;
+  away: string;
+  score: string;
+  result: "W" | "D" | "L";
+  team_is_home?: boolean;
+}
+
+export interface AvailabilityPlayer {
+  team: "home" | "away" | "unknown";
+  name: string;
+  reason: string;
+}
+
+export interface LineupPlayer {
+  name: string;
+  number: number | null;
+  position: string;
+  starter: boolean;
+}
+
+export interface TeamProfile {
+  name?: string;
+  original_name?: string;
+  logo?: string | null;
+  country?: string | null;
+  founded?: number | null;
+  venue?: string | null;
+  capacity?: number | null;
+  city?: string | null;
+  website?: string | null;
+}
+
+export interface SquadPlayer {
+  id: number | null;
+  name: string;
+  original_name: string;
+  age: number | null;
+  number: number | null;
+  position: string;
+  nationality: string | null;
+  photo: string | null;
+  market_value: number | null;
+  market_value_currency: string | null;
+  market_value_source: string | null;
+  transfermarkt_id: string | null;
+}
+
 export interface Fixture {
   id: string;
   provider_id: number | null;
@@ -24,8 +73,8 @@ export interface Fixture {
 
 export interface EvidenceContext {
   recent_form: {
-    home: string[];
-    away: string[];
+    home: Array<RecentMatch | string>;
+    away: Array<RecentMatch | string>;
     home_points_per_game: number;
     away_points_per_game: number;
     updated_at: string | null;
@@ -35,23 +84,32 @@ export interface EvidenceContext {
     home_missing: number;
     away_missing: number;
     notes: string[];
+    players: AvailabilityPlayer[];
     updated_at: string | null;
   };
   lineup: {
     confirmed: boolean;
     home_strength: number;
     away_strength: number;
+    home_formation: string | null;
+    away_formation: string | null;
+    home_players: LineupPlayer[];
+    away_players: LineupPlayer[];
     updated_at: string | null;
   };
+  teams: { home: TeamProfile; away: TeamProfile };
+  squads: { home: SquadPlayer[]; away: SquadPlayer[] };
   odds: {
     bookmaker: string;
     home: number;
     draw: number;
     away: number;
-    asian_handicap: number;
+    asian_handicap: number | null;
     updated_at: string;
     is_demo: boolean;
   } | null;
+  source?: string | null;
+  synced_at?: string | null;
 }
 
 export interface Prediction {

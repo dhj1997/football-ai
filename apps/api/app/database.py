@@ -165,11 +165,18 @@ class PredictionRepository:
     ) -> None:
         """Atomically replace a synchronized fixture date window."""
 
+        unique_fixtures = list({fixture["id"]: fixture for fixture in fixtures}.values())
         with self.connect() as connection:
             connection.execute(
                 "DELETE FROM fixtures WHERE fixture_date BETWEEN ? AND ?",
                 (start_date, end_date),
             )
+            if unique_fixtures:
+                placeholders = ", ".join("?" for _ in unique_fixtures)
+                connection.execute(
+                    f"DELETE FROM fixtures WHERE id IN ({placeholders})",
+                    [fixture["id"] for fixture in unique_fixtures],
+                )
             connection.executemany(
                 """
                 INSERT INTO fixtures (
@@ -186,7 +193,7 @@ class PredictionRepository:
                         json.dumps(fixture, ensure_ascii=False),
                         synced_at,
                     )
-                    for fixture in fixtures
+                    for fixture in unique_fixtures
                 ],
             )
             connection.execute(
@@ -197,7 +204,7 @@ class PredictionRepository:
                     synced_at = excluded.synced_at,
                     item_count = excluded.item_count
                 """,
-                (synced_at, len(fixtures)),
+                (synced_at, len(unique_fixtures)),
             )
 
     def list_fixtures(
@@ -236,6 +243,26 @@ class PredictionRepository:
                 (fixture_id,),
             ).fetchone()
         return json.loads(row["payload"]) if row else None
+
+    def save_fixture_evidence(self, fixture_id: str, context: dict[str, Any]) -> dict[str, Any] | None:
+        """Persist the latest evidence snapshot on a cached fixture."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM fixtures WHERE id = ?",
+                (fixture_id,),
+            ).fetchone()
+            if not row:
+                return None
+            payload = json.loads(row["payload"])
+            payload["evidence"] = context
+            payload["evidence_synced_at"] = context.get("synced_at")
+            payload["lineup_confirmed"] = bool((context.get("lineup") or {}).get("confirmed"))
+            connection.execute(
+                "UPDATE fixtures SET payload = ? WHERE id = ?",
+                (json.dumps(payload, ensure_ascii=False), fixture_id),
+            )
+            return payload
 
     def fixture_sync(self) -> dict[str, Any] | None:
         """Return the latest fixture synchronization metadata."""

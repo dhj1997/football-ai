@@ -1,6 +1,6 @@
 import type { DateFilter, Fixture, FixtureDetail, LeagueFilter } from "./types";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {

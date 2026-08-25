@@ -59,14 +59,14 @@ def test_prediction_requires_admin_key() -> None:
     assert response.status_code == 401
 
 
-def test_real_fixture_rejects_demo_prediction_context() -> None:
+def test_real_fixture_requires_synced_evidence() -> None:
     seed_real_fixture()
     response = client.post(
         "/api/admin/fixtures/api-123/predictions",
         headers={"x-admin-key": "dev-admin-key"},
     )
     assert response.status_code == 409
-    assert "演示证据" in response.json()["detail"]
+    assert "同步这场比赛的真实赛前数据" in response.json()["detail"]
 
 
 def test_sync_requires_provider_key() -> None:

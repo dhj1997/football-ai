@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     schedule_provider: str = "thesportsdb"
     thesportsdb_api_key: str = "123"
     thesportsdb_base_url: str = "https://www.thesportsdb.com/api/v1/json"
-    schedule_lookback_days: int = 7
+    schedule_lookback_days: int = 1
 
     @property
     def sqlite_path(self) -> str:

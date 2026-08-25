@@ -6,6 +6,7 @@ import {
   BarChart3,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleDot,
   Clock3,
@@ -17,12 +18,14 @@ import {
   RefreshCw,
   ShieldCheck,
   Shirt,
+  HeartPulse,
   Users,
 } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchFixtureDetail, fetchFixtures } from "@/lib/api";
-import type { DateFilter, Fixture, FixtureDetail, LeagueFilter, Prediction } from "@/lib/types";
+import type { DateFilter, Fixture, FixtureDetail, LeagueFilter, LineupPlayer, Prediction, RecentMatch, SquadPlayer, TeamProfile } from "@/lib/types";
 
 type DataMode = "cached" | "demo" | "empty" | "unconfigured";
 
@@ -87,18 +90,35 @@ function formatPreciseTimestamp(value: string) {
   }).format(new Date(value));
 }
 
+function Scoreline({ home, away, large = false }: { home: number | string; away: number | string; large?: boolean }) {
+  const homeScore = Number(home);
+  const awayScore = Number(away);
+  const homeTone = homeScore > awayScore ? "score-winner" : homeScore < awayScore ? "score-loser" : "score-draw";
+  const awayTone = awayScore > homeScore ? "score-winner" : awayScore < homeScore ? "score-loser" : "score-draw";
+  return <span className={`scoreline${large ? " scoreline-large" : ""}`} aria-label={`${home} 比 ${away}`}><b className={homeTone}>{home}</b><i>:</i><b className={awayTone}>{away}</b></span>;
+}
+
+function ParsedScoreline({ score }: { score: string }) {
+  const match = score.match(/(\d+)\s*[-:]\s*(\d+)/);
+  return match ? <Scoreline home={match[1]} away={match[2]} /> : <strong>{score}</strong>;
+}
+
 function TeamMark({ team, tone }: { team: Fixture["home_team"]; tone: "home" | "away" }) {
   return <span className={`team-mark ${tone}`} aria-hidden="true">{team.code.slice(0, 3)}</span>;
 }
 
 function FixtureRow({ fixture, selected, onSelect }: { fixture: Fixture; selected: boolean; onSelect: () => void }) {
+  const [renderedAt] = useState(() => Date.now());
+  const kickoffHasPassed = new Date(fixture.kickoff).getTime() <= renderedAt;
   const statusText = {
-    scheduled: fixture.lineup_confirmed ? "首发已确认" : "等待首发",
+    scheduled: kickoffHasPassed ? "状态待更新" : fixture.lineup_confirmed ? "首发已确认" : "等待首发",
     finished: "完场",
     postponed: "延期",
     cancelled: "取消",
     live: "进行中",
   }[fixture.status];
+  const resultLabel = fixture.score ? fixture.score.home > fixture.score.away ? "主胜" : fixture.score.home < fixture.score.away ? "客胜" : "平局" : null;
+  const resultTone = fixture.score ? fixture.score.home > fixture.score.away ? "home-win" : fixture.score.home < fixture.score.away ? "away-win" : "draw" : "pending";
   return (
     <button className={`fixture-row ${selected ? "selected" : ""}`} onClick={onSelect} aria-pressed={selected}>
       <span className="fixture-time">
@@ -109,8 +129,8 @@ function FixtureRow({ fixture, selected, onSelect }: { fixture: Fixture; selecte
         <span><TeamMark team={fixture.home_team} tone="home" /><b>{fixture.home_team.name}</b></span>
         <span><TeamMark team={fixture.away_team} tone="away" /><b>{fixture.away_team.name}</b></span>
       </span>
-      <span className="fixture-state">
-        {fixture.score ? <strong>{fixture.score.home} : {fixture.score.away}</strong> : <em className={fixture.lineup_confirmed ? "state-ready" : ""}>{statusText}</em>}
+      <span className={`fixture-state ${resultTone}`}>
+        {fixture.score ? <span className="fixture-score"><Scoreline home={fixture.score.home} away={fixture.score.away} /><small>{resultLabel}</small></span> : <em className={fixture.lineup_confirmed ? "state-ready" : ""}>{statusText}</em>}
         <ChevronRight size={18} aria-hidden="true" />
       </span>
     </button>
@@ -143,6 +163,210 @@ function EvidenceRail({ detail }: { detail: FixtureDetail }) {
           </li>
         ))}
       </ol>
+    </section>
+  );
+}
+
+function isRecentMatch(value: RecentMatch | string): value is RecentMatch {
+  return typeof value !== "string";
+}
+
+function RecentFormColumn({
+  teamName,
+  matches,
+  pointsPerGame,
+}: {
+  teamName: string;
+  matches: Array<RecentMatch | string>;
+  pointsPerGame: number;
+}) {
+  const rows = matches.filter(isRecentMatch);
+  const summary = matches.find((match): match is string => typeof match === "string");
+  return (
+    <div className="recent-form-column">
+      <div className="data-column-heading"><strong>{teamName}</strong><span>{pointsPerGame.toFixed(2)} 分/场</span></div>
+      {rows.length > 0 ? (
+        <ul className="recent-match-list">
+          {rows.slice(0, 5).map((match) => (
+            <li key={`${match.date}-${match.home}-${match.away}`}>
+              <time>{match.date.slice(5)}</time>
+              <span>{match.home} <i>vs</i> {match.away}</span>
+              <b className={`result-${match.result.toLowerCase()}`}>{match.result}</b>
+              <ParsedScoreline score={match.score} />
+            </li>
+          ))}
+        </ul>
+      ) : summary ? (
+        <p className="data-empty">供应商只返回近况摘要：{summary}</p>
+      ) : (
+        <p className="data-empty">暂无可用的近 5 场比赛</p>
+      )}
+    </div>
+  );
+}
+
+function LineupColumn({ teamName, formation, players }: { teamName: string; formation: string | null; players: LineupPlayer[] }) {
+  const starters = players.filter((player) => player.starter);
+  const substitutes = players.filter((player) => !player.starter);
+  return (
+    <div className="lineup-column">
+      <div className="data-column-heading"><strong>{teamName}</strong><span>{formation ?? "阵型待确认"}</span></div>
+      {starters.length > 0 ? (
+        <>
+          <small className="list-label">首发</small>
+          <ul className="player-list">
+            {starters.map((player) => <li key={`${player.number}-${player.name}`}><b>{player.number ?? "-"}</b><span>{player.name}</span><small>{player.position}</small></li>)}
+          </ul>
+          {substitutes.length > 0 && <><small className="list-label">替补</small><ul className="player-list substitutes">{substitutes.map((player) => <li key={`${player.number}-${player.name}`}><b>{player.number ?? "-"}</b><span>{player.name}</span><small>{player.position}</small></li>)}</ul></>}
+        </>
+      ) : <p className="data-empty">首发名单尚未发布</p>}
+    </div>
+  );
+}
+
+function TeamLogo({ profile, team, tone }: { profile: TeamProfile; team: Fixture["home_team"]; tone: "home" | "away" }) {
+  return profile.logo ? <Image className={`team-logo ${tone}`} src={profile.logo} alt={`${team.name}队徽`} width={46} height={46} unoptimized /> : <TeamMark team={team} tone={tone} />;
+}
+
+const positionLabels: Record<string, string> = {
+  Goalkeeper: "门将",
+  Defender: "后卫",
+  Midfielder: "中场",
+  Attacker: "前锋",
+  Forward: "前锋",
+};
+
+function SquadTable({ teamName, players }: { teamName: string; players: SquadPlayer[] }) {
+  const groups = ["Goalkeeper", "Defender", "Midfielder", "Attacker", "Forward"]
+    .map((position) => ({ position, rows: players.filter((player) => player.position === position) }))
+    .filter((group) => group.rows.length > 0);
+  return (
+    <details className="squad-column">
+      <summary className="squad-summary">
+        <span><strong>{teamName}</strong><small>完整注册名单 · {players.length} 人</small></span>
+        <span className="squad-count"><b>查看</b><ChevronDown size={15} aria-hidden="true" /></span>
+      </summary>
+      <div className="squad-scroll">
+        {groups.length > 0 ? groups.map((group) => (
+          <div className="squad-group" key={group.position}>
+            <div className="squad-group-label">{positionLabels[group.position] ?? group.position}<span>{group.rows.length}</span></div>
+            <div className="squad-table" role="table" aria-label={`${teamName}${positionLabels[group.position] ?? group.position}名单`}>
+              {group.rows.map((player) => <div className="squad-row" role="row" key={player.id ?? player.original_name}>
+                <span className="squad-number">{player.number ?? "-"}</span>
+                <span className="squad-player-name"><b>{player.name}</b><small>{player.name !== player.original_name ? player.original_name : player.nationality ?? ""}</small></span>
+                <span className="squad-age">{player.age ? `${player.age}岁` : "-"}</span>
+                <span className="squad-value">{player.market_value ? `${(player.market_value / 1_000_000).toFixed(1)}m` : "暂无身价"}</span>
+              </div>)}
+            </div>
+          </div>
+        )) : <p className="data-empty">暂无完整阵容数据</p>}
+      </div>
+    </details>
+  );
+}
+
+function formSummary(matches: Array<RecentMatch | string>, teamName: string) {
+  const rows = matches.filter(isRecentMatch).slice(0, 5);
+  return rows.reduce(
+    (summary, match) => {
+      const [homeScore, awayScore] = match.score.split(/\s*[-:]\s*/).map(Number);
+      const validScore = Number.isFinite(homeScore) && Number.isFinite(awayScore);
+      summary[match.result === "W" ? "wins" : match.result === "D" ? "draws" : "losses"] += 1;
+      if (validScore) {
+        const isHome = match.team_is_home ?? match.home === teamName;
+        summary.goalsFor += isHome ? homeScore : awayScore;
+        summary.goalsAgainst += isHome ? awayScore : homeScore;
+      }
+      return summary;
+    },
+    { wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 },
+  );
+}
+
+function AnalysisSnapshot({ detail }: { detail: FixtureDetail }) {
+  const { fixture, context, prediction } = detail;
+  const homeForm = formSummary(context.recent_form.home, fixture.home_team.name);
+  const awayForm = formSummary(context.recent_form.away, fixture.away_team.name);
+  const formLead = context.recent_form.home_points_per_game - context.recent_form.away_points_per_game;
+  const availabilityLead = context.availability.home_missing - context.availability.away_missing;
+  const formText = Math.abs(formLead) < 0.2 ? "近期积分效率接近" : formLead > 0 ? `近期积分效率偏向${fixture.home_team.name}` : `近期积分效率偏向${fixture.away_team.name}`;
+  const availabilityText = availabilityLead === 0 ? "双方已知伤停人数相同" : availabilityLead > 0 ? `${fixture.home_team.name}已知伤停更多` : `${fixture.away_team.name}已知伤停更多`;
+  return (
+    <section className="analysis-snapshot" aria-labelledby="analysis-snapshot-title">
+      <div className="section-heading"><div><span>PRE-MATCH READOUT</span><h3 id="analysis-snapshot-title">赛前分析快照</h3></div><small>只读取已同步证据</small></div>
+      <div className="analysis-compare">
+        {[{ team: fixture.home_team.name, form: homeForm, ppg: context.recent_form.home_points_per_game, side: "主队" }, { team: fixture.away_team.name, form: awayForm, ppg: context.recent_form.away_points_per_game, side: "客队" }].map(({ team, form, ppg, side }) => (
+          <div className="analysis-team" key={side}>
+            <div><strong>{team}</strong><small>{side}</small></div>
+            <b>{form.wins}胜 {form.draws}平 {form.losses}负</b>
+            <span>{ppg.toFixed(2)} 分/场 · {form.goalsFor}-{form.goalsAgainst}</span>
+          </div>
+        ))}
+      </div>
+      <div className="analysis-facts">
+        <span><HeartPulse size={14} />伤停 {context.availability.home_missing} : {context.availability.away_missing}</span>
+        <span><Shirt size={14} />首发 {context.lineup.confirmed ? "已确认" : "待发布"}</span>
+        <span><BarChart3 size={14} />赔率 {context.odds ? `${context.odds.home.toFixed(2)} / ${context.odds.draw.toFixed(2)} / ${context.odds.away.toFixed(2)}` : "暂无"}</span>
+        {prediction && <span><Goal size={14} />预期进球 {prediction.expected_goals.home} : {prediction.expected_goals.away}</span>}
+      </div>
+      <p className="analysis-note">{formText}；{availabilityText}。{context.lineup.confirmed ? "首发已纳入当前证据。" : "首发未发布，结论仍属于初步版本。"}</p>
+    </section>
+  );
+}
+
+function TeamProfiles({ detail }: { detail: FixtureDetail }) {
+  const { fixture, context } = detail;
+  const profiles = [
+    { side: "home" as const, team: fixture.home_team, profile: context.teams?.home ?? {} },
+    { side: "away" as const, team: fixture.away_team, profile: context.teams?.away ?? {} },
+  ];
+  const hasProfile = profiles.some(({ profile }) => profile.founded || profile.venue || profile.logo);
+  return (
+    <section className="team-information" aria-label="球队信息与完整阵容">
+      <div className="detail-data-block team-profile-block">
+        <div className="section-heading"><div><span>TEAM DOSSIER</span><h3>球队档案</h3></div><small>{hasProfile ? "供应商资料" : "待同步"}</small></div>
+        <div className="team-profile-grid">
+          {profiles.map(({ side, team, profile }) => <div className="team-profile" key={side}><div className="team-profile-top"><TeamLogo profile={profile} team={team} tone={side} /><div><strong>{team.name}</strong><small>{profile.original_name ?? ""}</small></div></div><dl><div><dt>成立</dt><dd>{profile.founded ?? "-"}</dd></div><div><dt>主场</dt><dd>{profile.venue ?? fixture.venue}</dd></div><div><dt>容量</dt><dd>{profile.capacity ? `${profile.capacity.toLocaleString()} 人` : "-"}</dd></div><div><dt>所在地</dt><dd>{profile.city ?? profile.country ?? "-"}</dd></div></dl></div>)}
+        </div>
+      </div>
+      <div className="detail-data-block squad-block">
+        <div className="section-heading"><div><span>SQUAD REGISTER</span><h3>全队球员与身价</h3></div><small>身价字段需授权数据源</small></div>
+        <div className="squad-grid"><SquadTable teamName={fixture.home_team.name} players={context.squads?.home ?? []} /><SquadTable teamName={fixture.away_team.name} players={context.squads?.away ?? []} /></div>
+        <p className="data-source-note">当前免费公开源提供球员名单、号码、位置、年龄和照片；未提供可验证的实时市场身价，因此显示“暂无身价”，不会用转会费或工资替代。</p>
+      </div>
+    </section>
+  );
+}
+
+function EvidenceDetails({ detail }: { detail: FixtureDetail }) {
+  const { fixture, context } = detail;
+  const homeForm = context.recent_form.home;
+  const awayForm = context.recent_form.away;
+  const injuries = context.availability.players ?? [];
+  const homeInjuries = injuries.filter((player) => player.team === "home");
+  const awayInjuries = injuries.filter((player) => player.team === "away");
+  const hasEvidence = Boolean(context.synced_at);
+  return (
+    <section className="evidence-details" aria-label="详细赛前数据">
+      <div className="detail-data-block">
+        <div className="section-heading"><div><span>FORM GUIDE</span><h3>近期 5 场</h3></div><small>{context.recent_form.updated_at ? formatTimestamp(context.recent_form.updated_at) : "待同步"}</small></div>
+        {hasEvidence ? <div className="recent-form-grid"><RecentFormColumn teamName={fixture.home_team.name} matches={homeForm} pointsPerGame={context.recent_form.home_points_per_game} /><RecentFormColumn teamName={fixture.away_team.name} matches={awayForm} pointsPerGame={context.recent_form.away_points_per_game} /></div> : <p className="data-empty">请先同步这场比赛的赛前数据</p>}
+      </div>
+
+      <div className="detail-data-block">
+        <div className="section-heading"><div><span>HEAD TO HEAD</span><h3>历史交锋</h3></div><small>{context.head_to_head.length} 场</small></div>
+        {context.head_to_head.length > 0 ? <div className="h2h-table" role="table" aria-label="历史交锋记录"><div className="h2h-row h2h-header" role="row"><span>日期</span><span>对阵</span><span>比分</span></div>{context.head_to_head.map((match) => <div className="h2h-row" role="row" key={`${match.date}-${match.home}-${match.away}`}><time>{match.date}</time><span>{match.home} <i>vs</i> {match.away}</span><ParsedScoreline score={match.score} /></div>)}</div> : <p className="data-empty">暂无历史交锋数据</p>}
+      </div>
+
+      <div className="detail-data-block">
+        <div className="section-heading"><div><span>AVAILABILITY</span><h3>伤停影响</h3></div><small><HeartPulse size={13} /> {context.availability.home_missing + context.availability.away_missing} 人</small></div>
+        {hasEvidence ? <div className="availability-grid"><div><strong>{fixture.home_team.name}</strong><span>{context.availability.home_missing} 人缺阵</span><ul className="absence-list">{homeInjuries.length > 0 ? homeInjuries.map((player) => <li key={`${player.name}-${player.reason}`}><b>{player.name}</b><small>{player.reason}</small></li>) : <li className="absence-empty">暂无已知伤停</li>}</ul></div><div><strong>{fixture.away_team.name}</strong><span>{context.availability.away_missing} 人缺阵</span><ul className="absence-list">{awayInjuries.length > 0 ? awayInjuries.map((player) => <li key={`${player.name}-${player.reason}`}><b>{player.name}</b><small>{player.reason}</small></li>) : <li className="absence-empty">暂无已知伤停</li>}</ul></div></div> : <p className="data-empty">请先同步这场比赛的伤停数据</p>}
+      </div>
+
+      <div className="detail-data-block">
+        <div className="section-heading"><div><span>LINEUPS</span><h3>球员名单</h3></div><small>{context.lineup.confirmed ? "已确认" : "未公布"}</small></div>
+        {context.lineup.confirmed ? <div className="lineup-grid"><LineupColumn teamName={fixture.home_team.name} formation={context.lineup.home_formation} players={context.lineup.home_players} /><LineupColumn teamName={fixture.away_team.name} formation={context.lineup.away_formation} players={context.lineup.away_players} /></div> : <div className="lineup-pending"><Shirt size={18} /><div><strong>首发名单尚未发布</strong><p>比赛临近后再次同步，确认首发后会显示首发与替补球员。</p></div></div>}
+      </div>
     </section>
   );
 }
@@ -189,17 +413,17 @@ function ProbabilityPanel({ prediction, fixture }: { prediction: Prediction; fix
   );
 }
 
-function DetailPanel({ detail, operatorMode, running, success, actionRef, onPredict }: { detail: FixtureDetail; operatorMode: boolean; running: boolean; success: Prediction | null; actionRef: React.RefObject<HTMLButtonElement | null>; onPredict: () => void }) {
+function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, actionRef, onPredict, onSyncEvidence }: { detail: FixtureDetail; operatorMode: boolean; running: boolean; syncingEvidence: boolean; success: Prediction | null; actionRef: React.RefObject<HTMLButtonElement | null>; onPredict: () => void; onSyncEvidence: () => void }) {
   const { fixture, context, prediction } = detail;
-  const realEvidencePending = !fixture.is_demo;
+  const realEvidencePending = !fixture.is_demo && !context.synced_at;
   return (
     <aside className="detail-panel">
       <div className="match-summary">
         <div className="detail-kicker"><span>{fixture.league.name}</span><span>{fixture.is_demo ? "演示数据" : "提供商数据"}</span></div>
         <div className="match-teams">
-          <div><TeamMark team={fixture.home_team} tone="home" /><strong>{fixture.home_team.name}</strong><small>主队</small></div>
-          <span className="versus">VS<small>{formatKickoff(fixture.kickoff)}</small></span>
-          <div><TeamMark team={fixture.away_team} tone="away" /><strong>{fixture.away_team.name}</strong><small>客队</small></div>
+          <div><TeamLogo profile={context.teams?.home ?? {}} team={fixture.home_team} tone="home" /><strong>{fixture.home_team.name}</strong><small>主队</small></div>
+          {fixture.score ? <span className="versus score-versus"><Scoreline home={fixture.score.home} away={fixture.score.away} large /><small>{fixture.score.home > fixture.score.away ? "主胜" : fixture.score.home < fixture.score.away ? "客胜" : "平局"}</small></span> : <span className="versus">VS<small>{formatKickoff(fixture.kickoff)}</small></span>}
+          <div><TeamLogo profile={context.teams?.away ?? {}} team={fixture.away_team} tone="away" /><strong>{fixture.away_team.name}</strong><small>客队</small></div>
         </div>
         <p><CalendarDays size={15} /> {new Date(fixture.kickoff).toLocaleDateString("zh-CN")} · {fixture.venue}</p>
       </div>
@@ -207,10 +431,10 @@ function DetailPanel({ detail, operatorMode, running, success, actionRef, onPred
       {operatorMode && fixture.status !== "finished" && (
         <div className="operator-actions">
           <div><strong>{realEvidencePending ? "真实赛前证据尚未同步" : prediction ? "生成新预测版本" : "这场比赛尚未预测"}</strong><small>{realEvidencePending ? "当前只完成真实赛程，暂不使用演示证据生成判断" : context.lineup.confirmed ? "确认首发已纳入，可以生成最终赛前版" : "首发未确认，将生成初步预测"}</small></div>
-          <button className="icon-button secondary" title={realEvidencePending ? "近期状态、阵容和赔率同步将在下一阶段接入" : "演示数据无需刷新"} aria-label="刷新比赛上下文" disabled><RefreshCw size={18} /></button>
+          <button className="icon-button secondary" title="同步这场比赛的赛前数据" aria-label="同步赛前数据" onClick={onSyncEvidence} disabled={syncingEvidence}>{syncingEvidence ? <LoaderCircle className="spin" size={18} /> : <RefreshCw size={18} />}</button>
           <button ref={actionRef} className="primary-action" onClick={onPredict} disabled={running || realEvidencePending} aria-describedby={success ? "prediction-success" : undefined}>
             {running ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}
-            {running ? "计算中" : realEvidencePending ? "等待证据" : "发起预测"}
+            {running ? "计算中" : realEvidencePending ? "先同步证据" : "发起预测"}
           </button>
         </div>
       )}
@@ -222,27 +446,36 @@ function DetailPanel({ detail, operatorMode, running, success, actionRef, onPred
         </div>
       )}
 
+      <AnalysisSnapshot detail={detail} />
+
       <EvidenceRail detail={detail} />
+
+      <TeamProfiles detail={detail} />
+
+      <EvidenceDetails detail={detail} />
 
       <section className="market-section" aria-labelledby="market-title">
         <div className="section-heading">
           <div><span>PRE-MATCH MARKET</span><h3 id="market-title">赛前赔率快照</h3></div>
-          <small>{context.odds ? formatTimestamp(context.odds.updated_at) : "暂无"}</small>
+          <small>{context.odds ? `${context.odds.bookmaker} · ${formatTimestamp(context.odds.updated_at)}` : "暂无"}</small>
         </div>
         {context.odds ? (
-          <div className="odds-row">
-            <span><small>主胜</small><b>{context.odds.home.toFixed(2)}</b></span>
-            <span><small>平局</small><b>{context.odds.draw.toFixed(2)}</b></span>
-            <span><small>客胜</small><b>{context.odds.away.toFixed(2)}</b></span>
-            <span><small>主队让球</small><b>{context.odds.asian_handicap}</b></span>
-          </div>
+          <>
+            <div className="odds-row">
+              <span><small>主胜</small><b>{context.odds.home.toFixed(2)}</b></span>
+              <span><small>平局</small><b>{context.odds.draw.toFixed(2)}</b></span>
+              <span><small>客胜</small><b>{context.odds.away.toFixed(2)}</b></span>
+              <span><small>主队让球</small><b>{context.odds.asian_handicap}</b></span>
+            </div>
+            <p className="data-source-note">来源：API-Football / API-Sports 的赛前赔率接口；当前取返回结果中的第一家 bookmaker，记录同步时间。</p>
+          </>
         ) : <p className="empty-note">这场比赛没有可用的赛前赔率，因此不会生成让球判断。</p>}
       </section>
 
       {prediction ? <ProbabilityPanel prediction={prediction} fixture={fixture} /> : (
         <section className="no-prediction">
           <Database size={23} aria-hidden="true" />
-          <div><h3>尚无已发布预测</h3><p>{realEvidencePending ? "真实赛程已经缓存；近期状态、阵容和赔率同步完成后才能生成预测。" : operatorMode ? "核对数据状态后，可手动发起这场比赛的首个预测。" : "比赛会正常显示，但只有管理员选中的比赛才会出现预测。"}</p></div>
+          <div><h3>尚无已发布预测</h3><p>{realEvidencePending ? "真实赛程已经缓存；点击同步赛前数据后，系统会拉取近期状态、交锋、伤停和赔率。" : operatorMode ? "核对数据状态后，可手动发起这场比赛的首个预测。" : "比赛会正常显示，但只有管理员选中的比赛才会出现预测。"}</p></div>
         </section>
       )}
     </aside>
@@ -261,6 +494,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   const [dataMode, setDataMode] = useState<DataMode>("unconfigured");
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncingEvidence, setSyncingEvidence] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -322,6 +556,26 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
     } finally {
       setRunning(false);
       window.requestAnimationFrame(() => actionRef.current?.focus());
+    }
+  }
+
+  async function syncEvidence() {
+    if (!selectedId) return;
+    setSyncingEvidence(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/evidence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fixtureId: selectedId }),
+      });
+      const payload = await response.json() as { detail?: string };
+      if (!response.ok) throw new Error(payload.detail ?? "赛前数据同步失败");
+      setDetail(await fetchFixtureDetail(selectedId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "赛前数据同步失败");
+    } finally {
+      setSyncingEvidence(false);
     }
   }
 
@@ -389,7 +643,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
             <FixtureRow key={fixture.id} fixture={fixture} selected={fixture.id === selectedId} onSelect={() => { setSuccess(null); setSelectedId(fixture.id); }} />
           )) : <div className="loading-state"><CalendarDays />{dataMode === "unconfigured" ? "请在 API 服务中配置免费赛程数据源" : dataMode === "empty" ? "请在操作台执行首次赛程同步" : "当前筛选下没有比赛"}</div>}
         </section>
-        {detail && selectedId === detail.fixture.id ? <DetailPanel detail={detail} operatorMode={operatorMode} running={running} success={success} actionRef={actionRef} onPredict={() => void runPrediction()} /> : selectedId ? (
+        {detail && selectedId === detail.fixture.id ? <DetailPanel detail={detail} operatorMode={operatorMode} running={running} syncingEvidence={syncingEvidence} success={success} actionRef={actionRef} onPredict={() => void runPrediction()} onSyncEvidence={() => void syncEvidence()} /> : selectedId ? (
           <aside className="detail-panel detail-loading"><LoaderCircle className="spin" />读取比赛证据</aside>
         ) : <aside className="detail-panel detail-loading"><Database />同步真实赛程后可查看比赛详情</aside>}
       </div>

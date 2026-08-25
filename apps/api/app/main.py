@@ -10,6 +10,7 @@ from .config import Settings, get_settings
 from .data import CHINA_TZ, demo_context, demo_fixtures, unavailable_context
 from .database import PredictionRepository
 from .prediction import predict
+from .evidence_provider import ApiFootballEvidenceProvider
 from .provider import ApiFootballProvider
 from .schedule_provider import TheSportsDbProvider
 
@@ -19,6 +20,12 @@ settings = get_settings()
 repository = PredictionRepository(settings.sqlite_path)
 repository.initialize()
 provider = ApiFootballProvider(settings.api_football_key, settings.api_football_base_url)
+evidence_provider = ApiFootballEvidenceProvider(
+    settings.api_football_key,
+    settings.api_football_base_url,
+    settings.thesportsdb_api_key,
+    settings.thesportsdb_base_url,
+)
 schedule_provider = TheSportsDbProvider(settings.thesportsdb_api_key, settings.thesportsdb_base_url)
 
 app.add_middleware(
@@ -125,7 +132,7 @@ def fixture_detail(fixture_id: str) -> dict:
     """Return a fixture, its current evidence, and its latest prediction."""
 
     fixture = _fixture_or_404(fixture_id)
-    context = demo_context(fixture_id) if fixture["is_demo"] else unavailable_context()
+    context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
     return {"fixture": fixture, "context": context, "prediction": repository.latest(fixture_id)}
 
 
@@ -147,11 +154,29 @@ def run_prediction(fixture_id: str) -> dict:
     fixture = _fixture_or_404(fixture_id)
     if fixture["status"] != "scheduled":
         raise HTTPException(status_code=409, detail="已结束比赛不能重新预测")
-    if not fixture["is_demo"]:
-        raise HTTPException(status_code=409, detail="这场真实比赛尚未同步近期状态、阵容和赛前赔率，不能使用演示证据生成预测")
-    result = predict(fixture, demo_context(fixture_id))
+    context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence")
+    if context is None:
+        raise HTTPException(status_code=409, detail="请先同步这场比赛的真实赛前数据")
+    result = predict(fixture, context)
     repository.save(result)
     return result
+
+
+@app.post("/api/admin/fixtures/{fixture_id}/evidence", dependencies=[Depends(require_admin)])
+async def sync_fixture_evidence(fixture_id: str) -> dict:
+    """Fetch and persist one fixture's current pre-match evidence."""
+
+    fixture = _fixture_or_404(fixture_id)
+    if fixture["is_demo"]:
+        raise HTTPException(status_code=409, detail="演示比赛不需要同步外部赛前数据")
+    try:
+        context = await evidence_provider.fetch(fixture)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"API-Football 赛前数据同步失败：{error}") from error
+    updated = repository.save_fixture_evidence(fixture_id, context)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="未找到比赛")
+    return {"status": "synced", "fixture": updated, "context": context}
 
 
 @app.post("/api/admin/sync", dependencies=[Depends(require_admin)])
@@ -168,7 +193,10 @@ async def sync_fixtures() -> dict:
             raise RuntimeError(f"不支持的赛程数据源: {settings.schedule_provider}")
         rows = await schedule_provider.fixtures(start_date, end_date)
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"API-Football 同步失败：{error}") from error
+        raise HTTPException(
+            status_code=502,
+            detail=f"{settings.schedule_provider} 同步失败：{error}",
+        ) from error
     synced_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     repository.replace_fixtures(start_date.isoformat(), end_date.isoformat(), rows, synced_at)
     return {

@@ -38,3 +38,21 @@ def test_fixture_window_is_replaced_atomically(tmp_path) -> None:
         "item_count": 1,
     }
 
+
+def test_duplicate_fixture_ids_are_collapsed_before_insert(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "cache.db"))
+    repository.initialize()
+    repository.replace_fixtures(
+        "2026-08-24",
+        "2026-08-24",
+        [
+            fixture("api-1", "2026-08-24"),
+            {**fixture("api-1", "2026-08-24"), "league_key": "laliga"},
+        ],
+        "2026-08-24T10:00:00+00:00",
+    )
+
+    rows = repository.list_fixtures()
+    assert len(rows) == 1
+    assert rows[0]["league_key"] == "laliga"
+    assert repository.fixture_sync()["item_count"] == 1

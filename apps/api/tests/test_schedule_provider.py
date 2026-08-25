@@ -14,6 +14,7 @@ def test_schedule_provider_maps_utc_kickoff_and_score() -> None:
             "strPostponed": "no",
             "strHomeTeam": "Home FC",
             "strAwayTeam": "Away FC",
+            "idAPIfootball": "1570342",
             "idHomeTeam": "10",
             "idAwayTeam": "20",
             "intHomeScore": "2",
@@ -29,6 +30,7 @@ def test_schedule_provider_maps_utc_kickoff_and_score() -> None:
     assert result["score"] == {"home": 2, "away": 1}
     assert result["home_team"]["provider_id"] == 10
     assert result["home_team"]["name"] == "Home FC"
+    assert result["external_ids"]["api_football"] == 1570342
 
 
 def test_schedule_provider_maps_postponed_event_without_score() -> None:

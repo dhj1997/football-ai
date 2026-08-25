@@ -73,6 +73,9 @@ class TheSportsDbProvider:
         return {
             "id": f"sportsdb-{item['idEvent']}",
             "provider_id": int(item["idEvent"]),
+            "external_ids": {
+                "api_football": _optional_int(item.get("idAPIfootball")),
+            },
             "league_key": league_key,
             "league": {
                 "id": cls.LEAGUE_IDS[league_key],
