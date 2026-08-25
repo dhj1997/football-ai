@@ -78,6 +78,7 @@ def health() -> dict:
         mode = "unconfigured"
     return {
         "status": "ok",
+        "database_backend": repository.engine.dialect.name,
         "provider_configured": schedule_provider.configured,
         "evidence_provider_configured": evidence_provider.configured,
         "schedule_provider": settings.schedule_provider,

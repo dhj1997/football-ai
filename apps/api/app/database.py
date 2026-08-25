@@ -27,6 +27,7 @@ class PredictionRepository:
     def _normalize_url(value: str) -> str:
         """Accept the old SQLite path form and both common MySQL URL forms."""
 
+        value = value.strip().strip('"').strip("'")
         if value.startswith("mysql://"):
             return "mysql+pymysql://" + value.removeprefix("mysql://")
         if value.startswith(("sqlite:", "mysql+")):
@@ -86,6 +87,14 @@ class PredictionRepository:
                     """
                 )
             )
+            if not self.is_sqlite:
+                for table in ("predictions", "fixtures", "sync_metadata"):
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE {table} CONVERT TO CHARACTER SET utf8mb4 "
+                            "COLLATE utf8mb4_unicode_ci"
+                        )
+                    )
             self._ensure_index(
                 connection,
                 "idx_predictions_fixture_created",
