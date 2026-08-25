@@ -50,6 +50,10 @@ class ScheduleSyncService:
         start_date = today - timedelta(days=self.lookback_days)
         end_date = today + timedelta(days=1)
         rows = await self.provider.fixtures(start_date, end_date)
+        request_count = ((end_date - start_date).days + 1) * len(self.provider.LEAGUE_IDS)
+        enrich = getattr(self.provider, "enrich_fixtures", None)
+        if callable(enrich):
+            rows = await enrich(rows, max_teams=max(0, (30 - request_count) // 2))
         synced_at = datetime.now(UTC).replace(microsecond=0).isoformat()
         self.repository.replace_fixtures(
             start_date.isoformat(),
@@ -57,13 +61,12 @@ class ScheduleSyncService:
             rows,
             synced_at,
         )
-        day_count = (end_date - start_date).days + 1
         return {
             **self._state(
                 "updated",
                 {"synced_at": synced_at, "item_count": len(rows)},
             ),
-            "request_count": day_count * len(self.provider.LEAGUE_IDS),
+            "request_count": request_count,
             "from": start_date.isoformat(),
             "to": end_date.isoformat(),
         }

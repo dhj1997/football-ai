@@ -56,3 +56,10 @@ def test_duplicate_fixture_ids_are_collapsed_before_insert(tmp_path) -> None:
     assert len(rows) == 1
     assert rows[0]["league_key"] == "laliga"
     assert repository.fixture_sync()["item_count"] == 1
+
+
+def test_mysql_url_uses_pymysql_dialect_without_connecting() -> None:
+    repository = PredictionRepository("mysql://football_ai:password@127.0.0.1:3306/football_ai")
+
+    assert repository.database_url.startswith("mysql+pymysql://")
+    assert repository.engine.dialect.name == "mysql"

@@ -61,9 +61,28 @@ Copy-Item .env.example .env
 - `SCHEDULE_LOOKBACK_DAYS`：赛程同步回看天数，默认 `1`，避免免费源的请求频率限制。
 - `USE_DEMO_DATA`：是否在没有真实缓存时显示演示数据，默认 `false`。
 - `ADMIN_API_KEY`：保护刷新与预测接口。
-- `DATABASE_URL`：当前 MVP 支持 `sqlite:///` URL。
+- `DATABASE_URL`：默认使用 `sqlite:///./football_ai.db`；生产或共享环境可使用 `mysql+pymysql://用户名:密码@主机:3306/football_ai?charset=utf8mb4`。应用启动时会自动创建 `predictions`、`fixtures` 和 `sync_metadata` 表。
 - `NEXT_PUBLIC_API_BASE_URL`：浏览器读取公开 API 的地址。
 - `API_BASE_URL`：Next.js 服务端调用 FastAPI 的地址。
+
+### 切换到 MySQL
+
+先创建数据库和账号：
+
+```sql
+CREATE DATABASE football_ai CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'football_ai'@'%' IDENTIFIED BY 'change-this-password';
+GRANT ALL PRIVILEGES ON football_ai.* TO 'football_ai'@'%';
+FLUSH PRIVILEGES;
+```
+
+然后把根目录 `.env` 的 `DATABASE_URL` 改为：
+
+```text
+DATABASE_URL=mysql+pymysql://football_ai:change-this-password@127.0.0.1:3306/football_ai?charset=utf8mb4
+```
+
+重启 API 服务即可。当前代码已保留 SQLite 兼容；本地没有 MySQL 服务时继续使用 SQLite。
 
 ## 验证
 

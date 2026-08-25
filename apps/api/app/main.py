@@ -18,7 +18,7 @@ from .schedule_sync import ScheduleSyncService
 
 app = FastAPI(title="足球赛前分析 API", version="0.1.0")
 settings = get_settings()
-repository = PredictionRepository(settings.sqlite_path)
+repository = PredictionRepository(settings.database_url)
 repository.initialize()
 provider = ApiFootballProvider(settings.api_football_key, settings.api_football_base_url)
 evidence_provider = ApiFootballEvidenceProvider(
@@ -157,13 +157,20 @@ def fixture_detail(fixture_id: str) -> dict:
 
     fixture = _fixture_or_404(fixture_id)
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
+    free_team_data = fixture.get("free_team_data") or {}
     for side in ("home", "away"):
         team = fixture[f"{side}_team"]
-        profile = context["teams"].setdefault(side, {})
+        free_data = free_team_data.get(side) or {}
+        free_profile = free_data.get("profile") or {}
+        existing_profile = context["teams"].get(side) or {}
+        profile = {**free_profile, **existing_profile}
+        context["teams"][side] = profile
         profile["name"] = profile.get("name") or team["name"]
         profile["original_name"] = profile.get("original_name") or team.get("original_name") or team["name"]
         profile["logo"] = profile.get("logo") or team.get("logo")
         profile["venue"] = profile.get("venue") or fixture.get("venue")
+        if not context["squads"].get(side):
+            context["squads"][side] = free_data.get("squad") or []
     return {
         "fixture": fixture,
         "context": context,

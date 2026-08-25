@@ -26,16 +26,6 @@ class Settings(BaseSettings):
     schedule_lookback_days: int = 1
     schedule_cache_ttl_minutes: int = 60
 
-    @property
-    def sqlite_path(self) -> str:
-        """Return the local SQLite path from the configured database URL."""
-
-        prefix = "sqlite:///"
-        if not self.database_url.startswith(prefix):
-            raise ValueError("The MVP runtime currently requires a sqlite:/// database URL")
-        return self.database_url.removeprefix(prefix)
-
-
 @lru_cache
 def get_settings() -> Settings:
     """Return the cached runtime settings."""
