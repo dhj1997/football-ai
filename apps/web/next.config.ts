@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "media.api-sports.io" },
       { protocol: "https", hostname: "r2.thesportsdb.com" },
+      { protocol: "https", hostname: "a.espncdn.com" },
     ],
   },
   reactStrictMode: true,

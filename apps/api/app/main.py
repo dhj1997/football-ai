@@ -1,31 +1,78 @@
-"""FastAPI entry point for browsing fixtures and running manual predictions."""
+"""FastAPI entry point for continuous football analysis and simulation."""
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from .automation import AutomationRunner
 from .config import Settings, get_settings
+from .bankroll import BankrollService, DualBankrollService
+from .chatgpt_provider import ChatGptProvider
 from .data import CHINA_TZ, demo_context, demo_fixtures, unavailable_context
 from .database import PredictionRepository
-from .prediction import predict
+from .deepseek_provider import DeepSeekProvider
+from .dual_prediction_service import DualPredictionService
 from .evidence_provider import ApiFootballEvidenceProvider
+from .evidence_chain import (
+    EvidenceProviderChain,
+    evidence_needs_enrichment,
+    localize_evidence_players,
+    merge_evidence,
+    should_use_secondary,
+)
+from .espn_evidence_provider import EspnEvidenceProvider
+from .league_provider import EspnLeagueProvider
+from .league_sync import LeagueSyncService
 from .provider import ApiFootballProvider
+from .prediction_service import PredictionService
 from .schedule_provider import TheSportsDbProvider
 from .schedule_sync import ScheduleSyncService
+from .settlement import SettlementService
+from .team_provider import EspnTeamProvider
+from .team_sync import TeamSyncService
 
 
-app = FastAPI(title="足球赛前分析 API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    task: asyncio.Task | None = None
+    if settings.automation_enabled:
+        task = asyncio.create_task(automation_runner.run_loop(), name="football-ai-automation")
+    try:
+        yield
+    finally:
+        if task is not None:
+            automation_runner.stop()
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+
+app = FastAPI(title="足球赛前分析 API", version="0.1.0", lifespan=lifespan)
 settings = get_settings()
-repository = PredictionRepository(settings.database_url)
+repository = PredictionRepository(
+    settings.database_url,
+    settings.simulation_competition_id,
+    ("deepseek", "chatgpt"),
+)
 repository.initialize()
 provider = ApiFootballProvider(settings.api_football_key, settings.api_football_base_url)
-evidence_provider = ApiFootballEvidenceProvider(
+api_football_evidence_provider = ApiFootballEvidenceProvider(
     settings.api_football_key,
     settings.api_football_base_url,
     settings.thesportsdb_api_key,
     settings.thesportsdb_base_url,
+)
+espn_evidence_provider = EspnEvidenceProvider(
+    settings.espn_base_url,
+)
+evidence_provider = EvidenceProviderChain(
+    api_football_evidence_provider,
+    espn_evidence_provider,
+    api_football_evidence_provider,
 )
 schedule_provider = TheSportsDbProvider(settings.thesportsdb_api_key, settings.thesportsdb_base_url)
 schedule_sync = ScheduleSyncService(
@@ -33,6 +80,64 @@ schedule_sync = ScheduleSyncService(
     repository,
     settings.schedule_lookback_days,
     settings.schedule_cache_ttl_minutes,
+)
+deepseek_provider = DeepSeekProvider(
+    settings.api_deepseek_key,
+    settings.deepseek_model,
+    settings.deepseek_base_url,
+    settings.deepseek_timeout_seconds,
+    settings.deepseek_max_retries,
+    settings.deepseek_max_tokens,
+)
+chatgpt_provider = ChatGptProvider(
+    settings.api_chatgpt_key,
+    settings.chatgpt_model,
+    settings.chatgpt_base_url,
+    settings.deepseek_timeout_seconds,
+    settings.deepseek_max_retries,
+    settings.deepseek_max_tokens,
+)
+deepseek_prediction_service = PredictionService(
+    deepseek_provider,
+    repository,
+    "deepseek",
+    settings.simulation_competition_id,
+)
+chatgpt_prediction_service = PredictionService(
+    chatgpt_provider,
+    repository,
+    "chatgpt",
+    settings.simulation_competition_id,
+)
+prediction_service = DualPredictionService(
+    {"deepseek": deepseek_prediction_service, "chatgpt": chatgpt_prediction_service},
+    settings.simulation_competition_id,
+)
+bankroll_service = DualBankrollService(
+    {
+        "deepseek": BankrollService(repository).configure("deepseek", settings.simulation_competition_id, True),
+        "chatgpt": BankrollService(repository).configure("chatgpt", settings.simulation_competition_id, True),
+    },
+    settings.simulation_competition_id,
+)
+settlement_service = SettlementService(repository, settings.simulation_competition_id)
+league_provider = EspnLeagueProvider(settings.espn_base_url)
+league_sync = LeagueSyncService(
+    league_provider,
+    repository,
+    settings.standings_cache_ttl_minutes,
+)
+team_provider = EspnTeamProvider(settings.espn_base_url)
+team_sync = TeamSyncService(team_provider, repository, settings.team_cache_ttl_minutes)
+automation_runner = AutomationRunner(
+    settings,
+    repository,
+    schedule_sync,
+    league_sync,
+    evidence_provider,
+    prediction_service,
+    bankroll_service,
+    settlement_service,
 )
 
 app.add_middleware(
@@ -76,15 +181,28 @@ def health() -> dict:
         mode = "empty"
     else:
         mode = "unconfigured"
+    standings_rows = repository.league_snapshots()
     return {
         "status": "ok",
         "database_backend": repository.engine.dialect.name,
         "provider_configured": schedule_provider.configured,
         "evidence_provider_configured": evidence_provider.configured,
+        "evidence_sources": evidence_provider.sources,
         "schedule_provider": settings.schedule_provider,
         "schedule_provider_configured": schedule_provider.configured,
         "mode": mode,
         "last_synced_at": sync["synced_at"] if sync else None,
+        "standings_provider_configured": league_provider.configured,
+        "deepseek_configured": deepseek_provider.configured,
+        "deepseek_model": settings.deepseek_model,
+        "chatgpt_configured": chatgpt_provider.configured,
+        "chatgpt_model": settings.chatgpt_model,
+        "simulated_bankroll_balance": bankroll_service.summary()["accounts"]["deepseek"]["balance"],
+        "automation_enabled": settings.automation_enabled,
+        "standings_last_synced_at": max(
+            (item.get("updated_at") for item in standings_rows if item.get("updated_at")),
+            default=None,
+        ),
     }
 
 
@@ -144,6 +262,7 @@ async def fixtures(
         "mode": mode,
         "provider_configured": schedule_provider.configured,
         "evidence_provider_configured": evidence_provider.configured,
+        "evidence_sources": evidence_provider.sources,
         "schedule_provider": settings.schedule_provider,
         "schedule_provider_configured": schedule_provider.configured,
         "sync_status": sync_state["status"],
@@ -152,28 +271,92 @@ async def fixtures(
     }
 
 
+@app.get("/api/standings")
+async def standings(
+    league: Literal["all", "epl", "laliga", "csl"] = "all",
+) -> dict:
+    """Return cached current-season tables with freshness metadata."""
+
+    sync_state = await league_sync.ensure_fresh()
+    items = repository.league_snapshots(None if league == "all" else league)
+    return {
+        "items": items,
+        "sync_status": sync_state["status"],
+        "source": "espn",
+        "last_synced_at": sync_state["last_synced_at"],
+    }
+
+
+@app.get("/api/teams/{league_key}/{team_id}")
+async def team_detail(
+    league_key: Literal["epl", "laliga", "csl"],
+    team_id: str,
+) -> dict:
+    """Return current-season roster, player statistics, and match records."""
+
+    await league_sync.ensure_fresh()
+    league_rows = repository.league_snapshots(league_key)
+    league_snapshot = league_rows[0] if league_rows else None
+    if not league_snapshot:
+        raise HTTPException(status_code=503, detail="Current league data is unavailable")
+    standing = next(
+        (
+            row
+            for row in league_snapshot.get("standings") or []
+            if str((row.get("team") or {}).get("provider_id")) == team_id
+        ),
+        None,
+    )
+    if not standing:
+        raise HTTPException(status_code=404, detail="Team is not in the current league table")
+    season_year = int((league_snapshot.get("season") or {})["year"])
+    state = await team_sync.ensure_fresh(league_key, team_id, season_year)
+    if state["item"] is None:
+        raise HTTPException(status_code=503, detail="Current team data is unavailable")
+    return {"item": state["item"], "sync_status": state["status"]}
+
+
 @app.get("/api/fixtures/{fixture_id}")
 async def fixture_detail(fixture_id: str) -> dict:
     """Return a fixture, its current evidence, and its latest prediction."""
 
     fixture = _fixture_or_404(fixture_id)
     evidence_error: str | None = None
-    external_id = (fixture.get("external_ids") or {}).get("api_football")
+    prediction_error: str | None = None
     if (
         not fixture.get("is_demo")
         and fixture.get("status") in {"scheduled", "live"}
-        and not fixture.get("evidence")
-        and external_id
+        and (not fixture.get("evidence") or evidence_needs_enrichment(fixture.get("evidence")))
         and evidence_provider.configured
     ):
         try:
-            context = await evidence_provider.fetch(fixture)
+            existing = fixture.get("evidence") or {}
+            fetch_secondary = getattr(evidence_provider, "fetch_secondary", None)
+            fetcher = fetch_secondary if should_use_secondary(existing) and callable(fetch_secondary) else evidence_provider.fetch
+            context = await fetcher(fixture)
+            context = merge_evidence(existing, context)
             updated = repository.save_fixture_evidence(fixture_id, context)
             if updated is not None:
                 fixture = updated
         except Exception as error:
             evidence_error = str(error)
+    predictions = {
+        key: repository.latest(fixture_id, key, settings.simulation_competition_id)
+        for key in prediction_service.model_keys
+    }
+    prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
+    localize_evidence_players(context)
+    missing_model_keys = [key for key, item in predictions.items() if item is None]
+    if fixture["status"] == "scheduled" and context.get("synced_at") and missing_model_keys:
+        try:
+            created = await prediction_service.create(fixture, context, missing_model_keys)
+            for item in created:
+                predictions[item.get("model_key") or item["ai"]["provider"]] = item
+                bankroll_service.place_for_prediction(item, fixture, context)
+            prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
+        except Exception as error:
+            prediction_error = str(error)
     free_team_data = fixture.get("free_team_data") or {}
     for side in ("home", "away"):
         team = fixture[f"{side}_team"]
@@ -188,13 +371,101 @@ async def fixture_detail(fixture_id: str) -> dict:
         profile["venue"] = profile.get("venue") or fixture.get("venue")
         if not context["squads"].get(side):
             context["squads"][side] = free_data.get("squad") or []
+    model_bets = {}
+    for key, item in predictions.items():
+        linked_bet = repository.bet_for_prediction(item["id"]) if item else None
+        model_bets[key] = linked_bet or next(
+            (
+                bet
+                for bet in repository.bets(
+                    model_key=key,
+                    competition_id=settings.simulation_competition_id,
+                )
+                if bet.get("fixture_id") == fixture_id
+            ),
+            None,
+        )
     return {
         "fixture": fixture,
         "context": context,
-        "prediction": repository.latest(fixture_id),
-        "capabilities": {"evidence_sync": evidence_provider.configured},
+        "prediction": prediction,
+        "predictions": predictions,
+        "bet": model_bets.get("deepseek") or next((item for item in model_bets.values() if item), None),
+        "bets": model_bets,
+        "competition_id": settings.simulation_competition_id,
+        "capabilities": {
+            "evidence_sync": evidence_provider.configured,
+            "evidence_sources": evidence_provider.sources,
+            "deepseek": deepseek_provider.configured,
+            "chatgpt": chatgpt_provider.configured,
+        },
         "evidence_error": evidence_error,
+        "prediction_error": prediction_error,
     }
+
+
+@app.get("/api/bankroll")
+def bankroll() -> dict:
+    """Return simulated balance, profit, exposure, ROI, and drawdown."""
+
+    return bankroll_service.summary()
+
+
+@app.get("/api/bets")
+def simulated_bets(
+    status: Literal["all", "placed", "settled"] = "all",
+    fixture_date: str | None = None,
+    model: Literal["all", "deepseek", "chatgpt"] = "all",
+) -> dict:
+    """Return the simulated bet ledger; no real-money execution exists."""
+
+    items = repository.bets(
+        None if status == "all" else status,
+        fixture_date,
+        None if model == "all" else model,
+        settings.simulation_competition_id,
+    )
+    return {"items": items, "count": len(items), "is_simulated": True}
+
+
+@app.get("/api/metrics/predictions")
+def prediction_metrics(
+    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    season: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    model_version: str | None = None,
+    model: Literal["all", "deepseek", "chatgpt"] = "all",
+) -> dict:
+    """Return filterable correctness and Brier score metrics."""
+
+    return settlement_service.metrics(
+        None if league == "all" else league,
+        season,
+        start_date,
+        end_date,
+        model_version,
+        None if model == "all" else model,
+        settings.simulation_competition_id,
+    )
+
+
+@app.get("/api/admin/jobs", dependencies=[Depends(require_admin)])
+def automation_jobs(job_name: str | None = None, limit: int = 50) -> dict:
+    """Return recent durable automation run history."""
+
+    items = repository.job_runs(job_name, limit)
+    return {"items": items, "count": len(items), "enabled": settings.automation_enabled}
+
+
+@app.post("/api/admin/jobs/{job_name}/run", dependencies=[Depends(require_admin)])
+async def run_automation_job(job_name: str) -> dict:
+    """Force one known automation job while preserving normal run history."""
+
+    try:
+        return await automation_runner.run_job(job_name)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/api/fixtures/{fixture_id}/predictions/latest")
@@ -208,8 +479,21 @@ def latest_prediction(fixture_id: str) -> dict:
     return result
 
 
+@app.get(
+    "/api/admin/evidence-snapshots/{snapshot_id}",
+    dependencies=[Depends(require_admin)],
+)
+def evidence_snapshot(snapshot_id: str) -> dict:
+    """Return the immutable evidence document linked from a prediction."""
+
+    result = repository.evidence_snapshot(snapshot_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Evidence snapshot was not found")
+    return result
+
+
 @app.post("/api/admin/fixtures/{fixture_id}/predictions", dependencies=[Depends(require_admin)])
-def run_prediction(fixture_id: str) -> dict:
+async def run_prediction(fixture_id: str) -> dict:
     """Create and save a new prediction version for one selected fixture."""
 
     fixture = _fixture_or_404(fixture_id)
@@ -218,9 +502,34 @@ def run_prediction(fixture_id: str) -> dict:
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence")
     if context is None:
         raise HTTPException(status_code=409, detail="请先同步这场比赛的真实赛前数据")
-    result = predict(fixture, context)
-    repository.save(result)
-    return result
+    results = await prediction_service.create(fixture, context)
+    bets = bankroll_service.place_for_predictions(results, fixture, context)
+    return {
+        "predictions": results,
+        "bets": bets,
+        "prediction": next((item for item in results if item.get("model_key") == "deepseek"), results[0] if results else None),
+    }
+
+
+@app.post(
+    "/api/admin/fixtures/{fixture_id}/settle",
+    dependencies=[Depends(require_admin)],
+)
+def settle_fixture(fixture_id: str) -> dict:
+    """Idempotently evaluate predictions and simulated bets for one final fixture."""
+
+    fixture = _fixture_or_404(fixture_id)
+    try:
+        return settlement_service.settle_fixture(fixture)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/admin/settlements/run", dependencies=[Depends(require_admin)])
+def settle_finished_fixtures() -> dict:
+    """Settle every cached fixture that has a final score."""
+
+    return settlement_service.settle_finished()
 
 
 @app.post("/api/admin/fixtures/{fixture_id}/evidence", dependencies=[Depends(require_admin)])
@@ -233,7 +542,7 @@ async def sync_fixture_evidence(fixture_id: str) -> dict:
     try:
         context = await evidence_provider.fetch(fixture)
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"API-Football 赛前数据同步失败：{error}") from error
+        raise HTTPException(status_code=502, detail=f"赛前数据同步失败：{error}") from error
     updated = repository.save_fixture_evidence(fixture_id, context)
     if updated is None:
         raise HTTPException(status_code=404, detail="未找到比赛")
@@ -255,4 +564,15 @@ async def sync_fixtures() -> dict:
             status_code=502,
             detail=f"{settings.schedule_provider} 同步失败：{error}",
         ) from error
+    return {"status": "synced", **result, "synced_at": result["last_synced_at"]}
+
+
+@app.post("/api/admin/standings/sync", dependencies=[Depends(require_admin)])
+async def sync_standings() -> dict:
+    """Force-refresh all supported current-season league tables."""
+
+    try:
+        result = await league_sync.force_refresh()
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"积分榜同步失败：{error}") from error
     return {"status": "synced", **result, "synced_at": result["last_synced_at"]}

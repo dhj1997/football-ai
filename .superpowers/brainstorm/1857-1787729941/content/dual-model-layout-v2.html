@@ -1,0 +1,61 @@
+<h2>初步预测：双模型如何并排展示？</h2>
+<p class="subtitle">两套预测、两份投资意向、两个独立 1000 资金账户。请选择更适合长期对比的布局。</p>
+
+<div class="cards">
+  <div class="card" data-choice="side-by-side" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#f4f6f9">
+      <div style="background:#fff;border:1px solid #dce2e9;border-radius:6px;overflow:hidden;font-family:Arial,sans-serif;color:#17202c">
+        <div style="padding:11px 14px;border-bottom:1px solid #dce2e9;display:flex;justify-content:space-between;align-items:center">
+          <strong>初步预测 · 双模型并行</strong><span style="font-size:11px;color:#667284">皇家马德里 vs 皇家社会</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr">
+          <div style="padding:13px;border-right:1px solid #dce2e9">
+            <div style="font-size:11px;color:#1478e8;font-weight:700">DEEPSEEK</div>
+            <div style="display:flex;justify-content:space-between;margin:9px 0"><b>主胜 58%</b><span style="font-size:12px">平 24% · 客 18%</span></div>
+            <p style="font-size:12px;margin:7px 0">主场实力更强，但伤病影响净胜空间。</p>
+            <div style="padding:8px;background:#eef7f0;font-size:12px"><b>投资：主胜 · 18.00</b><br><span style="color:#667284">独立资金 1000</span></div>
+          </div>
+          <div style="padding:13px">
+            <div style="font-size:11px;color:#0b8f6a;font-weight:700">GPT-5.6 SOL</div>
+            <div style="display:flex;justify-content:space-between;margin:9px 0"><b>主胜 51%</b><span style="font-size:12px">平 29% · 客 20%</span></div>
+            <p style="font-size:12px;margin:7px 0">盘口保护更有价值，自主选择受让方向。</p>
+            <div style="padding:8px;background:#fff5dd;font-size:12px"><b>投资：皇家社会 +1.5 · 12.00</b><br><span style="color:#667284">独立资金 1000</span></div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;background:#f8fafc;border-top:1px solid #dce2e9;font-size:11px">
+          <div style="padding:8px 13px;border-right:1px solid #dce2e9">DeepSeek 权益 1018 · 命中率 62%</div>
+          <div style="padding:8px 13px">GPT 权益 1008 · 命中率 58%</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 同屏双列对比（推荐）</h3>
+      <p>每场比赛立即看出两个模型的分歧、独立下注和资金状态；手机端自动变为上下两张卡。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="model-tabs" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#f4f6f9">
+      <div style="background:#fff;border:1px solid #dce2e9;border-radius:6px;overflow:hidden;font-family:Arial,sans-serif;color:#17202c">
+        <div style="display:flex;border-bottom:1px solid #dce2e9">
+          <b style="padding:10px 14px;color:#1478e8;border-bottom:2px solid #1478e8">DeepSeek</b>
+          <b style="padding:10px 14px;color:#667284">GPT-5.6 Sol</b>
+        </div>
+        <div style="padding:16px">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);text-align:center;border:1px solid #dce2e9">
+            <div style="padding:12px;background:#eef7f0"><small>主胜</small><br><b style="font-size:22px;color:#1478e8">58%</b></div>
+            <div style="padding:12px;border-left:1px solid #dce2e9"><small>平局</small><br><b style="font-size:22px">24%</b></div>
+            <div style="padding:12px;border-left:1px solid #dce2e9"><small>客胜</small><br><b style="font-size:22px">18%</b></div>
+          </div>
+          <p style="font-size:12px">当前只显示所选模型的完整判断与投资建议。</p>
+          <div style="padding:9px;background:#eef7f0;font-size:12px"><b>投资：主胜 · 18.00</b></div>
+        </div>
+        <div style="padding:9px 14px;background:#f8fafc;border-top:1px solid #dce2e9;font-size:11px">底部总览：DeepSeek 1018 / GPT 1008</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 模型页签切换</h3>
+      <p>单个预测信息空间更宽，但查看分歧和投资差异时需要切换，长期横向比较效率较低。</p>
+    </div>
+  </div>
+</div>

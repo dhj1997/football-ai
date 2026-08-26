@@ -100,6 +100,8 @@ def demo_context(fixture_id: str) -> dict:
             "draw": round(3.35 + (seed % 3) * 0.08, 2),
             "away": round(3.65 + (seed % 5) * 0.12, 2),
             "asian_handicap": -0.75 if seed % 2 else -0.5,
+            "asian_handicap_home_odd": 1.92,
+            "asian_handicap_away_odd": 1.86,
             "updated_at": now.isoformat(),
             "is_demo": True,
         },

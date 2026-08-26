@@ -1,6 +1,8 @@
 """API-Football evidence mapping tests."""
 
-from app.evidence_provider import _availability, _lineup, _odds, _recent_form, _squad, _team_profile
+import pytest
+
+from app.evidence_provider import ApiFootballEvidenceProvider, _availability, _lineup, _odds, _recent_form, _squad, _team_profile
 
 
 def test_odds_maps_nested_bookmakers_and_asian_handicap() -> None:
@@ -22,7 +24,10 @@ def test_odds_maps_nested_bookmakers_and_asian_handicap() -> None:
                                 },
                                 {
                                     "id": 4,
-                                    "values": [{"value": "Home -0.5", "odd": "2.62"}],
+                                    "values": [
+                                        {"value": "Home -0.5", "odd": "2.62"},
+                                        {"value": "Away -0.5", "odd": "1.51"},
+                                    ],
                                 },
                             ],
                         }
@@ -39,6 +44,8 @@ def test_odds_maps_nested_bookmakers_and_asian_handicap() -> None:
         "draw": 3.3,
         "away": 2.52,
         "asian_handicap": -0.5,
+        "asian_handicap_home_odd": 2.62,
+        "asian_handicap_away_odd": 1.51,
         "updated_at": "2026-08-25T09:00:00+00:00",
         "is_demo": False,
     }
@@ -67,6 +74,45 @@ def test_recent_form_maps_public_event_scores_to_team_results() -> None:
     assert context["home"][0]["result"] == "W"
     assert context["home"][0]["score"] == "2 - 1"
     assert context["home"][0]["team_is_home"] is True
+    assert context["home_points_per_game"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_public_fallback_is_real_partial_evidence_without_odds(monkeypatch) -> None:
+    provider = ApiFootballEvidenceProvider("", "https://api.example.test", "123")
+
+    async def recent_events(_fixture):
+        return {
+            "home": [
+                {
+                    "dateEvent": "2026-08-22",
+                    "idHomeTeam": "10",
+                    "strHomeTeam": "Valencia",
+                    "strAwayTeam": "Celta Vigo",
+                    "intHomeScore": "2",
+                    "intAwayScore": "1",
+                }
+            ],
+            "away": [],
+        }
+
+    monkeypatch.setattr(provider, "_get_recent_events", recent_events)
+    fixture = {
+        "home_team": {"provider_id": 10},
+        "away_team": {"provider_id": 20},
+        "free_team_data": {
+            "home": {"profile": {"name": "瓦伦西亚"}, "squad": [{"name": "Player"}]},
+            "away": {"profile": {"name": "塞尔塔"}, "squad": []},
+        },
+    }
+
+    result = await provider.fetch_public(fixture)
+
+    assert result["source"] == "thesportsdb-partial"
+    assert result["recent_form"]["home_points_per_game"] == 3.0
+    assert result["squads"]["home"][0]["name"] == "Player"
+    assert result["availability"]["updated_at"] is None
+    assert result["odds"] is None
 
 
 def test_lineup_and_availability_keep_player_details() -> None:

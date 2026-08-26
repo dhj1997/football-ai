@@ -30,6 +30,56 @@ class ApiFootballEvidenceProvider:
 
         return bool(self.api_key)
 
+    @property
+    def public_configured(self) -> bool:
+        return bool(self.schedule_api_key and self.schedule_base_url)
+
+    async def fetch_public(self, fixture: dict[str, Any]) -> dict[str, Any]:
+        """Build honest partial evidence from cached team data and recent public results."""
+
+        if not self.public_configured:
+            raise RuntimeError("TheSportsDB public evidence is not configured")
+        recent_events = await self._get_recent_events(fixture)
+        free_team_data = fixture.get("free_team_data") or {}
+        updated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        return {
+            "recent_form": _recent_form(
+                {},
+                recent_events,
+                (fixture.get("home_team") or {}).get("provider_id"),
+                (fixture.get("away_team") or {}).get("provider_id"),
+            ),
+            "head_to_head": [],
+            "availability": {
+                "home_missing": 0,
+                "away_missing": 0,
+                "notes": [],
+                "players": [],
+                "updated_at": None,
+            },
+            "lineup": {
+                "confirmed": False,
+                "home_strength": 0.88,
+                "away_strength": 0.86,
+                "home_formation": None,
+                "away_formation": None,
+                "home_players": [],
+                "away_players": [],
+                "updated_at": None,
+            },
+            "teams": {
+                side: ((free_team_data.get(side) or {}).get("profile") or {})
+                for side in ("home", "away")
+            },
+            "squads": {
+                side: ((free_team_data.get(side) or {}).get("squad") or [])
+                for side in ("home", "away")
+            },
+            "odds": None,
+            "source": "thesportsdb-partial",
+            "synced_at": updated_at,
+        }
+
     async def fetch(self, fixture: dict[str, Any]) -> dict[str, Any]:
         """Fetch form, head-to-head, availability, lineup, and odds for a fixture."""
 
@@ -203,8 +253,8 @@ def _recent_form(
     return {
         "home": home_matches or ([home_last["form"]] if home_last.get("form") else []),
         "away": away_matches or ([away_last["form"]] if away_last.get("form") else []),
-        "home_points_per_game": _points_per_game(home.get("league")),
-        "away_points_per_game": _points_per_game(away.get("league")),
+        "home_points_per_game": _points_per_game(home.get("league")) or _match_points_per_game(home_matches),
+        "away_points_per_game": _points_per_game(away.get("league")) or _match_points_per_game(away_matches),
         "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
 
@@ -242,6 +292,16 @@ def _optional_score(value: object) -> int | None:
         return int(value) if value not in (None, "") else None
     except (TypeError, ValueError):
         return None
+
+
+def _match_points_per_game(matches: list[dict[str, Any]]) -> float:
+    if not matches:
+        return 0.0
+    points = sum(
+        3 if item.get("result") == "W" else 1 if item.get("result") == "D" else 0
+        for item in matches
+    )
+    return round(points / len(matches), 2)
 
 
 def _points_per_game(league: Any) -> float:
@@ -424,6 +484,9 @@ def _odds(payload: dict[str, Any], updated_at: str) -> dict[str, Any] | None:
     bookmaker = bookmakers[0]
     match_winner: dict[str, float] = {}
     handicap: float | None = None
+    handicap_home_odd: float | None = None
+    handicap_away_odd: float | None = None
+    away_handicap_values: list[tuple[float, float]] = []
     for bet in bookmaker.get("bets") or []:
         if bet.get("id") == 1:
             for value in bet.get("values") or []:
@@ -431,14 +494,27 @@ def _odds(payload: dict[str, Any], updated_at: str) -> dict[str, Any] | None:
                     match_winner[value["value"]] = float(value["odd"])
                 except (KeyError, TypeError, ValueError):
                     continue
-        if bet.get("id") == 4 and handicap is None:
+        if bet.get("id") == 4:
             for value in bet.get("values") or []:
-                if str(value.get("value", "")).startswith("Home "):
-                    try:
-                        handicap = float(str(value["value"]).removeprefix("Home "))
-                    except ValueError:
-                        continue
-                    break
+                raw_value = str(value.get("value", ""))
+                side, _, raw_line = raw_value.partition(" ")
+                if side not in {"Home", "Away"}:
+                    continue
+                try:
+                    line = float(raw_line)
+                    odd = float(value["odd"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if side == "Home" and handicap is None:
+                    handicap = line
+                    handicap_home_odd = odd
+                elif side == "Away":
+                    away_handicap_values.append((line, odd))
+    if handicap is not None:
+        for away_line, away_odd in away_handicap_values:
+            if abs(away_line - handicap) < 1e-9 or abs(away_line + handicap) < 1e-9:
+                handicap_away_odd = away_odd
+                break
     if not {"Home", "Draw", "Away"}.issubset(match_winner):
         return None
     return {
@@ -447,6 +523,8 @@ def _odds(payload: dict[str, Any], updated_at: str) -> dict[str, Any] | None:
         "draw": match_winner["Draw"],
         "away": match_winner["Away"],
         "asian_handicap": handicap,
+        "asian_handicap_home_odd": handicap_home_odd,
+        "asian_handicap_away_odd": handicap_away_odd,
         "updated_at": updated_at,
         "is_demo": False,
     }

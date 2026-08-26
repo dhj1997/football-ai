@@ -1,17 +1,25 @@
 # 足球赛前分析台
 
-面向中超、西甲和英超的赛前分析 MVP。访客可以浏览今日、明日和历史赛程；管理员只对选中的比赛手动生成预测，每次运行都会保存独立版本。
+面向中超、西甲和英超的持续赛前分析与模拟资金系统。系统自动同步赛程、积分榜和赛前证据，并行使用 DeepSeek 与 GPT-5.6 Sol 生成两套可审计预测，在完赛后分别结算预测与模拟下注。
 
-当前默认不展示演示赛程。操作台默认使用 TheSportsDB 免费赛程接口，点击“同步赛程”后，系统同步中超、西甲和英超昨日、今日及明日的赛程，并由公开页读取本地缓存。只有显式设置 `USE_DEMO_DATA=true` 才会在尚无真实缓存时显示演示赛程。选中一场真实比赛后，管理员可点击“同步赛前数据”，通过 API-Football 的单场接口拉取近期状态、历史交锋、伤停、首发状态和赛前赔率；同步完成后才允许发起真实预测。
+默认不展示演示赛程。TheSportsDB 提供短窗口真实赛程和免费球队资料，ESPN 提供三个联赛的完整当前赛季积分榜、阵容、球员统计和比赛记录，API-Football 在额度允许时补充交锋、伤停、首发和赔率。API-Football 不可用时，系统会保存明确标注的部分真实证据并允许两个模型生成 `no_bet` 预测，不会用演示值补齐缺失数据。
 
 ## 已实现
 
 - 今日、明日、历史赛程与三联赛筛选
 - 单场比赛证据准备度：近期状态、交锋、阵容、首发、赔率、模型
-- 管理员手动发起预测，区分初步预测与确认首发版
+- FastAPI 常驻自动任务：赛程、积分榜、临场证据/预测和赛后结算
+- 管理员可查看持久作业记录并立即运行指定作业
+- 完整当前赛季积分榜：英超、西甲、中超
+- 球队详情：当前赛季赛果、完整阵容、球员出场/进球/助攻/牌/伤病状态
+- DeepSeek 与 GPT-5.6 Sol 严格结构化并行预测，区分初步预测与确认首发版
 - Poisson 进球分布与去水赔率融合的胜平负概率
 - 亚洲让球的全赢、半赢、走盘、半输、全输概率
-- 预测版本、模型版本和证据时间戳持久化到 SQLite
+- 不可变证据快照、内容哈希、提示词版本、模型版本和预测版本持久化
+- 两个独立的 1000 初始模拟账户；各模型可按自身建议使用 0%-100% 可用现金，不借款且不连接真实投注平台
+- 逐笔模拟下注、资金流水、已实现权益曲线、赛后盈亏、ROI、命中率、Brier、数据完整度和最大回撤
+- 亚洲盘全赢、半赢、走水、半输、全输分类汇总
+- 预测指标支持联赛、赛季、日期和模型版本筛选
 - TheSportsDB 免费三联赛真实赛程同步、缓存与最后同步时间
 - API-Football 单场赛前证据同步；未发布首发或暂缺赔率时明确显示缺失状态，不使用演示值代替
 - 赛前赔率来自 API-Football / API-Sports 的 `/odds` 接口，展示返回结果中的第一家 bookmaker、1X2 与亚洲让球盘口，并记录同步时间
@@ -41,7 +49,15 @@ cd D:\Work\football-ai\apps\web
 pnpm dev --hostname 127.0.0.1 --port 3000
 ```
 
-访问公开页 `http://127.0.0.1:3000`，操作台为 `http://127.0.0.1:3000/admin`，API 文档为 `http://127.0.0.1:8000/docs`。
+页面入口：
+
+- 赛程与预测：`http://127.0.0.1:3000`
+- 三联赛积分榜：`http://127.0.0.1:3000/standings`
+- 模拟资金与绩效：`http://127.0.0.1:3000/performance`
+- 管理与作业状态：`http://127.0.0.1:3000/admin`
+- API 文档：`http://127.0.0.1:8000/docs`
+
+只要 FastAPI 进程保持运行，数据库驱动的自动任务就会持续工作。生产环境应使用 Windows 服务、systemd、Docker 或其他进程守护方式保持 API 进程常驻；浏览器和 Codex 任务不承担生产调度。
 
 ## 配置
 
@@ -51,17 +67,30 @@ pnpm dev --hostname 127.0.0.1 --port 3000
 Copy-Item .env.example .env
 ```
 
-默认无需填写赛程 API Key，TheSportsDB 免费 key 为 `123`。重启 API 服务后进入操作台点击“同步赛程”。如果你有 API-Football Key，填入 `API_FOOTBALL_KEY` 后，在选中比赛的详情面板点击“同步赛前数据”即可拉取该场的近期状态、交锋、伤停、首发状态和赔率。开发环境默认管理员密钥为 `dev-admin-key`，只用于本地开发；生产部署必须替换，并由 Web 服务端保存，不得暴露到浏览器。
+默认 TheSportsDB key 为 `123`。DeepSeek 和 GPT 密钥只从后端环境变量读取。如果配置 `API_FOOTBALL_KEY`，系统会优先拉取交锋、伤停、首发和赔率；遇到额度、限流或请求失败时会尝试 ESPN 公共数据，最后才使用 TheSportsDB 部分证据。ESPN 使用现有 `ESPN_BASE_URL` 配置，不需要额外密钥；接口不可用时会自动降级并记录来源。开发环境默认管理员密钥为 `dev-admin-key`，只用于本地开发；生产部署必须替换，并由 Web 服务端保存，不得暴露到浏览器。
 
 关键变量：
 
 - `API_FOOTBALL_KEY`：可选的 API-Football 密钥，后续用于详细赛前证据。
+- `ESPN_BASE_URL`：ESPN 公共数据地址，默认 `https://site.api.espn.com`，用于积分榜、球队资料和 API-Football 失败时的比赛证据。
+- `API_DEEPSEEK_KEY`：DeepSeek 后端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
+- `DEEPSEEK_MODEL`：默认 `deepseek-v4-flash`。
+- `DEEPSEEK_BASE_URL`：默认 `https://api.deepseek.com`。
+- `DEEPSEEK_TIMEOUT_SECONDS`、`DEEPSEEK_MAX_RETRIES`、`DEEPSEEK_MAX_TOKENS`：模型超时、重试和输出预算。
+- `API_CHATGPT_KEY`：GPT 服务端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
+- `CHATGPT_MODEL`、`CHATGPT_BASE_URL`：默认分别为 `gpt-5.6-sol` 和 `https://api.quya.org/v1`。
+- `SIMULATION_COMPETITION_ID`：当前双模型模拟竞赛标识；更换标识可开始一轮新的独立 1000 对 1000 对比，旧记录继续保留。
 - `SCHEDULE_PROVIDER`：当前为 `thesportsdb`。
 - `THESPORTSDB_API_KEY`：TheSportsDB 赛程 key，默认 `123`。
 - `SCHEDULE_LOOKBACK_DAYS`：赛程同步回看天数，默认 `1`，避免免费源的请求频率限制。
+- `AUTOMATION_ENABLED`：是否启动 FastAPI 常驻自动任务，默认 `true`。
+- `AUTOMATION_*_INTERVAL_MINUTES`：赛程、积分榜、分析和结算间隔。
+- `AUTOMATION_FAILURE_BACKOFF_MINUTES`：失败或部分成功后的退避时间。
+- `PREDICTION_LEAD_HOURS`：进入自动分析的开赛前时间窗，默认 `36`。
+- `AUTOMATION_EVIDENCE_REFRESH_LIMIT`：每轮最多刷新多少场 API-Football 证据，默认 `1`。
 - `USE_DEMO_DATA`：是否在没有真实缓存时显示演示数据，默认 `false`。
 - `ADMIN_API_KEY`：保护刷新与预测接口。
-- `DATABASE_URL`：默认使用 `sqlite:///./football_ai.db`；生产或共享环境可使用 `mysql+pymysql://用户名:密码@主机:3306/football_ai?charset=utf8mb4`。应用启动时会自动创建 `predictions`、`fixtures` 和 `sync_metadata` 表。
+- `DATABASE_URL`：默认使用 `sqlite:///./football_ai.db`；生产或共享环境可使用 `mysql+pymysql://用户名:密码@主机:3306/football_ai?charset=utf8mb4`。应用启动时会创建赛程、联赛/球队快照、不可变证据/预测、模拟下注/流水/结算和作业记录表。
 - `NEXT_PUBLIC_API_BASE_URL`：浏览器读取公开 API 的地址。
 - `API_BASE_URL`：Next.js 服务端调用 FastAPI 的地址。
 
@@ -97,6 +126,6 @@ pnpm build
 
 ## 模型边界
 
-当前模型用于打通可审计的产品流程，不是已经过历史回测的生产预测模型。上线前需要完成按时间切分的回测、概率校准、基线对比、缺失数据降级和持续漂移监控。页面中的概率不是确定赛果，也不构成投注建议。
+当前模型用于可审计的概率分析和模拟资金流程，不是已经过充分历史回测的生产投注模型。页面中的概率不是确定赛果，也不构成投注建议；系统没有真实投注平台接口，不会执行真实交易。
 
-真实赛程不会使用演示近期状态、阵容或赔率生成预测。真实比赛必须先完成该场赛前证据同步，证据缺失时预测按钮保持禁用。
+真实赛程不会使用演示近期状态、阵容或赔率。完整证据不可用时，预测会记录缺失项和降级状态；没有匹配的真实赔率时强制 `no_bet` 和 0 金额。
