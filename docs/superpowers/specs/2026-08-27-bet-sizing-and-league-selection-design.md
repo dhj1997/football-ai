@@ -27,6 +27,22 @@ Every prediction exposes backend advice even when no simulated bet is executed:
 
 When all available rows have edge below 3%, the highest-edge row remains the observation suggestion and execution stays `no_bet`. When no reliable priced row exists, the model's forecast outcome remains the directional suggestion, but the product explicitly marks priced market advice as unavailable instead of fabricating one.
 
+### Asian Handicap Probability Authority
+
+Each model's `asian_handicap_forecast` is the directional probability authority for that model's Asian-handicap EV. The backend must not display the model's cover probabilities while silently pricing the market with the Poisson baseline.
+
+The current model contract supplies normalized home/away cover probabilities but not a complete full-win, half-win, push, half-loss, and full-loss distribution. The backend therefore combines the two sources narrowly:
+
+- the model forecast determines the positive-versus-negative probability split;
+- the Poisson settlement distribution preserves the push mass and the internal full/half result shape required by integer and quarter lines;
+- the resulting settlement weights are used for expected-return calculation;
+- the market table's model probability remains the model's stated cover probability;
+- the backend falls back entirely to Poisson only when the model forecast is unavailable, incomplete, or does not match the priced handicap line.
+
+For a half-goal line such as `-1.5`, there is no push or half result, so the calculation reduces directly to the model's binary probabilities. A 44% away-cover forecast at price 2.15 has `44% * 2.15 - 1 = -5.4%` edge and cannot qualify under the 3% threshold.
+
+Existing pre-kickoff simulated bets are reconciled with the corrected probability source. A bet that no longer qualifies is refunded through the existing ledger and the league-day slot is recalculated. Started and settled bets remain immutable.
+
 ## Stake Sizing
 
 For an eligible candidate, percentages are expressed as decimal fractions in code:
@@ -84,6 +100,8 @@ The web match panel shows the suggested direction and theoretical stake for all 
 Tests cover:
 
 - best positive-edge market selection despite model `no_bet` or a negative-edge model pick;
+- model Asian-handicap cover probabilities overriding the Poisson direction while retaining required push/full/half settlement shape;
+- Poisson fallback when the model handicap forecast is unavailable or line-mismatched;
 - the linear 10%-25% stake formula and 50% daily cap;
 - refusal to place a sub-10% bet;
 - one bet per model, league, and date;
