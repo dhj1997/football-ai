@@ -1,6 +1,6 @@
 import pytest
 
-from app.evidence_chain import EvidenceProviderChain, evidence_needs_enrichment, merge_evidence
+from app.evidence_chain import EvidenceProviderChain, evidence_needs_enrichment, localize_evidence_players, merge_evidence
 
 
 @pytest.mark.asyncio
@@ -79,4 +79,39 @@ def test_incomplete_form_is_enriched_without_discarding_existing_fields() -> Non
     assert len(merged["recent_form"]["home"]) == 5
     assert merged["availability"]["players"] == [{"name": "旧伤停"}]
     assert merged["odds"] == {"home": 1.9}
+    assert merged["source"] == "api-football-single-fixture+espn-evidence"
+
+    localized = localize_evidence_players(
+        {"source": "api-football+espn-evidence+espn-evidence", "squads": {"home": [], "away": []}, "lineup": {}, "availability": {}}
+    )
+    assert localized["source"] == "api-football+espn-evidence"
+
+
+def test_performance_rich_squad_replaces_basic_identity_only_squad() -> None:
+    previous = {
+        "source": "api-football-single-fixture+espn-evidence",
+        "squads": {
+            "home": [{"id": "1", "name": "测试球员", "original_name": "Test Player"}],
+            "away": [],
+        },
+    }
+    incoming = {
+        "source": "espn-evidence",
+        "squads": {
+            "home": [
+                {
+                    "id": "espn-1",
+                    "provider_player_id": "espn-1",
+                    "name": "测试球员",
+                    "original_name": "Test Player",
+                    "statistics": {"appearances": 8, "goals": 3},
+                }
+            ],
+            "away": [],
+        },
+    }
+
+    merged = merge_evidence(previous, incoming)
+
+    assert merged["squads"]["home"][0]["statistics"]["appearances"] == 8
     assert merged["source"] == "api-football-single-fixture+espn-evidence"

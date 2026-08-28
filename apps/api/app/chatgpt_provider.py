@@ -1,4 +1,4 @@
-"""Strict Responses API client for the optional ChatGPT fallback model."""
+"""Strict Responses API client using the shared forecast contract."""
 
 import asyncio
 import json
@@ -6,18 +6,11 @@ from typing import Any
 
 import httpx
 
-from .deepseek_provider import (
-    DeepSeekAssessment,
-    _bounded_error,
-    _normalize_no_bet_assessment,
-    _retryable,
-    _validate_chinese_output,
-    _validate_handicap_assessment,
-    _validate_recommendation,
-)
+from .deepseek_provider import _bounded_error, _retryable
+from .prompt_contract import DEFAULT_PROMPT_CONTRACT, ForecastAssessment, PromptContract, validate_forecast_assessment
 
 
-PROMPT_VERSION = "chatgpt-football-v2"
+PROMPT_VERSION = DEFAULT_PROMPT_CONTRACT.version
 
 
 class ChatGptProvider:
@@ -34,6 +27,7 @@ class ChatGptProvider:
         max_retries: int = 1,
         max_tokens: int = 3000,
         transport: httpx.AsyncBaseTransport | None = None,
+        contract: PromptContract = DEFAULT_PROMPT_CONTRACT,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -42,6 +36,8 @@ class ChatGptProvider:
         self.max_retries = max(0, max_retries)
         self.max_tokens = max(500, min(int(max_tokens), 8000))
         self.transport = transport
+        self.contract = contract
+        self.prompt_version = contract.version
 
     @property
     def configured(self) -> bool:
@@ -50,35 +46,14 @@ class ChatGptProvider:
     async def assess(self, model_input: dict[str, Any]) -> dict[str, Any]:
         if not self.configured:
             raise RuntimeError("API_CHATGPT_KEY is not configured")
-
-        schema = DeepSeekAssessment.model_json_schema()
+        schema = self.contract.schema()
         payload = {
             "model": self.model,
-            "input": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a pre-match football risk analysis model. Use only the supplied "
-                        "evidence and never invent facts. Return the requested structured output. "
-                        "Probabilities must total 1. If evidence is insufficient, recommendation.market "
-                        "must be no_bet. The independent simulated-account stake fraction may be any "
-                        "value from 0 to 1 and does not need to follow a Poisson baseline. Write "
-                        "human-facing summary and reasons in Chinese."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {"prompt_version": PROMPT_VERSION, "evidence": model_input},
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                },
-            ],
+            "input": self.contract.messages(model_input),
             "text": {
                 "format": {
                     "type": "json_schema",
-                    "name": "football_assessment",
+                    "name": "football_forecast",
                     "strict": True,
                     "schema": schema,
                 }
@@ -104,18 +79,15 @@ class ChatGptProvider:
                         )
                     response.raise_for_status()
                     body = response.json()
-                    assessment = DeepSeekAssessment.model_validate(
-                        _normalize_no_bet_assessment(json.loads(_output_text(body)))
-                    )
-                    _validate_chinese_output(assessment)
-                    _validate_handicap_assessment(assessment, model_input.get("odds"))
-                    _validate_recommendation(assessment, model_input.get("odds"))
+                    assessment = ForecastAssessment.model_validate(json.loads(_output_text(body)))
+                    validate_forecast_assessment(assessment, model_input)
                     return {
                         "assessment": assessment.model_dump(),
                         "provider": self.provider_name,
                         "requested_model": self.model,
                         "returned_model": body.get("model") or self.model,
-                        "prompt_version": PROMPT_VERSION,
+                        "prompt_version": self.contract.version,
+                        "evidence_version": self.contract.evidence_version,
                         "usage": _safe_usage(body.get("usage")),
                         "request_id": response.headers.get("x-request-id"),
                     }

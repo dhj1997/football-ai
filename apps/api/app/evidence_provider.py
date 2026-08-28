@@ -339,12 +339,13 @@ def _availability(payload: dict[str, Any], home_id: int, away_id: int, updated_a
     home_missing = 0
     away_missing = 0
     notes: list[str] = []
-    players: list[dict[str, str]] = []
+    players: list[dict[str, Any]] = []
     seen: set[tuple[object, str, str]] = set()
     for item in payload.get("response") or []:
         team_id = (item.get("team") or {}).get("id")
-        player = (item.get("player") or {}).get("name") or "未知球员"
-        reason = (item.get("player") or {}).get("reason") or "缺阵"
+        provider_player = item.get("player") or {}
+        player = provider_player.get("name") or "未知球员"
+        reason = provider_player.get("reason") or "缺阵"
         key = (team_id, player, reason)
         if key in seen:
             continue
@@ -358,7 +359,15 @@ def _availability(payload: dict[str, Any], home_id: int, away_id: int, updated_a
         else:
             team = "unknown"
         localized_player = to_chinese_player_name(player)
-        players.append({"team": team, "name": localized_player, "reason": reason})
+        players.append(
+            {
+                "team": team,
+                "provider_player_id": str(provider_player["id"]) if provider_player.get("id") is not None else None,
+                "name": localized_player,
+                "original_name": player,
+                "reason": reason,
+            }
+        )
         notes.append(f"{localized_player}：{reason}")
     return {
         "home_missing": home_missing,
@@ -389,7 +398,9 @@ def _lineup(payload: dict[str, Any], home_id: int, away_id: int, updated_at: str
                 player = item.get("player") or {}
                 players.append(
                     {
+                        "provider_player_id": str(player["id"]) if player.get("id") is not None else None,
                         "name": to_chinese_player_name(player.get("name") or "未知球员"),
+                        "original_name": player.get("name") or "未知球员",
                         "number": player.get("number"),
                         "position": player.get("pos") or "",
                         "starter": starter,
@@ -449,6 +460,7 @@ def _squad(payload: dict[str, Any], public_players: list[dict[str, Any]]) -> lis
         result.append(
             {
                 "id": player.get("id"),
+                "provider_player_id": str(player["id"]) if player.get("id") is not None else None,
                 "name": to_chinese_player_name(public_player.get("strPlayer") or original_name),
                 "original_name": original_name,
                 "age": player.get("age"),

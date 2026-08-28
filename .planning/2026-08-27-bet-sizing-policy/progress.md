@@ -1,0 +1,47 @@
+# Progress
+
+- Started a read-only audit of the dual-model decision and bankroll path.
+- Preserved the existing dirty worktree and active player-impact plan.
+- Located the main no-bet gates and confirmed the duplicated 2% cap in market sizing and bankroll placement.
+- Audited all ten live predictions for 2026-08-28 through the isolated API on port 8001.
+- Phase 1 complete: one bet, three AI-declined predictions, and six negative-edge selected markets; positive alternative markets exist in multiple blocked cases.
+- Started policy design; the remaining ambiguity is which probability/advantage measure should scale stakes above the requested 10% floor.
+- User selected expected edge, approved backend best-market selection, and chose risk profile A: 10%-25% per bet and 50% per day.
+- User added a one-bet-per-league-per-day limit and approved applying it independently to each model.
+- Inspected automatic and on-demand placement paths; both currently place immediately per fixture and require league-day candidate reconciliation.
+- Final design approved in conversation, written to the repository, self-reviewed, and committed as `cf3bf25`.
+- Waiting for the required written-spec review before implementation begins.
+- User confirmed the written specification and explicitly requested implementation.
+- `writing-plans` is not installed; continuing with the active `planning-with-files` implementation plan.
+- Finalized the minimal implementation path across market decision, bankroll reconciliation, derived API execution state, and the existing match panel.
+- Implemented best-market selection, linear theoretical sizing, league-day candidate ranking, pre-kickoff replacement, and minimum/daily exposure enforcement in the backend core.
+- Python compilation and diff checks pass. The first pytest command used the wrong system interpreter, which lacks pytest; locating the project environment next.
+- Switched to `apps/api/.venv`; focused market, bankroll, and dual-model suite now passes 23 tests.
+- Added compatibility hydration for older/current in-memory decisions that lack persisted price and edge fields; risk sizing still recomputes the approved linear fraction from edge.
+- Added derived API execution state and updated the model panel to show advice, theoretical stake, actual execution, and league-day-limit reasons separately.
+- Added current-policy reconstruction for immutable legacy predictions and automatic reconciliation even when no new model call is due.
+- Focused automation/API/decision/bankroll/dual-model suite passes 43 tests; web lint and TypeScript checks pass.
+- Web production build passes. The first full API command did not start because its interpreter path was relative to the API directory while the command ran from repository root.
+- Full API suite passes 131 tests with one existing Starlette deprecation warning.
+- Started `agent-browser` workflow loading for isolated local UI verification; global CLI was unavailable, switching to `npx`.
+- Live reconciliation on the production-configured database now has exactly one open bet per model/league/date and every open stake is within 10%-25%.
+- `npx agent-browser` produced the initial home-page snapshot but then hung on repeated session commands; terminated the hangs and switched browser drivers.
+- Implemented legacy 2% open-bet migration: pre-kickoff stakes are refunded through the existing ledger and replaced at the current 10%-25% size.
+- Fixed time-dependent test fixtures exposed when the test clock crossed today's kickoff.
+- Final API suite: 132 passed with one existing Starlette deprecation warning.
+- Final Web checks: ESLint passed, TypeScript passed, production build passed.
+- Live isolated API/Web services return HTTP 200 on ports 8002/3001. Browser drivers could not attach for final screenshot QA; this limitation is recorded rather than hidden.
+- Phase 4 complete.
+- User reported that GPT showed Barcelona -1.5 at 56% but the portfolio bought Athletic +1.5.
+- Live diagnosis confirmed market EV used Poisson 57.49% away cover instead of GPT's 44%, creating a false +23.6% edge instead of -5.4%.
+- User approved the repair. Phase 5 started with a model-direction/Poisson-settlement-shape design that supports half, integer, and quarter lines without changing the prompt contract.
+- Implemented model-directed Asian-handicap settlement reweighting and current market-table reconstruction in bankroll reconciliation.
+- Market-decision regression tests passed; bankroll fixtures initially failed because their odds intentionally lacked timestamps and are being updated to represent fresh executable prices.
+- Focused API/automation/decision/bankroll suite passes 43 tests. Full suite exposed three remaining timestamp-less execution fixtures in dual-account and settlement tests.
+- Full API suite passed 134 tests after fixture timestamps were corrected.
+- Live reconciliation removed the Barcelona GPT +1.5 bet, but exposed that cross-fixture ranking still reused Celta's persisted Poisson market table. Candidate ranking is being changed to rebuild every fixture from its own saved odds.
+- Rebuilt every league-day candidate from its own saved evidence odds; focused suite passes 43 tests.
+- Reconciled live bets again: Barcelona GPT is no-bet, the invalid +1.5 bet is gone, and independent league slots were recalculated.
+- Removed the unused bankroll-local Poisson EV implementation to prevent the probability source from diverging again.
+- Final API suite passes 134 tests with one existing Starlette deprecation warning; diff check passes.
+- Final isolated API and match page return HTTP 200 on ports 8002 and 3001. Phase 5 and Phase 6 complete.

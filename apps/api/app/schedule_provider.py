@@ -134,6 +134,7 @@ class TheSportsDbProvider:
         original_name = player.get("strPlayer") or "未知球员"
         return {
             "id": _optional_int(player.get("idPlayer")),
+            "provider_player_id": str(player["idPlayer"]) if player.get("idPlayer") not in (None, "") else None,
             "name": to_chinese_player_name(original_name),
             "original_name": original_name,
             "age": _optional_int(player.get("strAge")),

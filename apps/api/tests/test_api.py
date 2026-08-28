@@ -1,7 +1,8 @@
 """HTTP-level coverage for the assembled fixture workflow."""
 
 import os
-from datetime import UTC, datetime
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 TEST_DATABASE = Path("test_football_ai.db")
@@ -13,8 +14,10 @@ os.environ["API_CHATGPT_KEY"] = ""
 
 from fastapi.testclient import TestClient
 
-from app.data import CHINA_TZ, demo_fixtures, unavailable_context
+from app.data import CHINA_TZ, demo_context, demo_fixtures, unavailable_context
 from app.main import app, evidence_provider, provider, repository, schedule_provider
+from app.prediction import predict
+from app.prompt_contract import DEFAULT_PROMPT_CONTRACT
 
 
 client = TestClient(app)
@@ -29,6 +32,7 @@ def seed_real_fixture(fixture_id: str = "api-123", provider_id: int = 123) -> di
             "id": fixture_id,
             "provider_id": provider_id,
             "fixture_date": datetime.now(CHINA_TZ).date().isoformat(),
+            "kickoff": (datetime.now(UTC) + timedelta(hours=2)).replace(microsecond=0).isoformat(),
             "is_demo": False,
         }
     )
@@ -54,7 +58,51 @@ def test_fixture_list_and_detail_are_consistent() -> None:
     assert detail["context"]["odds"] is None
     assert detail["context"]["teams"]["home"]["name"] == fixture["home_team"]["name"]
     assert detail["capabilities"]["evidence_sync"] is provider.configured
+    assert detail["prediction"] is None
     assert fixture_response.json()["mode"] == "cached"
+
+
+def test_public_fixture_payload_removes_supplier_player_names() -> None:
+    fixture = seed_real_fixture("api-player-boundary", 127)
+    fixture["status"] = "finished"
+    context = unavailable_context()
+    context["source"] = "espn-evidence"
+    context["squads"]["home"] = [
+        {
+            "id": "supplier-9",
+            "name": "Unknown Prospect",
+            "original_name": "Unknown Prospect",
+            "position": "Forward",
+        }
+    ]
+    context["availability"]["players"] = [
+        {
+            "team": "home",
+            "provider_player_id": "supplier-9",
+            "name": "Unknown Prospect",
+            "original_name": "Unknown Prospect",
+            "reason": "伤病",
+        }
+    ]
+    fixture["evidence"] = context
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
+
+    detail = client.get(f"/api/fixtures/{fixture['id']}").json()
+    serialized = str(detail)
+    injury = detail["context"]["availability"]["players"][0]
+
+    assert "original_name" not in serialized
+    assert "Unknown Prospect" not in serialized
+    assert injury["name"].startswith("待核验球员")
+    assert injury["name"].endswith("）")
+    assert injury["identity_status"] == "resolved"
+    assert injury["canonical_player_id"]
+    assert injury["provider_player_id"] == "supplier-9"
 
 
 def test_fixture_detail_auto_syncs_evidence(monkeypatch) -> None:
@@ -80,11 +128,10 @@ def test_fixture_detail_auto_syncs_evidence(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["context"]["synced_at"] == context["synced_at"]
     assert repository.fixture(fixture["id"])["evidence"]["source"] == "test"
-    prediction = response.json()["prediction"]
-    assert prediction["probabilities"]
-    assert repository.latest(fixture["id"], "deepseek", response.json()["competition_id"])["id"] == prediction["id"]
+    assert response.json()["prediction"] is None
+    assert repository.latest(fixture["id"], "deepseek", response.json()["competition_id"]) is None
     second_response = client.get(f"/api/fixtures/{fixture['id']}")
-    assert second_response.json()["prediction"]["id"] == prediction["id"]
+    assert second_response.json()["prediction"] is None
 
 
 def test_fixture_detail_enriches_incomplete_recent_form_from_secondary(monkeypatch) -> None:
@@ -114,6 +161,83 @@ def test_prediction_requires_admin_key() -> None:
     seed_real_fixture()
     response = client.post("/api/admin/fixtures/api-123/predictions")
     assert response.status_code == 401
+
+
+def test_fixture_detail_never_falls_back_to_legacy_prediction_bet() -> None:
+    fixture = seed_real_fixture("api-current-only", 128)
+    fixture["status"] = "finished"
+    fixture["score"] = {"home": 2, "away": 0}
+    context = demo_context(fixture["id"])
+    fixture["evidence"] = context
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
+    current = predict(fixture, context)
+    current.update(
+        {
+            "id": "current-only-v3",
+            "fixture_id": fixture["id"],
+            "created_at": "2026-08-27T02:00:00+00:00",
+            "model_key": "deepseek",
+            "competition_id": repository.competition_id,
+            "ai": {
+                "status": "completed",
+                "provider": "deepseek",
+                "requested_model": "test",
+                "returned_model": "test",
+                "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
+                "request_id": "current",
+                "usage": None,
+                "error": None,
+            },
+        }
+    )
+    legacy = deepcopy(current)
+    legacy.update({"id": "current-only-v2", "created_at": "2026-08-27T01:00:00+00:00"})
+    legacy["ai"] = {**legacy["ai"], "prompt_version": "football-forecast-v2", "request_id": "legacy"}
+    repository.save(legacy)
+    repository.save(current)
+    repository.place_bet(
+        {
+            "id": "legacy-only-bet",
+            "prediction_id": legacy["id"],
+            "fixture_id": fixture["id"],
+            "fixture_date": fixture["fixture_date"],
+            "placed_at": "2026-08-27T01:05:00+00:00",
+            "market": "1x2",
+            "selection": "home",
+            "handicap_line": None,
+            "odds": 1.27,
+            "stake": 1.0,
+            "league_key": fixture["league_key"],
+            "kickoff": fixture["kickoff"],
+            "home_team": fixture["home_team"]["name"],
+            "away_team": fixture["away_team"]["name"],
+            "model_version": legacy["model_version"],
+            "is_simulated": True,
+            "model_key": "deepseek",
+            "competition_id": repository.competition_id,
+        }
+    )
+
+    response = client.get(f"/api/fixtures/{fixture['id']}")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["predictions"]["deepseek"]["id"] == current["id"]
+    assert detail["predictions"]["deepseek"]["decision"]["status"] == "no_bet"
+    assert detail["predictions"]["deepseek"]["execution"]["status"] == "no_bet"
+    assert detail["predictions"]["deepseek"]["execution"]["reason_codes"]
+    assert detail["bets"]["deepseek"] is None
+    assert detail["bet"] is None
+
+
+def test_prediction_retention_admin_endpoints_require_key() -> None:
+    assert client.get("/api/admin/prediction-retention/preview").status_code == 401
+    assert client.post("/api/admin/prediction-retention/run").status_code == 401
 
 
 def test_simulated_bankroll_and_empty_metrics_are_public() -> None:

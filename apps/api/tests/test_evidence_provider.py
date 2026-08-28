@@ -145,7 +145,7 @@ def test_lineup_and_availability_keep_player_details() -> None:
     )
 
     assert lineup["confirmed"] is True
-    assert lineup["home_players"][0]["name"] == "Home Player"
+    assert lineup["home_players"][0]["name"] == "待核验球员"
     assert availability["players"][0]["name"] == "乌戈·杜罗"
 
 

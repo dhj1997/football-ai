@@ -176,6 +176,47 @@ def test_team_snapshot_is_replaced_per_team(tmp_path) -> None:
     assert repository.team_snapshot("epl", "359") == latest
 
 
+def test_player_value_snapshot_is_upserted_with_provenance(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "player-values.db"))
+    repository.initialize()
+    first = {
+        "canonical_player_id": "player-1",
+        "market_value_eur": 10_000_000.0,
+        "market_value_source": "licensed-test",
+        "market_value_as_of": "2026-08-20T00:00:00+00:00",
+        "cached_at": "2026-08-20T01:00:00+00:00",
+    }
+    latest = {**first, "market_value_eur": 12_000_000.0, "cached_at": "2026-08-27T01:00:00+00:00"}
+
+    repository.save_player_values([first])
+    repository.save_player_values([latest])
+
+    assert repository.player_values(["player-1"]) == [latest]
+    assert repository.player_values([]) == []
+
+
+def test_player_name_snapshot_is_upserted_with_provenance(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "player-names.db"))
+    repository.initialize()
+    first = {
+        "canonical_player_id": "player-1",
+        "provider_player_id": "provider-1",
+        "source_name_hash": "a" * 64,
+        "chinese_name": "测试甲",
+        "name_source": "deepseek_transliteration",
+        "name_status": "machine_translated",
+        "model": "deepseek-test",
+        "created_at": "2026-08-27T01:00:00+00:00",
+    }
+    latest = {**first, "chinese_name": "测试乙", "created_at": "2026-08-27T02:00:00+00:00"}
+
+    repository.save_player_names([first])
+    repository.save_player_names([latest])
+
+    assert repository.player_names(["player-1"]) == [latest]
+    assert repository.player_names([]) == []
+
+
 def test_evidence_snapshot_is_persisted_immutably(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "evidence.db"))
     repository.initialize()

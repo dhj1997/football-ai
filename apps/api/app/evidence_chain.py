@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from .team_names import to_chinese_player_name
+from .player_identity import link_evidence_players
 
 
 class EvidenceProviderChain:
@@ -89,22 +89,11 @@ def should_use_secondary(context: dict[str, Any] | None) -> bool:
 
 
 def localize_evidence_players(context: dict[str, Any]) -> dict[str, Any]:
-    """Apply the reviewed Chinese aliases to every player-bearing evidence block."""
+    """Apply reviewed aliases and stable identity links to all player evidence."""
 
-    for side in ("home", "away"):
-        for player in (context.get("squads") or {}).get(side) or []:
-            _localize_player(player)
-        for player in (context.get("lineup") or {}).get(f"{side}_players") or []:
-            _localize_player(player)
-    for player in (context.get("availability") or {}).get("players") or []:
-        _localize_player(player)
-    return context
-
-
-def _localize_player(player: dict[str, Any]) -> None:
-    original_name = player.get("original_name")
-    if original_name:
-        player["name"] = to_chinese_player_name(str(original_name))
+    if context.get("source"):
+        context["source"] = _merged_sources("", str(context["source"]))
+    return link_evidence_players(context)
 
 
 def merge_evidence(previous: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:
@@ -135,7 +124,7 @@ def merge_evidence(previous: dict[str, Any] | None, incoming: dict[str, Any]) ->
     if incoming.get("synced_at"):
         merged["synced_at"] = incoming["synced_at"]
     if changed and previous.get("source") and incoming.get("source"):
-        merged["source"] = f"{previous['source']}+{incoming['source']}"
+        merged["source"] = _merged_sources(str(previous["source"]), str(incoming["source"]))
     elif incoming.get("source") and not previous.get("source"):
         merged["source"] = incoming["source"]
     return merged
@@ -154,7 +143,19 @@ def _evidence_field_score(value: Any) -> int:
             and item.get("original_name")
             and item.get("name") != item.get("original_name")
         )
-        return len(value) + localized * 2
+        stable_ids = sum(
+            1
+            for item in value
+            if isinstance(item, dict) and (item.get("provider_player_id") or item.get("id"))
+        )
+        performance = sum(
+            1
+            for item in value
+            if isinstance(item, dict)
+            and isinstance(item.get("statistics"), dict)
+            and any((item["statistics"].get(key) or 0) > 0 for key in ("appearances", "minutes", "goals", "assists", "saves"))
+        )
+        return len(value) + localized * 2 + stable_ids + performance * 4
     if isinstance(value, dict):
         if "home" in value or "away" in value:
             return sum(_evidence_field_score(value.get(side)) for side in ("home", "away"))
@@ -176,3 +177,8 @@ def _with_failures(context: dict[str, Any], failures: list[dict[str, str]]) -> d
 
 def _bounded_error(error: Exception) -> str:
     return str(error)[:240] or error.__class__.__name__
+
+
+def _merged_sources(previous: str, incoming: str) -> str:
+    parts = [item for item in [*previous.split("+"), *incoming.split("+")] if item]
+    return "+".join(dict.fromkeys(parts))

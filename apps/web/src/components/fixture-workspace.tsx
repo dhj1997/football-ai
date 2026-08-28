@@ -26,7 +26,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { fetchFixtureDetail, fetchFixtures } from "@/lib/api";
+import { formatFavoriteHandicap, formatHandicapLine, formatHandicapSide } from "@/lib/handicap";
 import { OperationsPanel } from "@/components/operations-panel";
+import { DataFreshness, PageHeader, SectionHeader, Tabs } from "@/components/ui";
 import type { DateFilter, Fixture, FixtureDetail, LeagueFilter, LineupPlayer, ModelKey, Prediction, RecentMatch, SimulatedBet, SquadPlayer, TeamProfile } from "@/lib/types";
 
 type DataMode = "cached" | "demo" | "empty" | "error" | "unconfigured";
@@ -55,35 +57,17 @@ const evidenceMeta = [
 ] as const;
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
-function handicapDirection(line: number, homeTeam: string, awayTeam: string) {
-  const notation = line > 0 ? `+${line}` : `${line}`;
-  if (line < 0) return `${homeTeam}让球 ${notation}`;
-  if (line > 0) return `${awayTeam}让球 ${notation}`;
-  return "双方平手 0";
-}
-
-function handicapMarketLabel(line: number, team: "home" | "away") {
-  const teamLabel = team === "home" ? "主队" : "客队";
-  const role = line < 0 ? "让球" : line > 0 ? "受让" : "平手";
-  const notation = line > 0 ? `+${line}` : `${line}`;
-  return `${teamLabel}${role} ${notation}`;
-}
-
 function handicapRecommendation(settlement: NonNullable<Prediction["asian_handicap"]>["home_settlement"], line: number, homeTeam: string, awayTeam: string) {
   const homePositive = settlement.full_win + settlement.half_win;
   const homeNegative = settlement.full_loss + settlement.half_loss;
   const recommendsHome = homePositive >= homeNegative;
-  const team = recommendsHome ? homeTeam : awayTeam;
-  const recommendedLine = recommendsHome ? line : -line;
-  const notation = recommendedLine > 0 ? `+${recommendedLine}` : `${recommendedLine}`;
-  return `${team} ${notation}`;
+  return recommendsHome ? formatHandicapSide(line, "home", homeTeam) : formatHandicapSide(line, "away", awayTeam);
 }
 
-function handicapSelection(selection: "home_handicap" | "away_handicap", line: number, homeTeam: string, awayTeam: string) {
-  const isHome = selection === "home_handicap";
-  const value = isHome ? line : -line;
-  const notation = value > 0 ? `+${value}` : `${value}`;
-  return `${isHome ? homeTeam : awayTeam} ${notation}`;
+function selectionWithHandicap(value: string | undefined, homeLine: number | null | undefined) {
+  if (homeLine !== null && homeLine !== undefined && value === "home_handicap") return formatHandicapSide(homeLine, "home");
+  if (homeLine !== null && homeLine !== undefined && value === "away_handicap") return formatHandicapSide(homeLine, "away");
+  return selectionText(value);
 }
 
 const settlementLabels = {
@@ -175,7 +159,7 @@ function FixtureRow({ fixture, selected = false, onSelect, href }: { fixture: Fi
   return <button className={className} onClick={onSelect} aria-pressed={selected}>{content}</button>;
 }
 
-function ScoreCenterSidebar({ fixtures }: { fixtures: Fixture[] }) {
+function ScoreCenterSidebar({ fixtures, syncStatus, freshnessLabel, scheduleProvider, lastSyncedAt }: { fixtures: Fixture[]; syncStatus: SyncStatus; freshnessLabel: string; scheduleProvider: string; lastSyncedAt: string | null }) {
   const counts = fixtures.reduce<Record<string, number>>((result, fixture) => {
     result[fixture.league.name] = (result[fixture.league.name] ?? 0) + 1;
     return result;
@@ -183,17 +167,21 @@ function ScoreCenterSidebar({ fixtures }: { fixtures: Fixture[] }) {
   return <aside className="score-center-sidebar" aria-label="赛程概览">
     <section>
       <div className="score-center-side-heading"><span>FOOTBALL TODAY</span><h2>赛事概览</h2></div>
-      <dl className="score-center-stats"><div><dt>比赛</dt><dd>{fixtures.length}</dd></div><div><dt>联赛</dt><dd>{Object.keys(counts).length}</dd></div><div><dt>进行中</dt><dd>{fixtures.filter((item) => item.status === "live").length}</dd></div></dl>
+      <dl className="score-center-stats"><div><dt>比赛</dt><dd>{fixtures.length}</dd></div><div><dt>联赛</dt><dd>{Object.keys(counts).length}</dd></div><div><dt>进行中</dt><dd>{fixtures.filter((item) => item.status === "live").length}</dd></div><div><dt>首发确认</dt><dd>{fixtures.filter((item) => item.status === "scheduled" && item.lineup_confirmed).length}</dd></div></dl>
     </section>
     <section>
       <div className="score-center-side-heading"><span>COMPETITIONS</span><h2>联赛</h2></div>
       <ul className="competition-list">{Object.entries(counts).map(([league, count]) => <li key={league}><span>{league}</span><b>{count}</b></li>)}</ul>
     </section>
+    <section className="score-center-freshness">
+      <div className="score-center-side-heading"><span>DATA FRESHNESS</span><h2>数据新鲜度</h2></div>
+      <DataFreshness status={syncStatus} label={freshnessLabel} source={`${scheduleProvider} · ${lastSyncedAt ? `更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : "等待首次同步"}`} />
+    </section>
     <section className="score-center-note"><ShieldCheck size={18} aria-hidden="true" /><div><strong>赛前数据持续更新</strong><p>临近开球时自动补充近期战绩、交锋、伤停与首发信息。</p></div></section>
   </aside>;
 }
 
-function ScoreCenterHome({ fixtures, loading, dataMode }: { fixtures: Fixture[]; loading: boolean; dataMode: DataMode }) {
+function ScoreCenterHome({ fixtures, loading, dataMode, syncStatus, freshnessLabel, scheduleProvider, lastSyncedAt }: { fixtures: Fixture[]; loading: boolean; dataMode: DataMode; syncStatus: SyncStatus; freshnessLabel: string; scheduleProvider: string; lastSyncedAt: string | null }) {
   const groups = fixtures.reduce<Array<{ league: Fixture["league"]; fixtures: Fixture[] }>>((result, fixture) => {
     const current = result.find((group) => group.league.name === fixture.league.name);
     if (current) current.fixtures.push(fixture);
@@ -208,7 +196,7 @@ function ScoreCenterHome({ fixtures, loading, dataMode }: { fixtures: Fixture[];
         <div>{group.fixtures.map((fixture) => <FixtureRow key={fixture.id} fixture={fixture} href={`/matches/${encodeURIComponent(fixture.id)}`} />)}</div>
       </section>) : <div className="score-center-loading"><CalendarDays size={20} aria-hidden="true" />{emptyMessage}</div>}
     </section>
-    <ScoreCenterSidebar fixtures={fixtures} />
+    <ScoreCenterSidebar fixtures={fixtures} syncStatus={syncStatus} freshnessLabel={freshnessLabel} scheduleProvider={scheduleProvider} lastSyncedAt={lastSyncedAt} />
   </div>;
 }
 
@@ -224,10 +212,7 @@ function EvidenceRail({ detail }: { detail: FixtureDetail }) {
   };
   return (
     <section className="evidence-section" aria-labelledby="evidence-title">
-      <div className="section-heading">
-        <div><span>INPUT READINESS</span><h3 id="evidence-title">赛前证据轨道</h3></div>
-        <small>{Object.values(readiness).filter(Boolean).length} / 6 就绪</small>
-      </div>
+      <SectionHeader className="section-heading" eyebrow="INPUT READINESS" title="赛前证据轨道" titleId="evidence-title" level={3} meta={`${Object.values(readiness).filter(Boolean).length} / 6 就绪`} />
       <ol className="evidence-rail">
         {evidenceMeta.map(({ key, label, icon: Icon }, index) => (
           <li key={key} className={readiness[key] ? "ready" : "waiting"}>
@@ -312,6 +297,10 @@ const positionLabels: Record<string, string> = {
   Forward: "前锋",
 };
 
+function playerNameStatus(player: { name_status?: string }) {
+  return player.name_status === "machine_translated" ? "自动音译" : "";
+}
+
 function SquadTable({ teamName, players }: { teamName: string; players: SquadPlayer[] }) {
   const groups = ["Goalkeeper", "Defender", "Midfielder", "Attacker", "Forward"]
     .map((position) => ({ position, rows: players.filter((player) => player.position === position) }))
@@ -327,11 +316,11 @@ function SquadTable({ teamName, players }: { teamName: string; players: SquadPla
           <div className="squad-group" key={group.position}>
             <div className="squad-group-label">{positionLabels[group.position] ?? group.position}<span>{group.rows.length}</span></div>
             <div className="squad-table" role="table" aria-label={`${teamName}${positionLabels[group.position] ?? group.position}名单`}>
-              {group.rows.map((player) => <div className="squad-row" role="row" key={player.id ?? player.original_name}>
+              {group.rows.map((player) => <div className="squad-row" role="row" key={player.canonical_player_id ?? player.provider_player_id ?? player.id ?? player.name}>
                 <span className="squad-number">{player.number ?? "-"}</span>
-                <span className="squad-player-name"><b>{player.name}</b><small>{player.nationality ?? ""}</small></span>
+                <span className="squad-player-name"><b>{player.name}</b><small>{[player.nationality, playerNameStatus(player)].filter(Boolean).join(" · ")}</small></span>
                 <span className="squad-age">{player.age ? `${player.age}岁` : "-"}</span>
-                <span className="squad-value">{player.market_value ? `${(player.market_value / 1_000_000).toFixed(1)}m` : "暂无身价"}</span>
+                <span className="squad-value" title={player.market_value_source ? `${player.market_value_source} · ${player.market_value_as_of ? formatTimestamp(player.market_value_as_of) : "时间待确认"}` : "暂无可靠身价"}>{player.market_value_eur ?? player.market_value ? `${((player.market_value_eur ?? player.market_value ?? 0) / 1_000_000).toFixed(1)}m` : "暂无可靠身价"}</span>
               </div>)}
             </div>
           </div>
@@ -369,7 +358,7 @@ export function AnalysisSnapshot({ detail }: { detail: FixtureDetail }) {
   const availabilityText = availabilityLead === 0 ? "双方已知伤停人数相同" : availabilityLead > 0 ? `${fixture.home_team.name}已知伤停更多` : `${fixture.away_team.name}已知伤停更多`;
   return (
     <section className="analysis-snapshot" aria-labelledby="analysis-snapshot-title">
-      <div className="section-heading"><div><span>PRE-MATCH READOUT</span><h3 id="analysis-snapshot-title">赛前分析快照</h3></div><small>只读取已同步证据</small></div>
+      <SectionHeader className="section-heading" eyebrow="PRE-MATCH READOUT" title="赛前分析快照" titleId="analysis-snapshot-title" level={3} meta="只读取已同步证据" />
       <div className="analysis-compare">
         {[{ team: fixture.home_team.name, form: homeForm, ppg: context.recent_form.home_points_per_game, side: "主队" }, { team: fixture.away_team.name, form: awayForm, ppg: context.recent_form.away_points_per_game, side: "客队" }].map(({ team, form, ppg, side }) => (
           <div className="analysis-team" key={side}>
@@ -400,13 +389,13 @@ export function TeamProfiles({ detail, showProfiles = true, showSquads = true }:
   return (
     <section className="team-information" aria-label="球队信息与完整阵容">
       {showProfiles && <div className="detail-data-block team-profile-block">
-        <div className="section-heading"><div><span>TEAM DOSSIER</span><h3>球队档案</h3></div><small>{hasProfile ? "供应商资料" : "待同步"}</small></div>
+        <SectionHeader className="section-heading" eyebrow="TEAM DOSSIER" title="球队档案" level={3} meta={hasProfile ? "供应商资料" : "待同步"} />
         <div className="team-profile-grid">
-          {profiles.map(({ side, team, profile }) => <div className="team-profile" key={side}><div className="team-profile-top"><TeamLogo profile={profile} team={team} tone={side} /><div><strong>{team.name}</strong><small>{profile.original_name ?? ""}</small></div></div><dl><div><dt>成立</dt><dd>{profile.founded ?? "-"}</dd></div><div><dt>主场</dt><dd>{profile.venue ?? fixture.venue}</dd></div><div><dt>容量</dt><dd>{profile.capacity ? `${profile.capacity.toLocaleString()} 人` : "-"}</dd></div><div><dt>所在地</dt><dd>{profile.city ?? profile.country ?? "-"}</dd></div></dl></div>)}
+          {profiles.map(({ side, team, profile }) => <div className="team-profile" key={side}><div className="team-profile-top"><TeamLogo profile={profile} team={team} tone={side} /><div><strong>{team.name}</strong><small>{profile.city ?? profile.country ?? "球队资料"}</small></div></div><dl><div><dt>成立</dt><dd>{profile.founded ?? "-"}</dd></div><div><dt>主场</dt><dd>{profile.venue ?? fixture.venue}</dd></div><div><dt>容量</dt><dd>{profile.capacity ? `${profile.capacity.toLocaleString()} 人` : "-"}</dd></div><div><dt>所在地</dt><dd>{profile.city ?? profile.country ?? "-"}</dd></div></dl></div>)}
         </div>
       </div>}
       {showSquads && <div className="detail-data-block squad-block">
-        <div className="section-heading"><div><span>SQUAD REGISTER</span><h3>全队球员与身价</h3></div><small>身价字段需授权数据源</small></div>
+        <SectionHeader className="section-heading" eyebrow="SQUAD REGISTER" title="全队球员与身价" level={3} meta="身价字段需授权数据源" />
         <div className="squad-grid"><SquadTable teamName={fixture.home_team.name} players={context.squads?.home ?? []} /><SquadTable teamName={fixture.away_team.name} players={context.squads?.away ?? []} /></div>
         <p className="data-source-note">当前免费公开源提供球员名单、号码、位置、年龄和照片；未提供可验证的实时市场身价，因此显示“暂无身价”，不会用转会费或工资替代。</p>
       </div>}
@@ -427,60 +416,109 @@ export function EvidenceDetails({ detail, sections = ["form", "h2h", "availabili
   return (
     <section className="evidence-details" aria-label="详细赛前数据">
       {sections.includes("form") && <div className="detail-data-block">
-        <div className="section-heading"><div><span>FORM GUIDE</span><h3>近期战绩（{Math.max(homeForm.length, awayForm.length)}/5）</h3></div><small>{context.recent_form.updated_at ? formatTimestamp(context.recent_form.updated_at) : "待同步"}</small></div>
+        <SectionHeader className="section-heading" eyebrow="FORM GUIDE" title={`近期战绩（${Math.max(homeForm.length, awayForm.length)}/5）`} level={3} meta={context.recent_form.updated_at ? formatTimestamp(context.recent_form.updated_at) : "待同步"} />
         {hasEvidence ? <div className="recent-form-grid"><RecentFormColumn teamName={fixture.home_team.name} matches={homeForm} pointsPerGame={context.recent_form.home_points_per_game} /><RecentFormColumn teamName={fixture.away_team.name} matches={awayForm} pointsPerGame={context.recent_form.away_points_per_game} /></div> : <p className="data-empty">请先同步这场比赛的赛前数据</p>}
       </div>}
 
       {sections.includes("h2h") && <div className="detail-data-block">
-        <div className="section-heading"><div><span>HEAD TO HEAD</span><h3>历史交锋</h3></div><small>{context.head_to_head.length} 场</small></div>
+        <SectionHeader className="section-heading" eyebrow="HEAD TO HEAD" title="历史交锋" level={3} meta={`${context.head_to_head.length} 场`} />
         {context.head_to_head.length > 0 ? <div className="h2h-table" role="table" aria-label="历史交锋记录"><div className="h2h-row h2h-header" role="row"><span>日期</span><span>对阵</span><span>比分</span></div>{context.head_to_head.map((match) => <div className="h2h-row" role="row" key={`${match.date}-${match.home}-${match.away}`}><time>{match.date}</time><span>{match.home} <i>vs</i> {match.away}</span><ParsedScoreline score={match.score} /></div>)}</div> : <p className="data-empty">暂无历史交锋数据</p>}
       </div>}
 
       {sections.includes("availability") && <div className="detail-data-block">
-        <div className="section-heading"><div><span>AVAILABILITY</span><h3>伤停影响</h3></div><small><HeartPulse size={13} /> {context.availability.home_missing + context.availability.away_missing} 人</small></div>
-        {hasEvidence ? <div className="availability-grid"><div><strong>{fixture.home_team.name}</strong><span>{context.availability.home_missing} 人缺阵</span><ul className="absence-list">{homeInjuries.length > 0 ? homeInjuries.map((player) => <li key={`${player.name}-${player.reason}`}><b>{player.name}</b><small>{player.reason}</small></li>) : <li className="absence-empty">暂无已知伤停</li>}</ul></div><div><strong>{fixture.away_team.name}</strong><span>{context.availability.away_missing} 人缺阵</span><ul className="absence-list">{awayInjuries.length > 0 ? awayInjuries.map((player) => <li key={`${player.name}-${player.reason}`}><b>{player.name}</b><small>{player.reason}</small></li>) : <li className="absence-empty">暂无已知伤停</li>}</ul></div></div> : <p className="data-empty">请先同步这场比赛的伤停数据</p>}
+        <SectionHeader className="section-heading" eyebrow="AVAILABILITY" title="伤停影响" level={3} meta={<><HeartPulse size={13} /> {context.availability.home_missing + context.availability.away_missing} 人</>} />
+        {hasEvidence ? <div className="availability-grid"><div><strong>{fixture.home_team.name}</strong><span>{context.availability.home_missing} 人缺阵</span><ul className="absence-list">{homeInjuries.length > 0 ? homeInjuries.map((player) => <li key={`${player.name}-${player.reason}`}><b>{player.name}</b><small>{[player.reason, playerNameStatus(player)].filter(Boolean).join(" · ")}</small></li>) : <li className="absence-empty">暂无已知伤停</li>}</ul></div><div><strong>{fixture.away_team.name}</strong><span>{context.availability.away_missing} 人缺阵</span><ul className="absence-list">{awayInjuries.length > 0 ? awayInjuries.map((player) => <li key={`${player.name}-${player.reason}`}><b>{player.name}</b><small>{[player.reason, playerNameStatus(player)].filter(Boolean).join(" · ")}</small></li>) : <li className="absence-empty">暂无已知伤停</li>}</ul></div></div> : <p className="data-empty">请先同步这场比赛的伤停数据</p>}
       </div>}
 
       {sections.includes("lineup") && <div className="detail-data-block">
-        <div className="section-heading"><div><span>LINEUPS</span><h3>球员名单</h3></div><small>{context.lineup.confirmed ? "已确认" : "未公布"}</small></div>
+        <SectionHeader className="section-heading" eyebrow="LINEUPS" title="球员名单" level={3} meta={context.lineup.confirmed ? "已确认" : "未公布"} />
         {context.lineup.confirmed ? <div className="lineup-grid"><LineupColumn teamName={fixture.home_team.name} formation={context.lineup.home_formation} players={context.lineup.home_players} /><LineupColumn teamName={fixture.away_team.name} formation={context.lineup.away_formation} players={context.lineup.away_players} /></div> : <div className="lineup-pending"><Shirt size={18} /><div><strong>首发名单尚未发布</strong><p>比赛临近后再次同步，确认首发后会显示首发与替补球员。</p></div></div>}
       </div>}
     </section>
   );
 }
 
+const decisionReasonLabels: Record<string, string> = {
+  ai_no_bet: "AI 不建议下注",
+  negative_edge: "赔率优势不足",
+  low_confidence: "预测置信度不足",
+  lineup_unconfirmed: "首发未确认",
+  stale_odds: "赔率已过期",
+  missing_player_data: "球员数据不足",
+  no_matching_market: "缺少匹配市场",
+  risk_limit: "风险额度受限",
+  league_daily_limit: "同模型同联赛当日已有更高优势场次",
+  model_disagreement: "模型分歧过大",
+};
+
+function impactPlayerKey(player: { canonical_player_id?: string; provider_player_id?: string | null; name: string }) {
+  return player.canonical_player_id ?? player.provider_player_id ?? player.name;
+}
+
+export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
+  const { fixture, context } = detail;
+  const impact = context.player_impact;
+  const valuePlayer = [...(context.squads?.home ?? []), ...(context.squads?.away ?? [])].find((player) => player.market_value_eur !== null && player.market_value_eur !== undefined);
+  const valueMeta = valuePlayer?.market_value_source
+    ? `${valuePlayer.market_value_source} · ${valuePlayer.market_value_as_of ? formatTimestamp(valuePlayer.market_value_as_of) : "时间待确认"}`
+    : "暂无可靠身价";
+  if (!impact) return <section className="player-impact-panel"><SectionHeader eyebrow="PLAYER IMPACT" title="球员影响" level={3} meta="数据不足" /><p className="data-empty">当前阵容证据不足，未对球队战力作人数式扣减。</p></section>;
+  const teams = [
+    { side: "home" as const, name: fixture.home_team.name, data: impact.home },
+    { side: "away" as const, name: fixture.away_team.name, data: impact.away },
+  ];
+  return <section className="player-impact-panel" aria-labelledby="player-impact-title">
+    <SectionHeader className="section-heading" eyebrow="PLAYER IMPACT" title="球员影响与战力保留" titleId="player-impact-title" level={3} meta={impact.lineup_confirmed ? "已按确认首发重算" : "基于预计首发与分钟"} />
+    <div className="player-impact-grid">
+      {teams.map(({ side, name, data }) => {
+        const retention = [
+          ["进攻", data.attack_retention],
+          ["防守", data.defense_retention],
+          ["中场", data.midfield_retention],
+          ["门将", data.goalkeeper_retention],
+        ] as const;
+        return <div className={`player-impact-team ${side}`} key={side}>
+          <header><div><strong>{name}</strong><small>{data.data_status === "complete" ? "球员数据完整" : data.data_status === "partial" ? "球员数据部分完整" : "球员数据不足"}</small></div><span>{data.squad_count} 人阵容</span></header>
+          <div className="retention-list">{retention.map(([label, value]) => <div key={label}><span>{label}</span><i><b style={{ "--retention": percent(value) } as React.CSSProperties} /></i><strong>{percent(value)}</strong></div>)}</div>
+          <div className="impact-player-groups">
+            <div><span>关键可用</span><ul>{data.key_available_players.length ? data.key_available_players.map((player) => <li key={impactPlayerKey(player)}><b>{player.name}</b><small>{player.player_role} · 预计 {Math.round(player.expected_minutes)} 分钟{playerNameStatus(player) ? ` · ${playerNameStatus(player)}` : ""}</small></li>) : <li><small>暂无可靠识别</small></li>}</ul></div>
+            <div><span>关键缺阵</span><ul>{data.key_absent_players.length ? data.key_absent_players.map((player) => <li key={impactPlayerKey(player)}><b>{player.name}</b><small>{player.player_role} · 影响 {percent(player.absence_impact ?? 0)}{playerNameStatus(player) ? ` · ${playerNameStatus(player)}` : ""}</small></li>) : <li><small>暂无关键缺阵</small></li>}</ul></div>
+          </div>
+          {data.expected_replacements.length > 0 && <div className="replacement-line"><span>预计替补</span>{data.expected_replacements.slice(0, 2).map((row) => <p key={impactPlayerKey(row.absent_player)}><b>{row.absent_player.name}</b><ChevronRight size={13} aria-hidden="true" /><strong>{row.replacement?.name ?? "暂无同位置替补"}</strong><small>差值 {percent(row.absence_impact)}</small></p>)}</div>}
+        </div>;
+      })}
+    </div>
+    <footer className="player-value-provenance"><Database size={14} aria-hidden="true" /><span>身价边界</span><strong>{valueMeta}</strong><small>{context.player_value?.reason ?? `${context.player_value?.available_count ?? 0} 人有可靠身价`}</small></footer>
+  </section>;
+}
+
 export function ProbabilityPanel({ prediction, fixture, bet, onManualPredict, predicting = false }: { prediction: Prediction; fixture: Fixture; bet: SimulatedBet | null; onManualPredict?: () => void; predicting?: boolean }) {
   const headingId = `prediction-title-${prediction.id}`;
-  const betMatchesPrediction = bet?.prediction_id === prediction.id;
+  const currentBet = bet?.prediction_id === prediction.id ? bet : null;
   const options = [
     { key: "home", label: "主胜", team: fixture.home_team.name, value: prediction.probabilities.home },
     { key: "draw", label: "平局", team: "双方战平", value: prediction.probabilities.draw },
     { key: "away", label: "客胜", team: fixture.away_team.name, value: prediction.probabilities.away },
   ] as const;
   const best = options.reduce((left, right) => (left.value > right.value ? left : right));
-  const aiHandicap = prediction.asian_handicap_assessment;
-  const baselineHandicap = prediction.asian_handicap;
-  const baselineSelection = baselineHandicap
-    ? baselineHandicap.home_settlement.full_win + baselineHandicap.home_settlement.half_win
-      >= baselineHandicap.home_settlement.full_loss + baselineHandicap.home_settlement.half_loss
-      ? "home_handicap"
-      : "away_handicap"
-    : null;
-  const handicapDisagreement = Boolean(
-    aiHandicap?.available
-    && aiHandicap.selection !== "none"
-    && baselineHandicap
-    && aiHandicap.selection !== baselineSelection,
-  );
+  const aiHandicap = prediction.asian_handicap_forecast ?? prediction.forecast?.asian_handicap;
+  const marketRows = prediction.market_assessment?.markets ?? [];
+  const decision = prediction.decision;
+  const execution = prediction.execution;
+  const modelRecommendation = prediction.model_recommendation;
+  const advisedMarket = marketRows.find((row) => row.market === decision?.considered_market && row.selection === decision?.considered_selection);
+  const executionStatus = execution?.status ?? (currentBet ? "bet" : decision?.status);
+  const executionLabel = executionStatus === "bet" ? "执行模拟下注" : executionStatus === "no_bet" ? "本场不执行" : "数据不足，不执行";
+  const executionReasons = execution?.reason_codes ?? decision?.reason_codes ?? [];
   return (
     <section className="prediction-panel" aria-labelledby={headingId}>
       <div className="prediction-header">
         <div>
-          <span>{prediction.phase === "confirmed_lineup" ? "确认首发版" : "初步预测"}</span>
-          <h3 id={headingId}>胜平负概率</h3>
+          <span>01 · 赛果判断</span>
+          <h3 id={headingId}>{prediction.phase === "confirmed_lineup" ? "确认首发版" : "初步预测"} · 胜平负概率</h3>
         </div>
         <div className="prediction-actions">
-          {prediction.phase === "preliminary" && fixture.status === "scheduled" && onManualPredict && <button className="manual-predict-button" type="button" title="基于当前已同步赛前数据重新生成初步预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "手动生成"}</button>}
+          {prediction.phase === "preliminary" && fixture.status === "scheduled" && onManualPredict && <button className="manual-predict-button" type="button" title="基于当前已同步赛前数据重新生成初步预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "重新生成"}</button>}
           <span className="model-tag">{prediction.model_version}</span>
         </div>
       </div>
@@ -494,18 +532,21 @@ export function ProbabilityPanel({ prediction, fixture, bet, onManualPredict, pr
       </div>
       {prediction.ai && (
         <div className={`ai-assessment ai-${prediction.ai.status}`}>
-          <div>
+          <div className="ai-assessment-copy">
             <span>{prediction.ai.provider === "chatgpt" ? "CHATGPT ASSESSMENT" : "DEEPSEEK ASSESSMENT"}</span>
-            <strong>{prediction.ai.status === "completed" ? prediction.analysis_summary : "AI 不可用，当前仅显示 Poisson 基线"}</strong>
-            <small>{prediction.ai.status === "completed" ? `${prediction.ai.returned_model} · ${prediction.ai.prompt_version}` : prediction.ai.error}</small>
+            <strong>{prediction.ai.status !== "completed" ? "AI 不可用，当前仅显示 Poisson 基线" : prediction.analysis_summary}</strong>
+            <small>{prediction.ai.status === "completed" ? `${prediction.ai.returned_model} · ${prediction.ai.prompt_version} · ${prediction.ai.evidence_version ?? "证据版本待确认"}` : prediction.ai.error}</small>
+            {prediction.ai.status === "completed" && prediction.player_analysis?.replacement_gap ? <p className="ai-thesis"><b>替补差值</b>{prediction.player_analysis.replacement_gap}</p> : null}
+            {prediction.ai.status === "completed" && modelRecommendation ? <p className="ai-thesis"><b>AI 下注观点</b>{modelRecommendation.status === "bet" ? `${selectionWithHandicap(modelRecommendation.selection, aiHandicap?.line)} · ${modelRecommendation.reason}` : `不下注 · ${modelRecommendation.reason}`}</p> : null}
           </div>
           <dl>
-            <div><dt>判断</dt><dd>{outcomeText(prediction.predicted_outcome)}</dd></div>
-            <div><dt>市场</dt><dd>{marketText(prediction.recommendation?.market)}</dd></div>
-            <div><dt>选择</dt><dd>{selectionText(prediction.recommendation?.selection)}</dd></div>
+            <div><dt>最可能赛果</dt><dd>{outcomeText(prediction.forecast?.predicted_outcome ?? prediction.predicted_outcome)}</dd></div>
+            <div><dt>预测置信度</dt><dd>{percent(prediction.forecast_confidence ?? decision?.model_confidence ?? 0)}</dd></div>
+            <div><dt>亚洲盘</dt><dd>{aiHandicap && aiHandicap.line !== null ? `${percent(aiHandicap.home_cover_probability ?? 0)} 主队覆盖` : "证据不足"}</dd></div>
           </dl>
-          {prediction.risk_factors?.length ? <ul>{prediction.risk_factors.map((risk) => <li key={risk}>{risk}</li>)}</ul> : null}
-          {aiHandicap && <p className="ai-handicap-note">AI 亚洲盘观点：{aiHandicap.available && aiHandicap.selection !== "none" && aiHandicap.line !== null ? handicapSelection(aiHandicap.selection, aiHandicap.line, fixture.home_team.name, fixture.away_team.name) : "无可用盘口"} · {aiHandicap.reason}</p>}
+          {prediction.ai.status === "completed" && prediction.risk_factors?.length ? <div className="ai-risk-factors"><span>风险因素</span><ul>{prediction.risk_factors.map((risk) => <li key={risk}>{risk}</li>)}</ul></div> : null}
+          {prediction.ai.status === "completed" && prediction.missing_evidence?.length ? <div className="ai-caveats"><span>证据缺口</span><ul>{prediction.missing_evidence.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+          {aiHandicap && <p className="ai-handicap-note">亚洲让球覆盖预测：{aiHandicap.line !== null ? `${formatFavoriteHandicap(aiHandicap.line, fixture.home_team.name, fixture.away_team.name)} · 主队 ${percent(aiHandicap.home_cover_probability ?? 0)} / 客队 ${percent(aiHandicap.away_cover_probability ?? 0)}` : "无可用盘口"}{aiHandicap.reason ? ` · ${aiHandicap.reason}` : ""}</p>}
           {prediction.evidence_hash && <code>证据 {prediction.evidence_hash.slice(0, 12)}</code>}
         </div>
       )}
@@ -514,25 +555,29 @@ export function ProbabilityPanel({ prediction, fixture, bet, onManualPredict, pr
         <span><Gauge size={16} />证据置信度 {prediction.confidence}</span>
         <span><Clock3 size={16} />生成于 {formatTimestamp(prediction.created_at)}</span>
       </div>
-      {prediction.recommendation?.market === "no_bet" && (
-        <div className="simulated-position no-position"><span>本次模型建议</span><strong>本场不下注</strong><small>{prediction.recommendation.reason}</small></div>
-      )}
-      {bet && (
-        <div className={`simulated-position${betMatchesPrediction ? "" : " historical-position"}`}>
-          <span>{betMatchesPrediction ? "本次模拟仓位" : "历史版本持仓"}</span>
-          <strong>{selectionText(bet.selection)} · {bet.odds.toFixed(2)}</strong>
-          <small>{betMatchesPrediction ? "" : "早期预测已经执行，当前建议不会追溯撤单 · "}金额 {bet.stake.toFixed(2)} · {bet.status === "placed" ? "未结算" : `${bet.settlement_result ?? "已结算"} · 盈亏 ${bet.net_profit?.toFixed(2) ?? "-"}`}</small>
+      <section className="market-value-layer" aria-label="赔率价值">
+        <header><div><span>02 · 赔率价值</span><strong>市场数学</strong></div><small>{prediction.market_assessment?.bookmaker ?? "暂无匹配赔率"} · {prediction.market_assessment?.odds_status === "fresh" ? "赔率有效" : prediction.market_assessment?.odds_status === "stale" ? "赔率已过期" : "赔率缺失"}</small></header>
+        {marketRows.length ? <div className="market-value-table"><div className="market-value-head"><span>市场</span><span>模型</span><span>回本线</span><span>去水</span><span>优势</span></div>{marketRows.map((row) => <div className="market-value-row" key={`${row.market}-${row.selection}`}><span className="market-value-name"><b>{selectionWithHandicap(row.selection, row.line)}</b><small>{row.market === "asian_handicap" && row.line !== undefined ? `亚洲盘 ${formatHandicapLine(row.selection === "away_handicap" ? -row.line : row.line)}` : "胜平负"} · {row.price.toFixed(2)}</small></span><span><small>模型</small><b>{percent(row.model_probability)}</b></span><span><small>回本线</small><b>{percent(row.break_even_probability)}</b></span><span><small>去水</small><b>{percent(row.de_vig_probability)}</b></span><span className={row.expected_edge > 0 ? "edge-positive" : "edge-negative"}><small>优势</small><b>{row.expected_edge > 0 ? "+" : ""}{(row.expected_edge * 100).toFixed(1)}%</b></span></div>)}</div> : <p className="data-empty">没有可计算的匹配赔率市场</p>}
+      </section>
+      <section className={`execution-layer execution-${decision?.status ?? "insufficient_data"}`} aria-label="执行决定">
+        <header><span>03 · 执行决定</span><strong>{executionLabel}</strong><small>单注 10%–25% · 每日 50% · 每联赛 1 场</small></header>
+        <div><p>{execution?.reason ?? decision?.reason ?? "当前预测版本缺少确定性决策结果"}</p>{decision?.warning ? <p>{decision.warning}</p> : null}{executionReasons.length ? <ul>{executionReasons.map((code) => <li key={code}>{decisionReasonLabels[code] ?? code}</li>)}</ul> : null}<dl><div><dt>建议方向</dt><dd>{advisedMarket ? `${marketText(advisedMarket.market)} · ${selectionWithHandicap(advisedMarket.selection, advisedMarket.line)}` : outcomeText(prediction.forecast?.predicted_outcome ?? prediction.predicted_outcome)}</dd></div><div><dt>预期优势</dt><dd>{decision?.expected_edge !== null && decision?.expected_edge !== undefined ? `${decision.expected_edge > 0 ? "+" : ""}${(decision.expected_edge * 100).toFixed(1)}%` : "-"}</dd></div><div><dt>不确定性</dt><dd>{percent(decision?.uncertainty ?? 1)}</dd></div><div><dt>理论仓位</dt><dd>{percent(decision?.stake_fraction ?? 0)}</dd></div></dl></div>
+      </section>
+      {currentBet && (
+        <div className="simulated-position">
+          <span>本次模拟仓位</span>
+          <strong>{selectionWithHandicap(currentBet.selection, currentBet.handicap_line)} · {currentBet.odds.toFixed(2)}</strong>
+          <small>金额 {currentBet.stake.toFixed(2)} · {currentBet.status === "placed" ? "未结算" : `${currentBet.settlement_result ?? "已结算"} · 盈亏 ${currentBet.net_profit?.toFixed(2) ?? "-"}`}</small>
         </div>
       )}
       {prediction.asian_handicap && (
         <div className="handicap-block">
-          <div><span>市场盘口（博彩公司）</span><strong>{handicapDirection(prediction.asian_handicap.line, fixture.home_team.name, fixture.away_team.name)}</strong><small>Poisson 基线倾向：{handicapRecommendation(prediction.asian_handicap.home_settlement, prediction.asian_handicap.line, fixture.home_team.name, fixture.away_team.name)}</small></div>
+          <div><span>市场盘口（博彩公司）</span><strong>{formatFavoriteHandicap(prediction.asian_handicap.line, fixture.home_team.name, fixture.away_team.name)}</strong><small>Poisson 基线倾向：{handicapRecommendation(prediction.asian_handicap.home_settlement, prediction.asian_handicap.line, fixture.home_team.name, fixture.away_team.name)}</small></div>
           {Object.entries(prediction.asian_handicap.home_settlement).map(([key, value]) => (
             <span key={key}><small>{settlementLabels[key as keyof typeof settlementLabels]}</small><b>{percent(value)}</b></span>
           ))}
         </div>
       )}
-      {handicapDisagreement && <p className="handicap-disagreement">AI 亚洲盘观点与 Poisson 基线倾向相反；当前正式建议为“{marketText(prediction.recommendation?.market)}”，不据此执行模拟下注。</p>}
       <p className="disclaimer">概率是模型对赛前信息的量化结果，不代表确定赛果，也不构成投注建议。</p>
     </section>
   );
@@ -589,10 +634,7 @@ function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, 
       <EvidenceDetails detail={detail} />
 
       <section className="market-section" aria-labelledby="market-title">
-        <div className="section-heading">
-          <div><span>PRE-MATCH MARKET</span><h3 id="market-title">赛前赔率快照</h3></div>
-          <small>{context.odds ? `${context.odds.bookmaker} · ${formatTimestamp(context.odds.updated_at)}` : "暂无"}</small>
-        </div>
+        <SectionHeader className="section-heading" eyebrow="PRE-MATCH MARKET" title="赛前赔率快照" titleId="market-title" level={3} meta={context.odds ? `${context.odds.bookmaker} · ${formatTimestamp(context.odds.updated_at)}` : "暂无"} />
         {context.odds ? (
           <>
             <div className="odds-row">
@@ -600,8 +642,8 @@ function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, 
               <span><small>平局</small><b>{context.odds.draw.toFixed(2)}</b></span>
               <span><small>客胜</small><b>{context.odds.away.toFixed(2)}</b></span>
               {context.odds.asian_handicap !== null && <>
-                <span><small>{handicapMarketLabel(context.odds.asian_handicap, "home")}</small><b>{context.odds.asian_handicap_home_odd?.toFixed(2) ?? "-"}</b></span>
-                <span><small>{handicapMarketLabel(-context.odds.asian_handicap, "away")}</small><b>{context.odds.asian_handicap_away_odd?.toFixed(2) ?? "-"}</b></span>
+                <span><small>{formatHandicapSide(context.odds.asian_handicap, "home")}</small><b>{context.odds.asian_handicap_home_odd?.toFixed(2) ?? "-"}</b></span>
+                <span><small>{formatHandicapSide(context.odds.asian_handicap, "away")}</small><b>{context.odds.asian_handicap_away_odd?.toFixed(2) ?? "-"}</b></span>
               </>}
             </div>
             <p className="data-source-note">来源：API-Football / API-Sports 的赛前赔率接口；当前取返回结果中的第一家 bookmaker，记录同步时间。</p>
@@ -612,7 +654,7 @@ function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, 
       {detail.predictions && Object.values(detail.predictions).some(Boolean) ? <DualProbabilityPanels detail={detail} /> : prediction ? <ProbabilityPanel prediction={prediction} fixture={fixture} bet={detail.bet} /> : (
         <section className="no-prediction">
           <Database size={23} aria-hidden="true" />
-          <div><h3>尚无已发布预测</h3><p>{realEvidencePending ? "真实赛程已经缓存；点击同步赛前数据后，系统会拉取近期状态、交锋、伤停和赔率。" : operatorMode ? "核对数据状态后，可手动发起这场比赛的首个预测。" : "证据同步完成后，系统会自动生成这场比赛的初步预测。"}</p></div>
+          <div><h3>暂无当前版本预测</h3><p>{realEvidencePending ? "真实赛程已经缓存；点击同步赛前数据后，系统会拉取近期状态、交锋、伤停和赔率。" : operatorMode ? "核对数据状态后，可手动生成当前版本预测。" : "证据同步完成后，系统会自动生成当前版本预测。"}</p></div>
         </section>
       )}
     </aside>
@@ -654,8 +696,8 @@ export function DualProbabilityPanels({ detail, onManualPredict, predicting = fa
       <div className="dual-prediction-heading">
         <div><span>MODEL ANALYSIS</span><h3>比赛的初步预测</h3></div>
         <div className="dual-prediction-actions">
-          <small>两个模型独立判断，分别记录建议与仓位</small>
-          {detail.fixture.status === "scheduled" && onManualPredict && <button className="manual-predict-button" type="button" title="使用当前赛前数据并行生成两个模型的预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "手动生成"}</button>}
+          <small>共享同一证据，各自给出观点并使用独立模拟账户</small>
+          {detail.fixture.status === "scheduled" && onManualPredict && <button className="manual-predict-button" type="button" title="使用当前赛前数据并行重新生成两个模型的预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "重新生成"}</button>}
         </div>
       </div>
       <div className="dual-prediction-shell">
@@ -675,9 +717,9 @@ export function DualProbabilityPanels({ detail, onManualPredict, predicting = fa
             onKeyDown={(event) => handleTabKeyDown(event, key)}
           >
             <span className="model-tab-name">{key === "deepseek" ? "DeepSeek" : "GPT-5.6 Sol"}</span>
-            <strong className="model-tab-judgment">{outcomeText(prediction.predicted_outcome)}</strong>
-            <span className={`model-tab-investment${prediction.recommendation?.market === "no_bet" ? " no-bet" : ""}`}>{prediction.recommendation?.market === "no_bet" ? "本次不下注" : selectionText(prediction.recommendation?.selection)}</span>
-            <small className="model-tab-position">{detail.bets?.[key] ? `${detail.bets[key]?.prediction_id === prediction.id ? "本次仓位" : "历史持仓"} ${detail.bets[key]?.stake.toFixed(2)}` : "当前无持仓"}</small>
+            <strong className="model-tab-judgment">{outcomeText(prediction.forecast?.predicted_outcome ?? prediction.predicted_outcome)}</strong>
+            <span className={`model-tab-investment${prediction.execution?.status !== "bet" ? " no-bet" : ""}`}>{prediction.execution?.status === "bet" ? selectionText(prediction.decision?.selection) : prediction.decision?.considered_selection ? `建议 ${selectionText(prediction.decision.considered_selection)}` : "数据不足"}</span>
+            <small className="model-tab-position">{detail.bets?.[key]?.prediction_id === prediction.id ? `本次仓位 ${detail.bets[key]?.stake.toFixed(2)}` : "当前无持仓"}</small>
           </button>
         ))}
         </div>
@@ -703,7 +745,7 @@ function marketText(value?: string) {
 }
 
 function selectionText(value?: string) {
-  return value ? ({ home: "主胜", draw: "平局", away: "客胜", home_handicap: "主队让球", away_handicap: "客队受让", none: "无" }[value] ?? value) : "-";
+  return value ? ({ home: "主胜", draw: "平局", away: "客胜", home_handicap: "主队亚洲盘", away_handicap: "客队亚洲盘", none: "无" }[value] ?? value) : "-";
 }
 
 export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
@@ -838,49 +880,50 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   if (!operatorMode) {
     return (
       <main className="score-center-page">
-        <div className={`status-strip sync-${syncStatus}`} role="status">
-          <span><i aria-hidden="true" />{dataMode === "demo" ? "演示数据模式" : syncLabel}</span>
-          <span className="status-note">{lastSyncedAt ? `${scheduleProvider} · 更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : `${scheduleProvider} · 首次访问自动获取`}</span>
-        </div>
-        <section className="score-center-title">
-          <div><span>FOOTBALL SCORES</span><h1>比赛中心</h1><p>中超、西甲与英超赛程、比分和赛前数据。</p></div>
-          <div className="today-stamp"><CalendarDays size={19} aria-hidden="true" /><span><small>北京时间</small><strong>{new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" })}</strong></span></div>
-        </section>
+        <DataFreshness
+          className="status-strip"
+          status={syncStatus}
+          label={dataMode === "demo" ? "演示数据模式" : syncLabel}
+          source={lastSyncedAt ? `${scheduleProvider} · 更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : `${scheduleProvider} · 首次访问自动获取`}
+        />
+        <PageHeader
+          className="score-center-title"
+          eyebrow="FOOTBALL SCORES"
+          title="比赛中心"
+          description="中超、西甲与英超赛程、比分和赛前数据。"
+          aside={<div className="today-stamp"><CalendarDays size={19} aria-hidden="true" /><span><small>北京时间</small><strong>{new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" })}</strong></span></div>}
+        />
         <div className="score-center-filter">
-          <div className="score-date-tabs" aria-label="日期范围">{dateTabs.map((tab) => <button key={tab.key} type="button" aria-pressed={dateFilter === tab.key} onClick={() => { setLoading(true); setDateFilter(tab.key); }} className={dateFilter === tab.key ? "active" : ""}>{tab.label}</button>)}</div>
-          <div className="score-league-tabs" aria-label="联赛筛选">{leagueTabs.map((tab) => <button key={tab.key} type="button" aria-pressed={leagueFilter === tab.key} onClick={() => { setLoading(true); setLeagueFilter(tab.key); }} className={leagueFilter === tab.key ? "active" : ""}>{tab.label}{tab.key !== "all" && <small>{leagueCounts[tab.key] ?? 0}</small>}</button>)}</div>
+          <Tabs className="score-date-tabs" ariaLabel="日期范围" value={dateFilter} onChange={(value) => { setLoading(true); setDateFilter(value); }} items={dateTabs.map((tab) => ({ value: tab.key, label: tab.label }))} />
+          <Tabs className="score-league-tabs" ariaLabel="联赛筛选" value={leagueFilter} onChange={(value) => { setLoading(true); setLeagueFilter(value); }} items={leagueTabs.map((tab) => ({ value: tab.key, label: tab.label, badge: tab.key !== "all" ? leagueCounts[tab.key] ?? 0 : undefined }))} />
         </div>
         {error && <div className="error-banner score-center-error" role="alert"><AlertTriangle size={18} aria-hidden="true" />{error}<button type="button" onClick={() => setError(null)} aria-label="关闭错误提示">×</button></div>}
-        <ScoreCenterHome fixtures={fixtures} loading={loading} dataMode={dataMode} />
+        <ScoreCenterHome fixtures={fixtures} loading={loading} dataMode={dataMode} syncStatus={syncStatus} freshnessLabel={dataMode === "demo" ? "演示数据模式" : syncLabel} scheduleProvider={scheduleProvider} lastSyncedAt={lastSyncedAt} />
       </main>
     );
   }
 
   return (
     <main className="operator-page">
-      <div className={`status-strip sync-${syncStatus}`}>
-        <span><i />系统就绪</span>
-        <span><Database size={14} />{dataMode === "demo" ? "演示数据模式" : syncLabel}</span>
-        <span className="status-note">{lastSyncedAt ? `${scheduleProvider} · 更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : `${scheduleProvider} · 首次访问自动获取`}</span>
-        {operatorMode && <button className="sync-action" onClick={() => void syncFixtures()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{syncing ? "同步中" : "同步赛程"}</button>}
-      </div>
+      <DataFreshness
+        className="status-strip"
+        status={syncStatus}
+        label={<><Database size={14} aria-hidden="true" />{dataMode === "demo" ? "演示数据模式" : syncLabel}</>}
+        source={`系统就绪 · ${lastSyncedAt ? `${scheduleProvider} · 更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : `${scheduleProvider} · 首次访问自动获取`}`}
+        action={<button className="sync-action" onClick={() => void syncFixtures()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{syncing ? "同步中" : "同步赛程"}</button>}
+      />
       {syncMessage && <div className="sync-success" role="status" aria-live="polite"><Check size={16} />{syncMessage}</div>}
-      <div className="workspace-title">
-        <div>
-          <span>{operatorMode ? "OPERATOR CONTROL" : "FIXTURE OPERATIONS"}</span>
-          <h1>{operatorMode ? "预测操作台" : "赛程与赛前判断"}</h1>
-          <p>{operatorMode ? "只对选中的比赛生成预测，每次运行保留独立版本。" : "浏览三个联赛的赛程，并查看管理员已发布的赛前概率。"}</p>
-        </div>
-        <div className="today-stamp"><CalendarDays size={19} /><span><small>北京时间</small><strong>{new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" })}</strong></span></div>
-      </div>
+      <PageHeader
+        className="workspace-title"
+        eyebrow={operatorMode ? "OPERATOR CONTROL" : "FIXTURE OPERATIONS"}
+        title={operatorMode ? "预测操作台" : "赛程与赛前判断"}
+        description={operatorMode ? "只对选中的比赛生成预测，每次运行保留独立版本。" : "浏览三个联赛的赛程，并查看管理员已发布的赛前概率。"}
+        aside={<div className="today-stamp"><CalendarDays size={19} /><span><small>北京时间</small><strong>{new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" })}</strong></span></div>}
+      />
 
       <div className="filter-band">
-        <div className="segmented" aria-label="日期范围">
-          {dateTabs.map((tab) => <button key={tab.key} aria-pressed={dateFilter === tab.key} onClick={() => { setLoading(true); setSuccess(null); setDateFilter(tab.key); }} className={dateFilter === tab.key ? "active" : ""}>{tab.label}</button>)}
-        </div>
-        <div className="league-filter" aria-label="联赛筛选">
-          {leagueTabs.map((tab) => <button key={tab.key} aria-pressed={leagueFilter === tab.key} onClick={() => { setLoading(true); setSuccess(null); setLeagueFilter(tab.key); }} className={leagueFilter === tab.key ? "active" : ""}>{tab.label}{tab.key !== "all" && <small>{leagueCounts[tab.key] ?? 0}</small>}</button>)}
-        </div>
+        <Tabs className="segmented" ariaLabel="日期范围" value={dateFilter} onChange={(value) => { setLoading(true); setSuccess(null); setDateFilter(value); }} items={dateTabs.map((tab) => ({ value: tab.key, label: tab.label }))} />
+        <Tabs className="league-filter" ariaLabel="联赛筛选" value={leagueFilter} onChange={(value) => { setLoading(true); setSuccess(null); setLeagueFilter(value); }} items={leagueTabs.map((tab) => ({ value: tab.key, label: tab.label, badge: tab.key !== "all" ? leagueCounts[tab.key] ?? 0 : undefined }))} />
       </div>
 
       {error && <div className="error-banner" role="alert"><AlertTriangle size={18} />{error}<button onClick={() => setError(null)} aria-label="关闭错误提示">×</button></div>}

@@ -80,6 +80,8 @@ def test_maps_current_team_roster_statistics_and_match_record() -> None:
     assert result["roster"][0]["statistics"] == {
         "appearances": 3,
         "substitute_appearances": 0,
+        "starts": None,
+        "minutes": None,
         "goals": 2,
         "assists": 1,
         "yellow_cards": 0,

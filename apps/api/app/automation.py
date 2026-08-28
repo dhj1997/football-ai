@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable
 
 from .evidence_chain import evidence_needs_enrichment, localize_evidence_players, merge_evidence, should_use_secondary
+from .prompt_contract import DEFAULT_PROMPT_CONTRACT
 
 
 class AutomationRunner:
@@ -69,6 +70,8 @@ class AutomationRunner:
         async with self._lock:
             runs = []
             for job_name, (interval_minutes, _) in self._jobs.items():
+                if job_name == "analysis" and not getattr(self.settings, "automation_analysis_enabled", True):
+                    continue
                 if self._is_due(job_name, interval_minutes):
                     runs.append(await self._execute_job(job_name))
             return runs
@@ -178,20 +181,36 @@ class AutomationRunner:
                     continue
                 localize_evidence_players(context)
                 model_keys = list(getattr(self.prediction_service, "model_keys", ()))
+                current_predictions: dict[str, dict[str, Any] | None] = {}
                 if not model_keys:
-                    latest = self.repository.latest(fixture["id"])
+                    latest = self.repository.latest_current(
+                        fixture["id"],
+                        DEFAULT_PROMPT_CONTRACT.version,
+                    )
                     due_model_keys: list[str] | None = None if self._should_predict(latest, context, now) else []
                 else:
                     competition_id = getattr(self.prediction_service, "competition_id", None)
+                    current_predictions = {
+                        key: self.repository.latest_current(
+                            fixture["id"],
+                            DEFAULT_PROMPT_CONTRACT.version,
+                            key,
+                            competition_id,
+                        )
+                        for key in model_keys
+                    }
                     due_model_keys = [
                         key for key in model_keys
                         if self._should_predict(
-                            self.repository.latest(fixture["id"], key, competition_id),
+                            current_predictions[key],
                             context,
                             now,
                         )
                     ]
                 if due_model_keys == []:
+                    for current in current_predictions.values():
+                        if current:
+                            self.bankroll_service.place_for_prediction(current, fixture, context)
                     continue
                 created = await self.prediction_service.create(fixture, context, due_model_keys) if model_keys else await self.prediction_service.create(fixture, context)
                 predictions = created if isinstance(created, list) else [created]

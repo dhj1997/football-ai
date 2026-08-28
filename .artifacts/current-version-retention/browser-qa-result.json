@@ -1,0 +1,38 @@
+[
+  {
+    "viewport": {
+      "name": "desktop",
+      "width": 1440,
+      "height": 1000
+    },
+    "title": "足球赛前分析台",
+    "emptyStateVisible": true,
+    "scoreVisible": true,
+    "simulatedPositionVisible": false,
+    "forbiddenMatches": [],
+    "clientWidth": 1440,
+    "scrollWidth": 1440,
+    "horizontalOverflow": false,
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedResponses": []
+  },
+  {
+    "viewport": {
+      "name": "mobile",
+      "width": 390,
+      "height": 844
+    },
+    "title": "足球赛前分析台",
+    "emptyStateVisible": true,
+    "scoreVisible": true,
+    "simulatedPositionVisible": false,
+    "forbiddenMatches": [],
+    "clientWidth": 390,
+    "scrollWidth": 390,
+    "horizontalOverflow": false,
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedResponses": []
+  }
+]

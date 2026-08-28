@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .prediction import settle_asian_handicap
+from .prompt_contract import DEFAULT_PROMPT_CONTRACT
 
 
 class SettlementService:
@@ -24,7 +25,11 @@ class SettlementService:
         season_data = (league_snapshots[0].get("season") or {}) if league_snapshots else {}
         season = str(season_data.get("name") or season_data.get("year") or "unknown")
         results = []
-        for prediction in self.repository.predictions_for_fixture(fixture["id"], competition_id=self.competition_id):
+        for prediction in self.repository.current_predictions_for_fixture(
+            fixture["id"],
+            DEFAULT_PROMPT_CONTRACT.version,
+            self.competition_id,
+        ):
             settlement = self.repository.settlement_for_prediction(prediction["id"])
             if settlement is None:
                 probabilities = prediction["probabilities"]

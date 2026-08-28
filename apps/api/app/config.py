@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     standings_cache_ttl_minutes: int = 360
     team_cache_ttl_minutes: int = 360
     automation_enabled: bool = True
+    automation_analysis_enabled: bool = True
     automation_tick_seconds: int = 60
     automation_fixture_interval_minutes: int = 60
     automation_standings_interval_minutes: int = 360

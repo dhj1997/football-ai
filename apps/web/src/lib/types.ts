@@ -50,12 +50,28 @@ export interface RecentMatch {
 
 export interface AvailabilityPlayer {
   team: "home" | "away" | "unknown";
+  canonical_player_id?: string;
+  provider_player_id?: string | null;
+  identity_status?: "resolved" | "unresolved";
   name: string;
+  name_status?: "resolved" | "machine_translated" | "unresolved";
+  name_source?: string | null;
   reason: string;
+  position?: string | null;
+  player_role?: string | null;
+  expected_minutes?: number | null;
+  attack_contribution?: number | null;
+  defense_contribution?: number | null;
+  replacement_contribution?: number | null;
+  absence_impact?: number | null;
 }
 
 export interface LineupPlayer {
+  canonical_player_id?: string;
+  provider_player_id?: string | null;
   name: string;
+  name_status?: "resolved" | "machine_translated" | "unresolved";
+  name_source?: string | null;
   number: number | null;
   position: string;
   starter: boolean;
@@ -74,18 +90,71 @@ export interface TeamProfile {
 }
 
 export interface SquadPlayer {
-  id: number | null;
+  id: number | string | null;
+  canonical_player_id?: string;
+  provider_player_id?: string | null;
   name: string;
-  original_name: string;
+  name_status?: "resolved" | "machine_translated" | "unresolved";
+  name_source?: string | null;
+  original_name?: string;
   age: number | null;
   number: number | null;
   position: string;
   nationality: string | null;
   photo: string | null;
   market_value: number | null;
+  market_value_eur?: number | null;
   market_value_currency: string | null;
   market_value_source: string | null;
-  transfermarkt_id: string | null;
+  market_value_as_of?: string | null;
+  market_value_freshness?: "fresh" | "stale" | "missing";
+  market_value_status?: "available" | "stale" | "missing";
+  player_role?: string;
+  expected_start_probability?: number;
+  expected_minutes?: number;
+  attack_contribution?: number;
+  defense_contribution?: number;
+  absence_impact?: number;
+}
+
+export interface PlayerImpactSummary {
+  canonical_player_id: string;
+  provider_player_id: string | null;
+  name: string;
+  name_status?: "resolved" | "machine_translated" | "unresolved";
+  name_source?: string | null;
+  position: string | null;
+  position_group: "goalkeeper" | "defense" | "midfield" | "attack";
+  player_role: "明星球员" | "关键主力" | "轮换球员" | "边缘球员";
+  expected_start_probability: number;
+  expected_minutes: number;
+  attack_contribution: number;
+  defense_contribution: number;
+  market_value_eur: number | null;
+  market_value_source: string | null;
+  market_value_as_of: string | null;
+  replacement_contribution?: number | null;
+  absence_impact?: number | null;
+  expected_replacement?: PlayerImpactSummary | null;
+}
+
+export interface TeamPlayerImpact {
+  data_status: "complete" | "partial" | "insufficient";
+  squad_count: number;
+  resolved_absence_count: number;
+  unresolved_absence_count: number;
+  key_available_players: PlayerImpactSummary[];
+  key_absent_players: PlayerImpactSummary[];
+  expected_replacements: Array<{
+    absent_player: PlayerImpactSummary;
+    replacement: PlayerImpactSummary | null;
+    replacement_contribution: number;
+    absence_impact: number;
+  }>;
+  attack_retention: number;
+  defense_retention: number;
+  midfield_retention: number;
+  goalkeeper_retention: number;
 }
 
 export interface Fixture {
@@ -131,6 +200,23 @@ export interface EvidenceContext {
   };
   teams: { home: TeamProfile; away: TeamProfile };
   squads: { home: SquadPlayer[]; away: SquadPlayer[] };
+  player_identity?: { resolved_count: number; unresolved_count: number };
+  player_impact?: {
+    home: TeamPlayerImpact;
+    away: TeamPlayerImpact;
+    lineup_confirmed: boolean;
+    method_version: string;
+  };
+  player_value?: {
+    provider_configured: boolean;
+    source: string | null;
+    redisplay_authorized: boolean;
+    coverage: string[];
+    available_count: number;
+    missing_count: number;
+    status: "available" | "unavailable";
+    reason: string | null;
+  };
   odds: {
     bookmaker: string;
     home: number;
@@ -176,6 +262,27 @@ export interface Prediction {
   evidence_snapshot_id?: string;
   evidence_hash?: string;
   predicted_outcome?: "home" | "draw" | "away";
+  forecast_confidence?: number;
+  forecast?: {
+    predicted_outcome: "home" | "draw" | "away";
+    probabilities: { home: number; draw: number; away: number };
+    asian_handicap: {
+      available?: boolean;
+      line: number | null;
+      home_cover_probability: number | null;
+      away_cover_probability: number | null;
+      confidence?: number;
+      reason?: string;
+    } | null;
+  };
+  asian_handicap_forecast?: {
+    available: boolean;
+    line: number | null;
+    home_cover_probability: number | null;
+    away_cover_probability: number | null;
+    confidence: number;
+    reason: string;
+  };
   asian_handicap_assessment?: {
     available: boolean;
     line: number | null;
@@ -191,6 +298,63 @@ export interface Prediction {
     confidence: number;
     recommended_stake_fraction: number;
     reason: string;
+    reason_codes?: string[];
+    decision_status?: "bet" | "no_bet" | "insufficient_data";
+    is_deterministic?: boolean;
+  };
+  model_recommendation?: {
+    status: "bet" | "no_bet";
+    market: "1x2" | "asian_handicap" | "no_bet";
+    selection: "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
+    reason: string;
+  };
+  market_assessment?: {
+    odds_status: "fresh" | "stale" | "missing";
+    odds_updated_at: string | null;
+    bookmaker?: string | null;
+    markets: Array<{
+      market: "1x2" | "asian_handicap";
+      selection: "home" | "draw" | "away" | "home_handicap" | "away_handicap";
+      bookmaker?: string | null;
+      price: number;
+      break_even_probability: number;
+      de_vig_probability: number;
+      model_probability: number;
+      expected_edge: number;
+      line?: number;
+    }>;
+  };
+  decision?: {
+    status: "bet" | "no_bet" | "insufficient_data";
+    market: "1x2" | "asian_handicap" | "no_bet";
+    selection: "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
+    considered_market: "1x2" | "asian_handicap" | null;
+    considered_selection: string | null;
+    price: number | null;
+    expected_edge: number | null;
+    model_confidence: number;
+    uncertainty: number;
+    stake_fraction: number;
+    reason_codes: string[];
+    reason: string;
+    warning_codes?: string[];
+    warning?: string | null;
+    model_recommendation_status?: "bet" | "no_bet";
+    is_deterministic: true;
+    real_money_execution: false;
+  };
+  execution?: {
+    status: "bet" | "no_bet" | "insufficient_data";
+    reason_codes: string[];
+    reason: string;
+    bet_id: string | null;
+  };
+  player_analysis?: {
+    key_available_players: string[];
+    key_absent_players: string[];
+    replacement_gap: string;
+    attack_impact: string;
+    defense_impact: string;
   };
   analysis_summary?: string;
   risk_factors?: string[];
@@ -201,6 +365,7 @@ export interface Prediction {
     requested_model: string;
     returned_model: string | null;
     prompt_version: string | null;
+    evidence_version?: string | null;
     request_id: string | null;
     usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
     error: string | null;
@@ -323,7 +488,7 @@ export interface StandingsResponse {
 export interface TeamPlayer {
   id: string | null;
   name: string;
-  original_name: string;
+  original_name?: string;
   number: number | null;
   position: string;
   position_code: string | null;
@@ -350,8 +515,8 @@ export interface TeamSeasonMatch {
   date: string;
   status: "scheduled" | "live" | "finished";
   status_text: string | null;
-  home: { id: string | null; name: string; original_name: string; logo: string | null };
-  away: { id: string | null; name: string; original_name: string; logo: string | null };
+  home: { id: string | null; name: string; original_name?: string; logo: string | null };
+  away: { id: string | null; name: string; original_name?: string; logo: string | null };
   home_score: number | null;
   away_score: number | null;
   result: "W" | "D" | "L" | null;
@@ -365,7 +530,7 @@ export interface TeamSnapshot {
   season: { year: number; name: string };
   team: {
     name: string;
-    original_name: string;
+    original_name?: string;
     abbreviation: string | null;
     logo: string | null;
     color: string | null;

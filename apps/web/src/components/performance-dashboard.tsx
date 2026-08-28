@@ -1,9 +1,11 @@
 "use client";
 
-import { AlertTriangle, Filter, RefreshCw } from "lucide-react";
+import { Filter, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import { DataFreshness, EmptyState, ErrorState, LoadingState, PageHeader, SectionHeader, StatCard, StatusBadge, Tabs } from "@/components/ui";
 import { fetchBankroll, fetchBets, fetchPredictionMetrics } from "@/lib/api";
+import { formatHandicapSide } from "@/lib/handicap";
 import type { BankrollSummary, LeagueFilter, ModelKey, PredictionMetrics, SimulatedBet } from "@/lib/types";
 
 const leagues: Array<{ key: LeagueFilter; label: string }> = [
@@ -64,17 +66,21 @@ export function PerformanceDashboard() {
 
   return (
     <main className="performance-page">
-      <div className="status-strip" role="status">
-        <span><i aria-hidden="true" />仅模拟资金 · 不连接真实投注平台</span>
-        <span className="status-note">初始资金 1000 · 结算后自动更新</span>
-        <button className="sync-action" type="button" onClick={() => void load()} disabled={loading}><RefreshCw size={13} className={loading ? "spin" : ""} />刷新</button>
-      </div>
-      <section className="workspace-title">
-        <div><span>MODEL PERFORMANCE</span><h1>模拟资金与预测绩效</h1><p>逐笔追踪下注、结算、盈利与概率质量。</p></div>
-      </section>
-      <div className="performance-filter" aria-label="绩效联赛筛选">
-        {leagues.map((item) => <button key={item.key} className={draft.league === item.key ? "active" : undefined} onClick={() => setDraft((current) => ({ ...current, league: item.key }))}>{item.label}</button>)}
-      </div>
+      <DataFreshness
+        className="status-strip"
+        status="fresh"
+        label="仅模拟资金 · 不连接真实投注平台"
+        source="初始资金 1000 · 结算后自动更新"
+        action={<button className="sync-action" type="button" onClick={() => void load()} disabled={loading}><RefreshCw size={13} className={loading ? "spin" : ""} />刷新</button>}
+      />
+      <PageHeader className="workspace-title" eyebrow="MODEL PERFORMANCE" title="模拟资金与预测绩效" description="逐笔追踪下注、结算、盈利与概率质量。" />
+      <Tabs
+        className="performance-filter"
+        ariaLabel="绩效联赛筛选"
+        value={draft.league}
+        onChange={(league) => setDraft((current) => ({ ...current, league }))}
+        items={leagues.map((item) => ({ value: item.key, label: item.label }))}
+      />
       <form className="metric-filter-row" onSubmit={applyFilters}>
         <label><span>赛季</span><input value={draft.season} onChange={(event) => setDraft((current) => ({ ...current, season: event.target.value }))} placeholder="2026-27" /></label>
         <label><span>开始日期</span><input type="date" value={draft.startDate} onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))} /></label>
@@ -82,14 +88,18 @@ export function PerformanceDashboard() {
         <label className="model-filter"><span>模型版本</span><input value={draft.modelVersion} onChange={(event) => setDraft((current) => ({ ...current, modelVersion: event.target.value }))} placeholder="deepseek:deepseek-v4-flash" /></label>
         <button type="submit"><Filter size={14} aria-hidden="true" />应用</button>
       </form>
-      {error && <div className="error-banner performance-error" role="alert"><AlertTriangle size={16} />{error}</div>}
-      {loading && !bankroll ? <div className="team-loading"><RefreshCw className="spin" size={18} />正在读取模拟账本</div> : bankroll && metrics ? (
+      {error && <ErrorState className="error-banner performance-error">{error}</ErrorState>}
+      {loading && !bankroll ? <LoadingState className="team-loading">正在读取模拟账本</LoadingState> : bankroll && metrics ? (
         <>
-          <ModelComparisonStrip bankroll={bankroll} />
-          <div className="model-performance-tabs" aria-label="选择模型资金账户">
-            {(["deepseek", "chatgpt"] as ModelKey[]).map((key) => <button key={key} type="button" className={selectedModel === key ? "active" : undefined} onClick={() => setSelectedModel(key)}>{key === "deepseek" ? "DeepSeek" : "GPT-5.6 Sol"}</button>)}
-          </div>
+          <Tabs
+            className="model-performance-tabs"
+            ariaLabel="选择模型资金账户"
+            value={selectedModel}
+            onChange={setSelectedModel}
+            items={(["deepseek", "chatgpt"] as ModelKey[]).map((key) => ({ value: key, label: key === "deepseek" ? "DeepSeek" : "GPT-5.6 Sol" }))}
+          />
           <SummaryStrip bankroll={bankroll.accounts?.[selectedModel] ?? bankroll} metrics={metrics} />
+          <ModelComparisonStrip bankroll={bankroll} />
           <AsianOutcomeStrip metrics={metrics} />
           <EquityCurve points={(bankroll.accounts?.[selectedModel] ?? bankroll).equity_curve} />
           <BetHistory bets={visibleBets} />
@@ -125,7 +135,7 @@ function SummaryStrip({ bankroll, metrics }: { bankroll: BankrollSummary; metric
     ["Brier", metrics.average_brier_score?.toFixed(3) ?? "-"], ["数据完整度", metrics.average_data_completeness === null ? "-" : percent(metrics.average_data_completeness)],
     ["最大回撤", percent(bankroll.max_drawdown)],
   ];
-  return <section className="performance-summary" aria-label="绩效摘要">{facts.map(([label, value]) => <div key={label}><span>{label}</span><strong className={label === "已实现利润" ? bankroll.net_profit >= 0 ? "positive" : "negative" : undefined}>{value}</strong></div>)}</section>;
+  return <section className="performance-summary" aria-label="绩效摘要">{facts.map(([label, value]) => <StatCard key={label} label={label} value={value} valueClassName={label === "已实现利润" ? bankroll.net_profit >= 0 ? "positive" : "negative" : undefined} />)}</section>;
 }
 
 function EquityCurve({ points }: { points: BankrollSummary["equity_curve"] }) {
@@ -138,15 +148,15 @@ function EquityCurve({ points }: { points: BankrollSummary["equity_curve"] }) {
     const y = height - padding - ((value - minimum + (maximum === minimum ? 10 : 0)) / spread) * (height - padding * 2);
     return { x, y };
   });
-  return <section className="performance-section equity-curve-section"><div className="team-section-heading"><div><span>BANKROLL CURVE</span><h2>已实现权益曲线</h2></div><small>{points.length} 个节点</small></div><div className="equity-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="模拟资金已实现权益曲线" preserveAspectRatio="none"><line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} /><polyline points={coordinates.map((point) => `${point.x},${point.y}`).join(" ")} />{coordinates.map((point, index) => <circle key={`${point.x}-${index}`} cx={point.x} cy={point.y} r="4" />)}</svg><span>{minimum.toFixed(2)}</span><strong>{values.at(-1)?.toFixed(2)}</strong></div></section>;
+  return <section className="performance-section equity-curve-section"><SectionHeader className="team-section-heading" eyebrow="BANKROLL CURVE" title="已实现权益曲线" meta={`${points.length} 个节点`} /><div className="equity-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="模拟资金已实现权益曲线" preserveAspectRatio="none"><line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} /><polyline points={coordinates.map((point) => `${point.x},${point.y}`).join(" ")} />{coordinates.map((point, index) => <circle key={`${point.x}-${index}`} cx={point.x} cy={point.y} r="4" />)}</svg><span>{minimum.toFixed(2)}</span><strong>{values.at(-1)?.toFixed(2)}</strong></div></section>;
 }
 
 function BetHistory({ bets }: { bets: SimulatedBet[] }) {
-  return <section className="performance-section"><div className="team-section-heading"><div><span>SIMULATED LEDGER</span><h2>模拟下注明细</h2></div><small>{bets.length} 笔</small></div>{bets.length ? <div className="team-table-scroll"><table className="performance-table bet-ledger"><thead><tr><th>比赛</th><th>市场</th><th>选择</th><th>赔率</th><th>金额</th><th>状态</th><th>盈亏</th><th>时间</th></tr></thead><tbody>{bets.map((bet) => <tr key={bet.id}><th scope="row"><b>{bet.home_team} vs {bet.away_team}</b><small>{bet.league_key.toUpperCase()} · {bet.fixture_date}</small></th><td>{bet.market === "1x2" ? "胜平负" : "亚洲盘"}</td><td>{selectionLabel(bet.selection, bet.handicap_line)}</td><td>{bet.odds.toFixed(2)}</td><td>{bet.stake.toFixed(2)}</td><td><span className={`ledger-status ${bet.status}`}>{bet.status === "placed" ? "未结" : settlementLabel(bet.settlement_result)}</span></td><td className={(bet.net_profit ?? 0) > 0 ? "positive" : (bet.net_profit ?? 0) < 0 ? "negative" : undefined}>{bet.net_profit === null ? "-" : signedMoney(bet.net_profit)}</td><td>{formatDate(bet.placed_at)}</td></tr>)}</tbody></table></div> : <div className="performance-empty">尚无符合规则的模拟下注</div>}</section>;
+  return <section className="performance-section"><SectionHeader className="team-section-heading" eyebrow="SIMULATED LEDGER" title="模拟下注明细" meta={`${bets.length} 笔`} />{bets.length ? <div className="team-table-scroll"><table className="performance-table bet-ledger"><thead><tr><th>比赛</th><th>市场</th><th>选择</th><th>赔率</th><th>金额</th><th>状态</th><th>盈亏</th><th>时间</th></tr></thead><tbody>{bets.map((bet) => <tr key={bet.id}><th scope="row"><b>{bet.home_team} vs {bet.away_team}</b><small>{bet.league_key.toUpperCase()} · {bet.fixture_date}</small></th><td>{bet.market === "1x2" ? "胜平负" : "亚洲盘"}</td><td>{selectionLabel(bet.selection, bet.handicap_line)}</td><td>{bet.odds.toFixed(2)}</td><td>{bet.stake.toFixed(2)}</td><td><StatusBadge className={`ledger-status ${bet.status}`} variant={bet.status === "placed" ? "partial" : "ready"}>{bet.status === "placed" ? "未结" : settlementLabel(bet.settlement_result)}</StatusBadge></td><td className={(bet.net_profit ?? 0) > 0 ? "positive" : (bet.net_profit ?? 0) < 0 ? "negative" : undefined}>{bet.net_profit === null ? "-" : signedMoney(bet.net_profit)}</td><td>{formatDate(bet.placed_at)}</td></tr>)}</tbody></table></div> : <EmptyState className="performance-empty">尚无符合规则的模拟下注</EmptyState>}</section>;
 }
 
 function SettlementHistory({ metrics }: { metrics: PredictionMetrics }) {
-  return <section className="performance-section"><div className="team-section-heading"><div><span>PREDICTION EVALUATION</span><h2>预测结算记录</h2></div><small>{metrics.sample_size} 个样本</small></div>{metrics.items.length ? <div className="team-table-scroll"><table className="performance-table settlement-ledger"><thead><tr><th>日期</th><th>联赛</th><th>赛季</th><th>预测</th><th>实际</th><th>比分</th><th>正确</th><th>Brier</th><th>完整度</th><th>模型</th></tr></thead><tbody>{metrics.items.map((item) => <tr key={item.id}><td>{item.fixture_date}</td><td>{item.league_key.toUpperCase()}</td><td>{item.season}</td><td>{outcomeLabel(item.predicted_outcome)}</td><td>{outcomeLabel(item.actual_outcome)}</td><td>{item.score.home} : {item.score.away}</td><td><span className={item.correct ? "result-correct" : "result-wrong"}>{item.correct ? "命中" : "未中"}</span></td><td>{item.brier_score.toFixed(3)}</td><td>{item.data_completeness === null ? "-" : percent(item.data_completeness)}</td><td>{item.model_version}</td></tr>)}</tbody></table></div> : <div className="performance-empty">比赛结束并完成结算后显示预测样本</div>}</section>;
+  return <section className="performance-section"><SectionHeader className="team-section-heading" eyebrow="PREDICTION EVALUATION" title="预测结算记录" meta={`${metrics.sample_size} 个样本`} />{metrics.items.length ? <div className="team-table-scroll"><table className="performance-table settlement-ledger"><thead><tr><th>日期</th><th>联赛</th><th>赛季</th><th>预测</th><th>实际</th><th>比分</th><th>正确</th><th>Brier</th><th>完整度</th><th>模型</th></tr></thead><tbody>{metrics.items.map((item) => <tr key={item.id}><td>{item.fixture_date}</td><td>{item.league_key.toUpperCase()}</td><td>{item.season}</td><td>{outcomeLabel(item.predicted_outcome)}</td><td>{outcomeLabel(item.actual_outcome)}</td><td>{item.score.home} : {item.score.away}</td><td><StatusBadge className={item.correct ? "result-correct" : "result-wrong"} variant={item.correct ? "ready" : "danger"}>{item.correct ? "命中" : "未中"}</StatusBadge></td><td>{item.brier_score.toFixed(3)}</td><td>{item.data_completeness === null ? "-" : percent(item.data_completeness)}</td><td>{item.model_version}</td></tr>)}</tbody></table></div> : <EmptyState className="performance-empty">比赛结束并完成结算后显示预测样本</EmptyState>}</section>;
 }
 
 function percent(value: number) { return `${(value * 100).toFixed(1)}%`; }
@@ -154,7 +164,11 @@ function signedMoney(value: number) { return `${value > 0 ? "+" : ""}${value.toF
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)); }
 function outcomeLabel(value: string) { return { home: "主胜", draw: "平", away: "客胜" }[value] ?? value; }
 function settlementLabel(value: SimulatedBet["settlement_result"]) { return value ? { full_win: "全赢", half_win: "半赢", push: "走水", half_loss: "半输", full_loss: "全输" }[value] : "已结"; }
-function selectionLabel(value: string, line: number | null) { return `${{ home: "主胜", draw: "平", away: "客胜", home_handicap: "主队", away_handicap: "客队" }[value] ?? value}${line !== null && value.includes("handicap") ? ` ${line > 0 ? "+" : ""}${value === "away_handicap" ? -line : line}` : ""}`; }
+function selectionLabel(value: string, line: number | null) {
+  if (line !== null && value === "home_handicap") return formatHandicapSide(line, "home");
+  if (line !== null && value === "away_handicap") return formatHandicapSide(line, "away");
+  return { home: "主胜", draw: "平", away: "客胜", home_handicap: "主队亚洲盘", away_handicap: "客队亚洲盘" }[value] ?? value;
+}
 
 function metricQuery(filters: { league: LeagueFilter; season: string; startDate: string; endDate: string; modelVersion: string }) {
   const parameters = new URLSearchParams();

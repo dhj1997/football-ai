@@ -8,6 +8,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .prediction import predict
+from .evidence_chain import localize_evidence_players
+from .player_impact import apply_player_impact
+from .player_identity import public_payload
+from .market_decision import apply_market_decision
+from .prompt_contract import DEFAULT_PROMPT_CONTRACT
 
 
 class PredictionService:
@@ -17,13 +22,19 @@ class PredictionService:
         repository: Any,
         model_key: str | None = None,
         competition_id: str = "legacy",
+        player_value_service: Any | None = None,
     ) -> None:
         self.model_provider = model_provider
         self.repository = repository
         self.model_key = model_key or getattr(model_provider, "provider_name", "deepseek")
         self.competition_id = competition_id
+        self.player_value_service = player_value_service
 
     async def create(self, fixture: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        localize_evidence_players(context)
+        if self.player_value_service is not None:
+            await self.player_value_service.enrich(context, str(fixture.get("league_key") or ""))
+        apply_player_impact(context)
         baseline = predict(fixture, context)
         standings = _standings_evidence(self.repository, fixture)
         quality = _data_completeness(context, standings)
@@ -41,8 +52,7 @@ class PredictionService:
             "model_key": self.model_key,
             "initial_balance": 1000.0,
             "current_balance": current_balance,
-            "stake_fraction_min": 0.0,
-            "stake_fraction_max": 1.0,
+            "risk_policy": {"backend_owned": True, "max_fixture_fraction": 0.02},
             "real_money_execution": False,
         }
         baseline_summary = {
@@ -61,13 +71,13 @@ class PredictionService:
         baseline["competition_id"] = self.competition_id
 
         if fixture.get("is_demo"):
-            return self._save_degraded(baseline, "skipped_demo", "演示数据不会发送给模型")
+            return self._save_degraded(baseline, context, "skipped_demo", "演示数据不会发送给模型")
         if not self.model_provider.configured:
-            return self._save_degraded(baseline, "unconfigured", "未配置对应的 AI 模型密钥")
+            return self._save_degraded(baseline, context, "unconfigured", "未配置对应的 AI 模型密钥")
         try:
             response = await self.model_provider.assess(model_input)
         except Exception as error:
-            return self._save_degraded(baseline, "failed", f"模型请求失败：{_bounded_error(error)}")
+            return self._save_degraded(baseline, context, "failed", f"模型请求失败：{_bounded_error(error)}")
 
         assessment = response["assessment"]
         probabilities = assessment["probabilities"]
@@ -79,10 +89,12 @@ class PredictionService:
             self.model_provider, "provider_name", "deepseek"
         )
         baseline["model_version"] = f"{provider_name}:{response['returned_model']}"
-        baseline["confidence"] = _confidence_label(assessment["recommendation"]["confidence"])
+        baseline["forecast_confidence"] = float(assessment["forecast_confidence"])
+        baseline["confidence"] = _confidence_label(baseline["forecast_confidence"])
         baseline["predicted_outcome"] = assessment["predicted_outcome"]
-        baseline["asian_handicap_assessment"] = assessment["asian_handicap_assessment"]
-        baseline["recommendation"] = assessment["recommendation"]
+        baseline["asian_handicap_forecast"] = assessment["asian_handicap_forecast"]
+        baseline["player_analysis"] = assessment["player_analysis"]
+        baseline["model_recommendation"] = assessment["bet_recommendation"]
         baseline["analysis_summary"] = assessment["analysis_summary"]
         baseline["risk_factors"] = assessment["risk_factors"]
         baseline["missing_evidence"] = assessment["missing_evidence"]
@@ -92,30 +104,39 @@ class PredictionService:
             "requested_model": response["requested_model"],
             "returned_model": response["returned_model"],
             "prompt_version": response["prompt_version"],
+            "evidence_version": response.get("evidence_version"),
             "request_id": response["request_id"],
             "usage": response["usage"],
             "error": None,
             "provider_failures": response.get("provider_failures") or [],
         }
-        self.repository.save(baseline)
+        apply_market_decision(baseline, context)
+        self._save_current(baseline)
         return baseline
 
-    def _save_degraded(self, prediction: dict[str, Any], status: str, reason: str) -> dict[str, Any]:
+    def _save_degraded(self, prediction: dict[str, Any], context: dict[str, Any], status: str, reason: str) -> dict[str, Any]:
         prediction["predicted_outcome"] = max(
             prediction["probabilities"], key=prediction["probabilities"].get
         )
-        prediction["recommendation"] = {
-            "market": "no_bet",
-            "selection": "none",
-            "confidence": 0.0,
-            "recommended_stake_fraction": 0.0,
-            "reason": reason,
-        }
-        prediction["asian_handicap_assessment"] = {
+        prediction["asian_handicap_forecast"] = {
             "available": False,
             "line": None,
-            "selection": "none",
+            "home_cover_probability": None,
+            "away_cover_probability": None,
             "confidence": 0.0,
+            "reason": reason,
+        }
+        prediction["player_analysis"] = {
+            "key_available_players": [],
+            "key_absent_players": [],
+            "replacement_gap": reason,
+            "attack_impact": reason,
+            "defense_impact": reason,
+        }
+        prediction["model_recommendation"] = {
+            "status": "no_bet",
+            "market": "no_bet",
+            "selection": "none",
             "reason": reason,
         }
         prediction["analysis_summary"] = "AI 模型当前不可用，页面仅展示确定性的基础概率。"
@@ -126,16 +147,29 @@ class PredictionService:
             "provider": getattr(self.model_provider, "provider_name", "ai"),
             "requested_model": self.model_provider.model,
             "returned_model": None,
-            "prompt_version": None,
+            "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
             "request_id": None,
             "usage": None,
             "error": reason,
             "provider_failures": [],
         }
+        prediction["forecast_confidence"] = 0.0
+        apply_market_decision(prediction, context)
         prediction["model_key"] = self.model_key
         prediction["competition_id"] = self.competition_id
-        self.repository.save(prediction)
+        self._save_current(prediction)
         return prediction
+
+    def _save_current(self, prediction: dict[str, Any]) -> None:
+        self.repository.save(prediction)
+        prune = getattr(self.repository, "prune_prediction_history", None)
+        if callable(prune):
+            prune(
+                DEFAULT_PROMPT_CONTRACT.version,
+                competition_id=self.competition_id,
+                fixture_id=prediction["fixture_id"],
+                model_key=self.model_key,
+            )
 
 
 def _evidence_snapshot(
@@ -163,6 +197,7 @@ def _model_input(
     quality: dict[str, Any],
 ) -> dict[str, Any]:
     return {
+        "evidence_version": "fixture-evidence-v3",
         "fixture": {
             "id": fixture["id"],
             "league": fixture.get("league"),
@@ -173,26 +208,51 @@ def _model_input(
         },
         "recent_form": context.get("recent_form"),
         "head_to_head": (context.get("head_to_head") or [])[:8],
-        "availability": context.get("availability"),
-        "lineup": context.get("lineup"),
-        "teams": context.get("teams"),
+        "availability": _model_availability(context.get("availability")),
+        "lineup": public_payload(context.get("lineup")),
+        "teams": public_payload(context.get("teams")),
         "squads": {
             side: [
                 {
+                    "canonical_player_id": player.get("canonical_player_id"),
+                    "provider_player_id": player.get("provider_player_id"),
                     "name": player.get("name"),
                     "position": player.get("position"),
                     "age": player.get("age"),
+                    "player_role": player.get("player_role"),
+                    "expected_start_probability": player.get("expected_start_probability"),
+                    "expected_minutes": player.get("expected_minutes"),
+                    "appearances": player.get("appearances"),
+                    "starts": player.get("starts"),
+                    "minutes": player.get("minutes"),
+                    "goals_per90": player.get("goals_per90"),
+                    "assists_per90": player.get("assists_per90"),
+                    "attack_contribution": player.get("attack_contribution"),
+                    "defense_contribution": player.get("defense_contribution"),
+                    "replacement_contribution": player.get("replacement_contribution"),
+                    "absence_impact": player.get("absence_impact"),
+                    "market_value_eur": player.get("market_value_eur"),
                 }
                 for player in (context.get("squads") or {}).get(side, [])[:35]
             ]
             for side in ("home", "away")
         },
+        "player_impact": public_payload(context.get("player_impact")),
         "odds": context.get("odds"),
         "standings": standings,
         "data_completeness": quality,
         "evidence_source": context.get("source"),
         "evidence_synced_at": context.get("synced_at"),
     }
+
+
+def _model_availability(value: Any) -> dict[str, Any]:
+    availability = public_payload(value or {})
+    availability["notes"] = [
+        f"{player.get('name') or '待核验球员'}：{player.get('reason') or '原因待核验'}"
+        for player in availability.get("players") or []
+    ]
+    return availability
 
 
 def _standings_evidence(repository: Any, fixture: dict[str, Any]) -> dict[str, Any]:

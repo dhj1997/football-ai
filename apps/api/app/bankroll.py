@@ -5,17 +5,19 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from .market_decision import REASON_TEXT, assess_markets
+
 
 INITIAL_BANKROLL = 1000.0
-MAX_FIXTURE_EXPOSURE = 0.02
-MAX_DAILY_EXPOSURE = 0.10
+MIN_FIXTURE_EXPOSURE = 0.10
+MAX_FIXTURE_EXPOSURE = 0.25
+MAX_DAILY_EXPOSURE = 0.50
 MIN_DATA_COMPLETENESS = 0.70
-MIN_MODEL_CONFIDENCE = 0.60
 MIN_EXPECTED_EDGE = 0.03
 
 
 class BankrollService:
-    """Place bounded simulated bets from validated model recommendations."""
+    """Place bounded simulated bets from deterministic backend decisions."""
 
     def __init__(self, repository: Any) -> None:
         self.repository = repository
@@ -35,51 +37,173 @@ class BankrollService:
         fixture: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if fixture.get("status") != "scheduled" or (prediction.get("ai") or {}).get("status") != "completed":
+        if fixture.get("status") != "scheduled" or _fixture_started(fixture):
             return None
-        existing = self.repository.bet_for_prediction(prediction["id"])
-        if existing:
-            return existing
-        recommendation = prediction.get("recommendation") or {}
-        market = recommendation.get("market")
-        selection = recommendation.get("selection")
-        if market == "no_bet" or selection == "none":
+        latest_reader = getattr(self.repository, "latest", None)
+        latest = latest_reader(fixture["id"], self.model_key, self.competition_id) if callable(latest_reader) else None
+        if latest is not None and latest.get("id") != prediction.get("id"):
             return None
-        if float(prediction.get("data_completeness") or 0) < MIN_DATA_COMPLETENESS:
+        _complete_candidate_decision(prediction, context)
+        discard = getattr(self.repository, "discard_open_fixture_bets", None)
+        if callable(discard):
+            discard(fixture["id"], self.model_key, self.competition_id, prediction.get("id"))
+
+        fixtures = self._league_day_fixtures(fixture)
+        candidates = self._league_day_candidates(prediction, fixture, fixtures, context)
+        group_bets = self._league_day_bets(fixture["fixture_date"], fixture.get("league_key"))
+        locked = next(
+            (
+                bet for bet in group_bets
+                if bet.get("status") == "settled"
+                or _fixture_started(next((item for item in fixtures if item["id"] == bet.get("fixture_id")), {}))
+            ),
+            None,
+        )
+        if locked:
+            return locked
+        if not candidates:
             return None
-        if float(recommendation.get("confidence") or 0) < MIN_MODEL_CONFIDENCE:
-            return None
-        if any(
-            item.get("fixture_id") == fixture["id"]
-            for item in self.repository.bets(status="placed", model_key=self.model_key, competition_id=self.competition_id)
-        ):
-            return None
-        odds = context.get("odds")
-        price = _matching_price(market, selection, odds)
-        if price is None or price <= 1:
-            return None
-        if not self.uncapped and _expected_edge(prediction, market, selection, price) < MIN_EXPECTED_EDGE:
+
+        selected_prediction, selected_fixture = candidates[0]
+        if callable(discard):
+            for grouped_fixture in fixtures:
+                discard(
+                    grouped_fixture["id"],
+                    self.model_key,
+                    self.competition_id,
+                    selected_prediction["id"] if grouped_fixture["id"] == selected_fixture["id"] else None,
+                )
+        existing_selected = self.repository.bet_for_prediction(selected_prediction["id"])
+        if existing_selected and _bet_matches_candidate(existing_selected, selected_prediction):
+            return existing_selected
+        if existing_selected and callable(discard):
+            discard(selected_fixture["id"], self.model_key, self.competition_id)
+        return self._place_candidate(selected_prediction, selected_fixture)
+
+    def execution_for_prediction(self, prediction: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
+        """Describe portfolio execution without mutating the immutable prediction."""
+
+        decision = prediction.get("decision") or {}
+        linked = self.repository.bet_for_prediction(prediction["id"])
+        if linked:
+            return {
+                "status": "bet",
+                "reason_codes": [],
+                "reason": "已获得本联赛当日模拟下注名额",
+                "bet_id": linked["id"],
+            }
+        if decision.get("status") != "bet":
+            return {
+                "status": decision.get("status") or "insufficient_data",
+                "reason_codes": decision.get("reason_codes") or [],
+                "reason": decision.get("reason") or "当前数据不足，未执行模拟下注",
+                "bet_id": None,
+            }
+
+        fixtures = self._league_day_fixtures(fixture)
+        candidates = self._league_day_candidates(
+            prediction,
+            fixture,
+            fixtures,
+            fixture.get("evidence") or {},
+        )
+        group_bets = self._league_day_bets(fixture["fixture_date"], fixture.get("league_key"))
+        if group_bets or (candidates and candidates[0][0]["id"] != prediction["id"]):
+            return {
+                "status": "no_bet",
+                "reason_codes": ["league_daily_limit"],
+                "reason": "同模型同联赛当日已有预期优势更高的比赛",
+                "bet_id": None,
+            }
+        return {
+            "status": "no_bet",
+            "reason_codes": ["risk_limit"],
+            "reason": "模拟账户当日剩余额度不足以满足最低10%仓位",
+            "bet_id": None,
+        }
+
+    def _league_day_fixtures(self, fixture: dict[str, Any]) -> list[dict[str, Any]]:
+        reader = getattr(self.repository, "list_fixtures", None)
+        rows = reader(fixture["fixture_date"], fixture["fixture_date"], fixture.get("league_key")) if callable(reader) else []
+        by_id = {str(item["id"]): item for item in rows}
+        by_id[str(fixture["id"])] = fixture
+        return list(by_id.values())
+
+    def _league_day_candidates(
+        self,
+        prediction: dict[str, Any],
+        fixture: dict[str, Any],
+        fixtures: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        latest_reader = getattr(self.repository, "latest", None)
+        rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for grouped_fixture in fixtures:
+            current = prediction if grouped_fixture["id"] == fixture["id"] else (
+                latest_reader(grouped_fixture["id"], self.model_key, self.competition_id)
+                if callable(latest_reader) else None
+            )
+            if current:
+                candidate_context = (
+                    context
+                    if grouped_fixture["id"] == fixture["id"]
+                    else grouped_fixture.get("evidence") or {}
+                )
+                _complete_candidate_decision(current, candidate_context)
+            if current and _eligible_candidate(current, grouped_fixture):
+                rows.append((current, grouped_fixture))
+        return sorted(rows, key=_candidate_rank)
+
+    def _league_day_bets(self, fixture_date: str, league_key: Any) -> list[dict[str, Any]]:
+        return [
+            item for item in self.repository.bets(
+                fixture_date=fixture_date,
+                model_key=self.model_key,
+                competition_id=self.competition_id,
+            )
+            if item.get("league_key") == league_key
+        ]
+
+    def _place_candidate(
+        self,
+        prediction: dict[str, Any],
+        fixture: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        decision = prediction.get("decision") or {}
+        market = decision.get("market")
+        selection = decision.get("selection")
+        price = _positive_number(decision.get("price"))
+        edge = float(decision.get("expected_edge") or 0)
+        if price is None or edge < MIN_EXPECTED_EDGE:
             return None
 
         balance = self.repository.current_balance(self.model_key, self.competition_id)
-        open_today = self.repository.bets(status="placed", fixture_date=fixture["fixture_date"], model_key=self.model_key, competition_id=self.competition_id)
-        daily_exposure = round(sum(float(item["stake"]) for item in open_today), 2)
-        daily_base = balance + daily_exposure
-        daily_remaining = balance if self.uncapped else max(0.0, daily_base * MAX_DAILY_EXPOSURE - daily_exposure)
-        suggested_fraction = min(
-            1.0 if self.uncapped else MAX_FIXTURE_EXPOSURE,
-            max(0.0, float(recommendation.get("recommended_stake_fraction") or 0)),
+        today = self.repository.bets(
+            fixture_date=fixture["fixture_date"],
+            model_key=self.model_key,
+            competition_id=self.competition_id,
         )
-        stake_limits = [balance * suggested_fraction, daily_remaining, balance]
-        if not self.uncapped:
-            stake_limits.append(balance * MAX_FIXTURE_EXPOSURE)
-        raw_stake = min(stake_limits)
+        daily_staked = round(sum(float(item["stake"]) for item in today), 2)
+        open_exposure = round(sum(float(item["stake"]) for item in today if item.get("status") == "placed"), 2)
+        daily_base = balance + open_exposure
+        daily_remaining = max(0.0, daily_base * MAX_DAILY_EXPOSURE - daily_staked)
+        suggested_fraction = _stake_fraction_for_edge(edge)
+        raw_stake = min(balance * suggested_fraction, daily_remaining, balance)
+        minimum_stake = balance * MIN_FIXTURE_EXPOSURE
+        if raw_stake + 1e-9 < minimum_stake:
+            return None
         stake = math.floor(raw_stake * 100) / 100
-        if stake < 0.01:
+        if stake <= 0:
             return None
 
+        market_row = next(
+            (
+                row for row in (prediction.get("market_assessment") or {}).get("markets", [])
+                if row.get("market") == market and row.get("selection") == selection
+            ),
+            {},
+        )
         placed_at = datetime.now(UTC).isoformat()
-        handicap_line = (odds or {}).get("asian_handicap") if market == "asian_handicap" else None
         return self.repository.place_bet(
             {
                 "id": str(uuid.uuid4()),
@@ -89,7 +213,11 @@ class BankrollService:
                 "placed_at": placed_at,
                 "market": market,
                 "selection": selection,
-                "handicap_line": handicap_line,
+                "handicap_line": (
+                    market_row.get("line")
+                    if market_row.get("line") is not None
+                    else (prediction.get("asian_handicap") or {}).get("line")
+                ) if market == "asian_handicap" else None,
                 "odds": round(price, 3),
                 "stake": stake,
                 "league_key": fixture["league_key"],
@@ -97,8 +225,12 @@ class BankrollService:
                 "home_team": fixture["home_team"].get("name"),
                 "away_team": fixture["away_team"].get("name"),
                 "model_version": prediction["model_version"],
-                "model_confidence": recommendation.get("confidence"),
-                "reason": recommendation.get("reason"),
+                "model_confidence": decision.get("model_confidence"),
+                "expected_edge": round(edge, 4),
+                "reason": decision.get("reason"),
+                "reason_codes": decision.get("reason_codes") or [],
+                "prediction_phase": prediction.get("phase") or "preliminary",
+                "lineup_confirmed": bool(((fixture.get("evidence") or {}).get("lineup") or {}).get("confirmed")),
                 "is_simulated": True,
                 "model_key": self.model_key,
                 "competition_id": self.competition_id,
@@ -140,55 +272,137 @@ class BankrollService:
         }
 
 
-def _matching_price(market: Any, selection: Any, odds: Any) -> float | None:
-    if not isinstance(odds, dict):
-        return None
-    key = None
-    if market == "1x2" and selection in {"home", "draw", "away"}:
-        key = selection
-    elif market == "asian_handicap" and selection == "home_handicap":
-        key = "asian_handicap_home_odd"
-    elif market == "asian_handicap" and selection == "away_handicap":
-        key = "asian_handicap_away_odd"
-    value = odds.get(key) if key else None
+def _eligible_candidate(prediction: dict[str, Any], fixture: dict[str, Any]) -> bool:
+    decision = prediction.get("decision") or {}
+    return bool(
+        fixture.get("status") == "scheduled"
+        and not _fixture_started(fixture)
+        and (prediction.get("ai") or {}).get("status") == "completed"
+        and float(prediction.get("data_completeness") or 0) >= MIN_DATA_COMPLETENESS
+        and decision.get("status") == "bet"
+        and decision.get("market") in {"1x2", "asian_handicap"}
+        and decision.get("selection") not in {None, "none"}
+        and float(decision.get("expected_edge") or 0) >= MIN_EXPECTED_EDGE
+        and (_positive_number(decision.get("price")) or 0) > 1
+    )
+
+
+def _complete_candidate_decision(prediction: dict[str, Any], context: dict[str, Any]) -> None:
+    prediction["market_assessment"] = assess_markets(prediction, context.get("odds"))
+    _apply_current_market_policy(prediction)
+
+
+def _apply_current_market_policy(prediction: dict[str, Any]) -> None:
+    assessment = prediction.get("market_assessment") or {}
+    markets = assessment.get("markets") or []
+    decision = prediction.get("decision") or {}
+    reason_codes = [
+        code for code in (decision.get("reason_codes") or [])
+        if code not in {"ai_no_bet", "negative_edge", "no_matching_market", "stale_odds"}
+    ]
+    if not markets:
+        reason_codes.append("no_matching_market")
+        decision.update(
+            {
+                "status": "insufficient_data",
+                "market": "no_bet",
+                "selection": "none",
+                "considered_market": None,
+                "considered_selection": None,
+                "price": None,
+                "expected_edge": None,
+                "stake_fraction": 0.0,
+                "reason_codes": list(dict.fromkeys(reason_codes)),
+                "reason": REASON_TEXT["no_matching_market"],
+            }
+        )
+        prediction["decision"] = decision
+        return
+
+    candidate = max(markets, key=lambda item: float(item.get("expected_edge") or -1))
+    if assessment.get("odds_status") != "fresh" and "stale_odds" not in reason_codes:
+        reason_codes.append("stale_odds")
+    edge = float(candidate.get("expected_edge") or 0)
+    if edge < MIN_EXPECTED_EDGE:
+        reason_codes.append("negative_edge")
+    reason_codes = list(dict.fromkeys(reason_codes))
+    status = "no_bet" if reason_codes else "bet"
+    decision.update(
+        {
+            "status": status,
+            "market": candidate.get("market") if status == "bet" else "no_bet",
+            "selection": candidate.get("selection") if status == "bet" else "none",
+            "considered_market": candidate.get("market"),
+            "considered_selection": candidate.get("selection"),
+            "price": candidate.get("price"),
+            "expected_edge": round(edge, 4),
+            "stake_fraction": (
+                _stake_fraction_for_edge(edge)
+                if (prediction.get("ai") or {}).get("status") == "completed"
+                else 0.0
+            ),
+            "reason_codes": reason_codes,
+            "reason": (
+                "；".join(REASON_TEXT[code] for code in reason_codes)
+                if reason_codes
+                else "赔率优势和证据质量达到模拟执行标准"
+            ),
+        }
+    )
+    prediction["decision"] = decision
+
+
+def _stake_fraction_for_edge(edge: float) -> float:
+    if edge < MIN_EXPECTED_EDGE:
+        return 0.0
+    return round(
+        min(MAX_FIXTURE_EXPOSURE, MIN_FIXTURE_EXPOSURE + max(edge - MIN_EXPECTED_EDGE, 0.0)),
+        4,
+    )
+
+
+def _bet_matches_candidate(bet: dict[str, Any], prediction: dict[str, Any]) -> bool:
+    decision = prediction.get("decision") or {}
+    balance_before = float(bet.get("balance_before") or 0)
+    actual_fraction = float(bet.get("stake") or 0) / balance_before if balance_before > 0 else 0.0
+    return bool(
+        bet.get("status") == "placed"
+        and bet.get("market") == decision.get("market")
+        and bet.get("selection") == decision.get("selection")
+        and MIN_FIXTURE_EXPOSURE <= actual_fraction <= MAX_FIXTURE_EXPOSURE
+        and abs(float(bet.get("expected_edge") or 0) - float(decision.get("expected_edge") or 0)) < 0.0001
+    )
+
+
+def _candidate_rank(item: tuple[dict[str, Any], dict[str, Any]]) -> tuple[float, float, str, str]:
+    prediction, fixture = item
+    decision = prediction.get("decision") or {}
+    return (
+        -float(decision.get("expected_edge") or 0),
+        -float(decision.get("model_confidence") or prediction.get("forecast_confidence") or 0),
+        str(fixture.get("kickoff") or ""),
+        str(fixture.get("id") or ""),
+    )
+
+
+def _fixture_started(fixture: dict[str, Any]) -> bool:
+    if fixture.get("status") != "scheduled":
+        return True
     try:
-        return float(value) if value is not None else None
+        kickoff = datetime.fromisoformat(str(fixture.get("kickoff") or "").replace("Z", "+00:00"))
+        if kickoff.tzinfo is None:
+            kickoff = kickoff.replace(tzinfo=UTC)
+    except ValueError:
+        return True
+    return kickoff <= datetime.now(UTC)
+
+
+def _positive_number(value: Any) -> float | None:
+    try:
+        number = float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _expected_edge(
-    prediction: dict[str, Any],
-    market: Any,
-    selection: Any,
-    price: float,
-) -> float:
-    if market == "1x2" and selection in {"home", "draw", "away"}:
-        probability = float((prediction.get("probabilities") or {}).get(selection) or 0)
-        return probability * price - 1
-    if market != "asian_handicap":
-        return -1.0
-    handicap = prediction.get("asian_handicap") or {}
-    home = handicap.get("home_settlement") or {}
-    if not home:
-        return -1.0
-    if selection == "away_handicap":
-        weights = {
-            "full_win": float(home.get("full_loss") or 0),
-            "half_win": float(home.get("half_loss") or 0),
-            "push": float(home.get("push") or 0),
-            "half_loss": float(home.get("half_win") or 0),
-            "full_loss": float(home.get("full_win") or 0),
-        }
-    else:
-        weights = {key: float(home.get(key) or 0) for key in ("full_win", "half_win", "push", "half_loss", "full_loss")}
-    expected_return = (
-        weights["full_win"] * price
-        + weights["half_win"] * (price + 1) / 2
-        + weights["push"]
-        + weights["half_loss"] * 0.5
-    )
-    return expected_return - 1
+    return number if number > 0 else None
 
 
 def _max_drawdown(settled_bets: list[dict[str, Any]]) -> float:
@@ -230,6 +444,18 @@ class DualBankrollService:
 
     def place_for_predictions(self, predictions: list[dict[str, Any]], fixture: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
         return [bet for prediction in predictions if (bet := self.place_for_prediction(prediction, fixture, context))]
+
+    def execution_for_prediction(self, prediction: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
+        model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"
+        service = self.services.get(model_key)
+        if service:
+            return service.execution_for_prediction(prediction, fixture)
+        return {
+            "status": "insufficient_data",
+            "reason_codes": ["risk_limit"],
+            "reason": "未找到对应模型的模拟账户",
+            "bet_id": None,
+        }
 
     def summary(self) -> dict[str, Any]:
         accounts = {key: service.summary() for key, service in self.services.items()}

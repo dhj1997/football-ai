@@ -285,6 +285,10 @@ _RAW_PLAYER_NAMES = {
     "I. Konaté": "伊布拉希马·科纳特",
     "J. Martinez": "哈维·马丁内斯",
     "F. Mendy": "费兰·门迪",
+    "R. Asencio": "劳尔·阿森西奥",
+    "Eder Militao": "埃德尔·米利唐",
+    "T. Pitarch": "蒂亚戈·皮塔奇",
+    "A. Tchouameni": "奥雷利安·琼阿梅尼",
     "M. Serrano": "马科斯·塞拉诺",
     "J. Cestero Sancho": "豪尔赫·塞斯特罗·桑切斯",
     "Manuel Ángel": "曼努埃尔·安赫尔",
@@ -329,6 +333,18 @@ def to_chinese_team_name(name: str) -> str:
 
 
 def to_chinese_player_name(name: str) -> str:
-    """Return a reviewed Chinese player name or preserve the source name."""
+    """Return a reviewed Chinese player name without exposing unknown Latin names."""
 
-    return PLAYER_NAMES_ZH.get(_normalize(name), name)
+    if _contains_chinese(name):
+        return name
+    return PLAYER_NAMES_ZH.get(_normalize(name), "待核验球员")
+
+
+def is_reviewed_player_name(name: str) -> bool:
+    """Return whether a player name has a reviewed Chinese display value."""
+
+    return _contains_chinese(name) or _normalize(name) in PLAYER_NAMES_ZH
+
+
+def _contains_chinese(value: str) -> bool:
+    return any("\u3400" <= character <= "\u9fff" for character in str(value))

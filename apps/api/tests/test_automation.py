@@ -64,6 +64,7 @@ class SettlementService:
 def settings() -> SimpleNamespace:
     return SimpleNamespace(
         automation_tick_seconds=60,
+        automation_analysis_enabled=True,
         automation_fixture_interval_minutes=60,
         automation_standings_interval_minutes=360,
         automation_analysis_interval_minutes=5,
@@ -199,3 +200,26 @@ def test_legacy_prediction_without_ai_metadata_is_upgraded(tmp_path) -> None:
         {"lineup": {"confirmed": False}},
         datetime.now(UTC),
     ) is True
+
+
+@pytest.mark.asyncio
+async def test_disabled_analysis_is_not_run_by_scheduler(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "jobs.db"))
+    repository.initialize()
+    configured = settings()
+    configured.automation_analysis_enabled = False
+    automation = AutomationRunner(
+        configured,
+        repository,
+        SyncService(2),
+        SyncService(3),
+        EvidenceProvider(),
+        PredictionService(),
+        BankrollService(),
+        SettlementService(),
+    )
+
+    first = await automation.run_due()
+
+    assert [item["job_name"] for item in first] == ["fixtures", "standings", "settlement"]
+    assert repository.job_runs("analysis") == []

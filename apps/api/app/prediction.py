@@ -70,8 +70,11 @@ def predict(fixture: dict, context: dict) -> dict:
 
     home_form = recent["home_points_per_game"] / 1.5
     away_form = recent["away_points_per_game"] / 1.5
-    home_xg = min(2.8, max(0.45, 1.38 * home_form * lineup["home_strength"] + 0.22))
-    away_xg = min(2.5, max(0.35, 1.08 * away_form * lineup["away_strength"] + 0.12))
+    impact = context.get("player_impact") or {}
+    home_retention = _attack_retention(impact.get("home"), lineup.get("home_strength"))
+    away_retention = _attack_retention(impact.get("away"), lineup.get("away_strength"))
+    home_xg = min(2.8, max(0.45, 1.38 * home_form * home_retention + 0.22))
+    away_xg = min(2.5, max(0.35, 1.08 * away_form * away_retention + 0.12))
 
     score_matrix: list[tuple[int, int, float]] = []
     for home_goals in range(MAX_GOALS):
@@ -137,4 +140,18 @@ def predict(fixture: dict, context: dict) -> dict:
             "is_demo": fixture["is_demo"],
         },
     }
+
+
+def _attack_retention(impact: dict | None, legacy_strength: object) -> float:
+    if impact:
+        if impact.get("data_status") == "insufficient":
+            return 1.0
+        try:
+            return min(1.0, max(0.5, float(impact.get("attack_retention"))))
+        except (TypeError, ValueError):
+            return 1.0
+    try:
+        return min(1.0, max(0.5, float(legacy_strength)))
+    except (TypeError, ValueError):
+        return 1.0
 

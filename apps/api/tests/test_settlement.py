@@ -1,5 +1,8 @@
+from datetime import UTC, datetime
+
 from app.bankroll import BankrollService
 from app.database import PredictionRepository
+from app.prompt_contract import DEFAULT_PROMPT_CONTRACT
 from app.settlement import SettlementService, _bet_return
 
 
@@ -13,12 +16,19 @@ def prediction() -> dict:
         "probabilities": {"home": 0.6, "draw": 0.25, "away": 0.15},
         "predicted_outcome": "home",
         "data_completeness": 0.75,
-        "ai": {"status": "completed"},
-        "recommendation": {
+        "ai": {
+            "status": "completed",
+            "provider": "deepseek",
+            "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
+        },
+        "decision": {
+            "status": "bet",
             "market": "1x2",
             "selection": "home",
-            "confidence": 0.7,
-            "recommended_stake_fraction": 0.02,
+            "model_confidence": 0.7,
+            "stake_fraction": 0.02,
+            "reason": "测试执行",
+            "reason_codes": [],
         },
     }
 
@@ -26,8 +36,8 @@ def prediction() -> dict:
 def fixture(status: str = "scheduled") -> dict:
     return {
         "id": "fixture-1",
-        "fixture_date": "2026-08-27",
-        "kickoff": "2026-08-27T12:00:00+00:00",
+        "fixture_date": "2099-08-27",
+        "kickoff": "2099-08-27T12:00:00+00:00",
         "status": status,
         "league_key": "epl",
         "home_team": {"name": "Home"},
@@ -44,7 +54,14 @@ def test_prediction_and_bet_settlement_are_idempotent(tmp_path) -> None:
     bankroll.place_for_prediction(
         prediction(),
         fixture(),
-        {"odds": {"home": 2.1, "draw": 3.2, "away": 3.6}},
+        {
+            "odds": {
+                "home": 2.1,
+                "draw": 3.2,
+                "away": 3.6,
+                "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+            }
+        },
     )
     service = SettlementService(repository)
 
@@ -54,15 +71,15 @@ def test_prediction_and_bet_settlement_are_idempotent(tmp_path) -> None:
     evaluation = first["items"][0]["prediction"]
     assert evaluation["correct"] is True
     assert evaluation["brier_score"] == 0.245
-    assert first["items"][0]["bet"]["net_profit"] == 22.0
-    assert second["items"][0]["bet"]["net_profit"] == 22.0
-    assert repository.current_balance() == 1022.0
+    assert first["items"][0]["bet"]["net_profit"] == 275.0
+    assert second["items"][0]["bet"]["net_profit"] == 275.0
+    assert repository.current_balance() == 1275.0
     assert len(repository.bankroll_transactions()) == 3
     metrics = service.metrics("epl", "unknown")
     assert metrics["accuracy"] == 1.0
     assert metrics["average_data_completeness"] == 0.75
     assert metrics["asian_handicap_results"]["half_win"] == 0
-    assert bankroll.summary()["equity_curve"][-1]["balance"] == 1022.0
+    assert bankroll.summary()["equity_curve"][-1]["balance"] == 1275.0
 
 
 def test_asian_half_win_and_half_loss_returns() -> None:
@@ -77,12 +94,14 @@ def test_asian_settlement_is_aggregated_in_metrics(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "asian.db"))
     repository.initialize()
     asian_prediction = prediction()
-    asian_prediction["recommendation"] = {
+    asian_prediction["decision"] = {
+        "status": "bet",
         "market": "asian_handicap",
         "selection": "home_handicap",
-        "confidence": 0.7,
-        "recommended_stake_fraction": 0.02,
+        "model_confidence": 0.7,
+        "stake_fraction": 0.02,
         "reason": "Test edge",
+        "reason_codes": [],
     }
     asian_prediction["asian_handicap"] = {
         "line": -0.75,
@@ -106,6 +125,7 @@ def test_asian_settlement_is_aggregated_in_metrics(tmp_path) -> None:
                 "asian_handicap": -0.75,
                 "asian_handicap_home_odd": 2.0,
                 "asian_handicap_away_odd": 2.0,
+                "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
             }
         },
     )

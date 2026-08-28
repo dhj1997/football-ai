@@ -1,0 +1,2 @@
+INFO:     127.0.0.1:54742 - "GET /api/fixtures/sportsdb-2506175 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64196 - "GET /api/fixtures/sportsdb-2506175 HTTP/1.1" 200 OK

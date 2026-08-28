@@ -11,19 +11,27 @@ def assessment_content() -> str:
         {
             "probabilities": {"home": 0.5, "draw": 0.28, "away": 0.22},
             "predicted_outcome": "home",
-            "asian_handicap_assessment": {
+            "forecast_confidence": 0.66,
+            "asian_handicap_forecast": {
                 "available": False,
                 "line": None,
-                "selection": "none",
+                "home_cover_probability": None,
+                "away_cover_probability": None,
                 "confidence": 0.0,
                 "reason": "没有可用的亚洲盘盘口。",
             },
-            "recommendation": {
+            "player_analysis": {
+                "key_available_players": ["主队核心前锋"],
+                "key_absent_players": [],
+                "replacement_gap": "替补差距仍需确认首发后判断。",
+                "attack_impact": "主队进攻核心保持可用。",
+                "defense_impact": "防守证据暂不完整。",
+            },
+            "bet_recommendation": {
+                "status": "no_bet",
                 "market": "no_bet",
                 "selection": "none",
-                "confidence": 0.66,
-                "recommended_stake_fraction": 0,
-                "reason": "缺少可用的市场赔率。",
+                "reason": "市场数据缺失，当前不建议下注。",
             },
             "analysis_summary": "主队证据较强，但市场数据缺失。",
             "risk_factors": ["盘口缺失"],
@@ -68,15 +76,16 @@ async def test_chatgpt_uses_responses_api_and_validates_output() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chatgpt_normalizes_no_bet_without_a_handicap_side() -> None:
+async def test_chatgpt_rejects_incomplete_handicap_probabilities() -> None:
     payload = json.loads(assessment_content())
-    payload["asian_handicap_assessment"].update(
-        {"available": True, "line": -1.5, "selection": "none", "confidence": 0.4}
+    payload["asian_handicap_forecast"].update(
+        {"available": True, "line": -1.5, "home_cover_probability": None, "away_cover_probability": None, "confidence": 0.4}
     )
     provider = ChatGptProvider(
         "test-key",
         "gpt-5.6-sol",
         "https://api.quya.test/v1",
+        max_retries=0,
         transport=httpx.MockTransport(
             lambda request: httpx.Response(
                 200,
@@ -88,9 +97,7 @@ async def test_chatgpt_normalizes_no_bet_without_a_handicap_side() -> None:
         ),
     )
 
-    result = await provider.assess(
-        {"odds": {"asian_handicap": -1.5, "asian_handicap_home_odd": 1.9, "asian_handicap_away_odd": 1.9}}
-    )
-
-    assert result["assessment"]["asian_handicap_assessment"]["available"] is False
-    assert result["assessment"]["asian_handicap_assessment"]["selection"] == "none"
+    with pytest.raises(RuntimeError):
+        await provider.assess(
+            {"odds": {"asian_handicap": -1.5, "asian_handicap_home_odd": 1.9, "asian_handicap_away_odd": 1.9}}
+        )

@@ -1,0 +1,14 @@
+
+> football-ai-web@0.1.0 dev
+> next dev -p 3000
+
+▲ Next.js 16.3.2 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://169.254.83.107:3000
+✓ Ready in 7.7s
+✓ Running next.config.ts took 233ms
+
+ GET /matches/sportsdb-2506175 200 in 6.2s (next.js: 4.6s, application-code: 1640ms)
+✓ Compiled in 261ms
+ GET /matches/sportsdb-2506175 200 in 121ms (next.js: 60ms, application-code: 60ms)
+ GET /matches/sportsdb-2506175 200 in 214ms (next.js: 41ms, application-code: 173ms)

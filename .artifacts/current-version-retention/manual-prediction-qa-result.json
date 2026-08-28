@@ -1,0 +1,17 @@
+{
+  "finished": {
+    "blockedMessageVisible": true,
+    "manualButtonCount": 0,
+    "horizontalOverflow": false,
+    "consoleErrors": []
+  },
+  "scheduled": {
+    "initialButtonVisible": true,
+    "loadingDisabled": true,
+    "errorText": "测试：赛前证据不足",
+    "horizontalOverflow": false,
+    "consoleErrors": [
+      "Failed to load resource: the server responded with a status of 409 (Conflict)"
+    ]
+  }
+}

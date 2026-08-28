@@ -228,7 +228,9 @@ def _lineup(rows: list[dict[str, Any]], home_id: str, away_id: str, updated_at: 
             position = player_row.get("position") or {}
             mapped[side].append(
                 {
+                    "provider_player_id": str(athlete["id"]) if athlete.get("id") is not None else None,
                     "name": to_chinese_player_name(athlete.get("displayName") or athlete.get("fullName") or "Unknown player"),
+                    "original_name": athlete.get("displayName") or athlete.get("fullName") or "Unknown player",
                     "number": _int(player_row.get("jersey") or athlete.get("jersey")),
                     "position": position.get("abbreviation") or position.get("displayName") or "",
                     "starter": bool(player_row.get("starter")),
@@ -255,7 +257,15 @@ def _availability(home_payload: dict[str, Any], away_payload: dict[str, Any]) ->
             for injury in athlete.get("injuries") or []:
                 name = to_chinese_player_name(athlete.get("displayName") or athlete.get("fullName") or "Unknown player")
                 reason = injury.get("description") or injury.get("status") or injury.get("type") or "Unavailable"
-                players.append({"team": side, "name": name, "reason": str(reason)})
+                players.append(
+                    {
+                        "team": side,
+                        "provider_player_id": str(athlete["id"]) if athlete.get("id") is not None else None,
+                        "name": name,
+                        "original_name": athlete.get("displayName") or athlete.get("fullName") or "Unknown player",
+                        "reason": str(reason),
+                    }
+                )
                 counts[side] += 1
     return {
         "home_missing": counts["home"],
@@ -290,6 +300,7 @@ def _squad(payload: dict[str, Any]) -> list[dict[str, Any]]:
             result.append(
                 {
                     "id": str(athlete.get("id")) if athlete.get("id") is not None else None,
+                    "provider_player_id": str(athlete["id"]) if athlete.get("id") is not None else None,
                     "name": to_chinese_player_name(athlete.get("displayName") or "Unknown player"),
                     "original_name": athlete.get("displayName") or "Unknown player",
                     "age": _int(athlete.get("age")),

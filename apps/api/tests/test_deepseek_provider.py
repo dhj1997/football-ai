@@ -6,24 +6,32 @@ import pytest
 from app.deepseek_provider import DeepSeekProvider
 
 
-def assessment_content(market: str = "no_bet", selection: str = "none", stake: float = 0) -> str:
+def assessment_content() -> str:
     return json.dumps(
         {
             "probabilities": {"home": 0.5, "draw": 0.28, "away": 0.22},
             "predicted_outcome": "home",
-            "asian_handicap_assessment": {
+            "forecast_confidence": 0.66,
+            "asian_handicap_forecast": {
                 "available": False,
                 "line": None,
-                "selection": "none",
+                "home_cover_probability": None,
+                "away_cover_probability": None,
                 "confidence": 0.0,
                 "reason": "没有可用的亚洲盘盘口。",
             },
-            "recommendation": {
-                "market": market,
-                "selection": selection,
-                "confidence": 0.66,
-                "recommended_stake_fraction": stake,
-                "reason": "现有证据有一定方向性，但仍不完整。",
+            "player_analysis": {
+                "key_available_players": ["主队核心前锋"],
+                "key_absent_players": [],
+                "replacement_gap": "缺少确认首发，替补差距仍不明确。",
+                "attack_impact": "主队进攻核心保持可用。",
+                "defense_impact": "防守证据暂不完整。",
+            },
+            "bet_recommendation": {
+                "status": "no_bet",
+                "market": "no_bet",
+                "selection": "none",
+                "reason": "首发未确认但不是唯一条件，当前赔率证据仍不足。",
             },
             "analysis_summary": "主队状态更强，但首发阵容仍存在明显不确定性。",
             "risk_factors": ["首发阵容尚未确认"],
@@ -56,7 +64,7 @@ async def test_deepseek_json_is_strictly_validated() -> None:
     result = await provider.assess({"odds": None})
 
     assert result["assessment"]["probabilities"]["home"] == 0.5
-    assert result["assessment"]["asian_handicap_assessment"]["available"] is False
+    assert result["assessment"]["asian_handicap_forecast"]["available"] is False
     assert result["returned_model"] == "deepseek-v4-flash"
     assert result["usage"]["total_tokens"] == 30
 
@@ -134,32 +142,35 @@ async def test_permanent_http_error_is_not_retried() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bet_without_matching_odds_is_rejected() -> None:
+async def test_schema_rejects_any_model_execution_field() -> None:
+    payload = json.loads(assessment_content())
+    payload["recommended_stake_fraction"] = 0.5
     provider = DeepSeekProvider(
         "test-key",
         "deepseek-v4-flash",
         "https://api.deepseek.test",
         max_retries=0,
         transport=httpx.MockTransport(
-            lambda request: response(assessment_content("1x2", "home", 0.01))
+            lambda request: response(json.dumps(payload, ensure_ascii=False))
         ),
     )
 
-    with pytest.raises(RuntimeError, match="matching market odds"):
+    with pytest.raises(RuntimeError):
         await provider.assess({"odds": None})
 
 
 @pytest.mark.asyncio
-async def test_model_may_choose_more_than_two_percent_in_simulation() -> None:
+async def test_model_output_has_bet_opinion_but_no_stake() -> None:
     provider = DeepSeekProvider(
         "test-key",
         "deepseek-v4-flash",
         "https://api.deepseek.test",
         transport=httpx.MockTransport(
-            lambda request: response(assessment_content("1x2", "home", 0.5))
+            lambda request: response(assessment_content())
         ),
     )
 
     result = await provider.assess({"odds": {"home": 2.1, "draw": 3.2, "away": 3.6}})
 
-    assert result["assessment"]["recommendation"]["recommended_stake_fraction"] == 0.5
+    assert result["assessment"]["bet_recommendation"]["status"] == "no_bet"
+    assert "stake" not in json.dumps(result["assessment"], ensure_ascii=False)

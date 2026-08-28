@@ -32,6 +32,8 @@ def test_free_team_profile_and_player_mapping_preserves_provenance() -> None:
     assert profile["capacity"] == 18761
     assert profile["logo"] == "https://example.test/osasuna.png"
     assert player["id"] == 123
+    assert player["provider_player_id"] == "123"
+    assert player["name"] == "待核验球员"
     assert player["age"] == 24
     assert player["number"] == 9
     assert player["market_value"] is None

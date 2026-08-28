@@ -141,6 +141,29 @@ class PredictionRepository:
             connection.execute(
                 text(
                     """
+                    CREATE TABLE IF NOT EXISTS player_value_snapshots (
+                        canonical_player_id VARCHAR(255) PRIMARY KEY,
+                        updated_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS player_name_snapshots (
+                        canonical_player_id VARCHAR(255) PRIMARY KEY,
+                        provider_player_id VARCHAR(255) NULL,
+                        updated_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
                     CREATE TABLE IF NOT EXISTS bets (
                         id VARCHAR(255) PRIMARY KEY,
                         prediction_id VARCHAR(255) NOT NULL UNIQUE,
@@ -225,6 +248,8 @@ class PredictionRepository:
                     "sync_metadata",
                     "league_snapshots",
                     "team_snapshots",
+                    "player_value_snapshots",
+                    "player_name_snapshots",
                     "bets",
                     "bankroll_transactions",
                     "fixture_settlements",
@@ -542,6 +567,339 @@ class PredictionRepository:
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows]
 
+    def latest_current(
+        self,
+        fixture_id: str,
+        prompt_version: str,
+        model_key: str | None = None,
+        competition_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the newest prediction compatible with the active prompt contract."""
+
+        compatible = [
+            item
+            for item in self.predictions_for_fixture(fixture_id, model_key, competition_id)
+            if (item.get("ai") or {}).get("prompt_version") == prompt_version
+        ]
+        return max(compatible, key=lambda item: (str(item.get("created_at") or ""), str(item["id"]))) if compatible else None
+
+    def current_predictions_for_fixture(
+        self,
+        fixture_id: str,
+        prompt_version: str,
+        competition_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return at most one active-contract prediction per model."""
+
+        items = self.predictions_for_fixture(fixture_id, competition_id=competition_id)
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in items:
+            if (item.get("ai") or {}).get("prompt_version") != prompt_version:
+                continue
+            key = str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek")
+            groups.setdefault(key, []).append(item)
+        return [
+            max(group, key=lambda item: (str(item.get("created_at") or ""), str(item["id"])))
+            for _, group in sorted(groups.items())
+        ]
+
+    def prediction_retention_preview(
+        self,
+        prompt_version: str,
+        competition_id: str | None = None,
+        fixture_id: str | None = None,
+        model_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Count superseded prediction data without changing it."""
+
+        with self.engine.connect() as connection:
+            plan = self._prediction_retention_plan(
+                connection,
+                prompt_version,
+                competition_id,
+                fixture_id,
+                model_key,
+            )
+        return self._prediction_retention_summary(plan, prompt_version)
+
+    def prune_prediction_history(
+        self,
+        prompt_version: str,
+        competition_id: str | None = None,
+        fixture_id: str | None = None,
+        model_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete superseded prediction data and rebuild affected simulated ledgers."""
+
+        with self.engine.begin() as connection:
+            plan = self._prediction_retention_plan(
+                connection,
+                prompt_version,
+                competition_id,
+                fixture_id,
+                model_key,
+            )
+            self._delete_values(connection, "bankroll_transactions", "reference_id", plan["bet_ids"])
+            self._delete_values(connection, "fixture_settlements", "prediction_id", plan["prediction_ids"])
+            self._delete_values(connection, "bets", "id", plan["bet_ids"])
+            self._delete_values(connection, "predictions", "id", plan["prediction_ids"])
+            self._delete_values(connection, "evidence_snapshots", "id", plan["snapshot_ids"])
+            balances = [
+                self._rebuild_simulation_ledger(connection, account_competition, account_model)
+                for account_competition, account_model in plan["affected_accounts"]
+            ]
+        return {
+            **self._prediction_retention_summary(plan, prompt_version),
+            "balances": balances,
+        }
+
+    def _prediction_retention_plan(
+        self,
+        connection: Connection,
+        prompt_version: str,
+        competition_id: str | None,
+        fixture_id: str | None,
+        model_key: str | None,
+    ) -> dict[str, Any]:
+        clauses: list[str] = []
+        parameters: dict[str, str] = {}
+        for column, value in (
+            ("competition_id", competition_id),
+            ("fixture_id", fixture_id),
+            ("model_key", model_key),
+        ):
+            if value:
+                clauses.append(f"{column} = :{column}")
+                parameters[column] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = connection.execute(
+            text(
+                "SELECT id, fixture_id, created_at, model_key, competition_id, payload "
+                f"FROM predictions{where}"
+            ),
+            parameters,
+        ).mappings().all()
+        parsed_rows: list[dict[str, Any]] = []
+        groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        for row in rows:
+            payload = json.loads(row["payload"])
+            normalized = {
+                "id": str(row["id"]),
+                "fixture_id": str(row["fixture_id"]),
+                "created_at": str(row["created_at"]),
+                "model_key": str(row["model_key"] or payload.get("model_key") or (payload.get("ai") or {}).get("provider") or "deepseek"),
+                "competition_id": str(row["competition_id"] or payload.get("competition_id") or "legacy"),
+                "prompt_version": (payload.get("ai") or {}).get("prompt_version"),
+                "evidence_snapshot_id": payload.get("evidence_snapshot_id"),
+            }
+            parsed_rows.append(normalized)
+            group_key = (normalized["competition_id"], normalized["fixture_id"], normalized["model_key"])
+            groups.setdefault(group_key, []).append(normalized)
+
+        retained_ids: set[str] = set()
+        for group in groups.values():
+            compatible = [item for item in group if item["prompt_version"] == prompt_version]
+            if compatible:
+                current = max(compatible, key=lambda item: (item["created_at"], item["id"]))
+                retained_ids.add(current["id"])
+        deleted_rows = [item for item in parsed_rows if item["id"] not in retained_ids]
+        prediction_ids = {item["id"] for item in deleted_rows}
+
+        bet_rows = connection.execute(
+            text("SELECT id, prediction_id, model_key, competition_id, payload FROM bets")
+        ).mappings().all()
+        existing_prediction_ids = {
+            str(row["id"])
+            for row in connection.execute(text("SELECT id FROM predictions")).mappings().all()
+        }
+        deleted_bets = [
+            row
+            for row in bet_rows
+            if str(row["prediction_id"]) in prediction_ids
+            or str(row["prediction_id"]) not in existing_prediction_ids
+        ]
+        bet_ids = {str(row["id"]) for row in deleted_bets}
+        affected_accounts = sorted(
+            {
+                (
+                    str(row["competition_id"] or json.loads(row["payload"]).get("competition_id") or "legacy"),
+                    str(row["model_key"] or json.loads(row["payload"]).get("model_key") or "deepseek"),
+                )
+                for row in deleted_bets
+            }
+        )
+        transaction_count = sum(
+            1
+            for row in connection.execute(
+                text("SELECT reference_id FROM bankroll_transactions")
+            ).mappings().all()
+            if row["reference_id"] is not None and str(row["reference_id"]) in bet_ids
+        )
+        settlement_count = sum(
+            1
+            for row in connection.execute(
+                text("SELECT prediction_id FROM fixture_settlements")
+            ).mappings().all()
+            if str(row["prediction_id"]) in prediction_ids
+        )
+        retained_snapshot_ids = set()
+        for row in connection.execute(text("SELECT id, payload FROM predictions")).mappings().all():
+            if str(row["id"]) in prediction_ids:
+                continue
+            payload = json.loads(row["payload"])
+            if payload.get("evidence_snapshot_id"):
+                retained_snapshot_ids.add(str(payload["evidence_snapshot_id"]))
+        candidate_snapshot_ids = {
+            str(item["evidence_snapshot_id"])
+            for item in deleted_rows
+            if item.get("evidence_snapshot_id") and str(item["evidence_snapshot_id"]) not in retained_snapshot_ids
+        }
+        existing_snapshot_ids = {
+            str(row["id"])
+            for row in connection.execute(text("SELECT id FROM evidence_snapshots")).mappings().all()
+        }
+        snapshot_ids = candidate_snapshot_ids & existing_snapshot_ids
+        return {
+            "prediction_ids": prediction_ids,
+            "bet_ids": bet_ids,
+            "snapshot_ids": snapshot_ids,
+            "affected_accounts": affected_accounts,
+            "counts": {
+                "predictions": len(prediction_ids),
+                "bets": len(bet_ids),
+                "fixture_settlements": settlement_count,
+                "bankroll_transactions": transaction_count,
+                "evidence_snapshots": len(snapshot_ids),
+            },
+        }
+
+    @staticmethod
+    def _prediction_retention_summary(plan: dict[str, Any], prompt_version: str) -> dict[str, Any]:
+        counts = dict(plan["counts"])
+        return {
+            "prompt_version": prompt_version,
+            "delete_counts": counts,
+            "history_count": counts["predictions"],
+            "affected_accounts": [
+                {"competition_id": competition_id, "model_key": model_key}
+                for competition_id, model_key in plan["affected_accounts"]
+            ],
+        }
+
+    @staticmethod
+    def _delete_values(
+        connection: Connection,
+        table: str,
+        column: str,
+        values: set[str],
+    ) -> None:
+        if not values:
+            return
+        parameters = {f"value_{index}": value for index, value in enumerate(sorted(values))}
+        placeholders = ", ".join(f":{key}" for key in parameters)
+        connection.execute(text(f"DELETE FROM {table} WHERE {column} IN ({placeholders})"), parameters)
+
+    def _rebuild_simulation_ledger(
+        self,
+        connection: Connection,
+        competition_id: str,
+        model_key: str,
+    ) -> dict[str, Any]:
+        account = connection.execute(
+            text(
+                "SELECT initial_balance, created_at FROM simulation_accounts "
+                "WHERE competition_id = :competition_id AND model_key = :model_key"
+            ),
+            {"competition_id": competition_id, "model_key": model_key},
+        ).mappings().first()
+        if account is None:
+            raise ValueError(f"Simulation account is missing: {competition_id}/{model_key}")
+        transactions = connection.execute(
+            text(
+                "SELECT id, kind, reference_id, amount, payload FROM bankroll_transactions "
+                "WHERE competition_id = :competition_id AND model_key = :model_key "
+                "ORDER BY CASE WHEN kind = 'initial_credit' THEN 0 ELSE 1 END, created_at ASC, id ASC"
+            ),
+            {"competition_id": competition_id, "model_key": model_key},
+        ).mappings().all()
+        if not any(row["kind"] == "initial_credit" for row in transactions):
+            initial = {
+                "id": f"bankroll-initial:{competition_id}:{model_key}",
+                "created_at": account["created_at"],
+                "kind": "initial_credit",
+                "reference_id": None,
+                "amount": float(account["initial_balance"]),
+                "balance_after": float(account["initial_balance"]),
+                "model_key": model_key,
+                "competition_id": competition_id,
+            }
+            connection.execute(
+                text(
+                    "INSERT INTO bankroll_transactions "
+                    "(id, created_at, kind, reference_id, amount, balance_after, model_key, competition_id, payload) "
+                    "VALUES (:id, :created_at, :kind, :reference_id, :amount, :balance_after, :model_key, :competition_id, :payload)"
+                ),
+                {**initial, "payload": json.dumps(initial, ensure_ascii=False)},
+            )
+            transactions = connection.execute(
+                text(
+                    "SELECT id, kind, reference_id, amount, payload FROM bankroll_transactions "
+                    "WHERE competition_id = :competition_id AND model_key = :model_key "
+                    "ORDER BY CASE WHEN kind = 'initial_credit' THEN 0 ELSE 1 END, created_at ASC, id ASC"
+                ),
+                {"competition_id": competition_id, "model_key": model_key},
+            ).mappings().all()
+
+        balance = 0.0
+        transaction_balances: dict[tuple[str, str], float] = {}
+        transaction_amounts: dict[tuple[str, str], float] = {}
+        for row in transactions:
+            amount = round(float(row["amount"]), 2)
+            balance = round(balance + amount, 2)
+            payload = json.loads(row["payload"])
+            payload.update(
+                {
+                    "balance_after": balance,
+                    "model_key": model_key,
+                    "competition_id": competition_id,
+                }
+            )
+            connection.execute(
+                text("UPDATE bankroll_transactions SET balance_after = :balance, payload = :payload WHERE id = :id"),
+                {"balance": balance, "payload": json.dumps(payload, ensure_ascii=False), "id": row["id"]},
+            )
+            if row["reference_id"]:
+                key = (str(row["reference_id"]), str(row["kind"]))
+                transaction_balances[key] = balance
+                transaction_amounts[key] = amount
+
+        bets = connection.execute(
+            text(
+                "SELECT id, payload FROM bets WHERE competition_id = :competition_id AND model_key = :model_key"
+            ),
+            {"competition_id": competition_id, "model_key": model_key},
+        ).mappings().all()
+        for row in bets:
+            payload = json.loads(row["payload"])
+            stake_key = (str(row["id"]), "stake")
+            return_key = (str(row["id"]), "return")
+            if stake_key in transaction_balances:
+                payload["balance_after_placement"] = transaction_balances[stake_key]
+                payload["balance_before"] = round(
+                    transaction_balances[stake_key] - transaction_amounts[stake_key],
+                    2,
+                )
+            payload["balance_after_settlement"] = transaction_balances.get(return_key)
+            connection.execute(
+                text("UPDATE bets SET payload = :payload WHERE id = :id"),
+                {"payload": json.dumps(payload, ensure_ascii=False), "id": row["id"]},
+            )
+        return {
+            "competition_id": competition_id,
+            "model_key": model_key,
+            "balance": balance,
+        }
+
     def replace_fixtures(
         self,
         start_date: str,
@@ -812,6 +1170,111 @@ class PredictionRepository:
             ).mappings().first()
         return json.loads(row["payload"]) if row else None
 
+    def save_player_values(self, values: list[dict[str, Any]]) -> None:
+        """Upsert licensed market-value snapshots with their provenance."""
+
+        with self.engine.begin() as connection:
+            for value in values:
+                parameters = {
+                    "canonical_player_id": value["canonical_player_id"],
+                    "updated_at": value.get("cached_at") or datetime.now(UTC).replace(microsecond=0).isoformat(),
+                    "payload": json.dumps(value, ensure_ascii=False),
+                }
+                exists = connection.execute(
+                    text(
+                        "SELECT canonical_player_id FROM player_value_snapshots "
+                        "WHERE canonical_player_id = :canonical_player_id"
+                    ),
+                    parameters,
+                ).first()
+                if exists:
+                    connection.execute(
+                        text(
+                            "UPDATE player_value_snapshots SET updated_at = :updated_at, payload = :payload "
+                            "WHERE canonical_player_id = :canonical_player_id"
+                        ),
+                        parameters,
+                    )
+                else:
+                    connection.execute(
+                        text(
+                            "INSERT INTO player_value_snapshots (canonical_player_id, updated_at, payload) "
+                            "VALUES (:canonical_player_id, :updated_at, :payload)"
+                        ),
+                        parameters,
+                    )
+
+    def player_values(self, canonical_player_ids: list[str]) -> list[dict[str, Any]]:
+        """Return cached value snapshots for the requested canonical players."""
+
+        if not canonical_player_ids:
+            return []
+        parameters = {f"player_{index}": player_id for index, player_id in enumerate(canonical_player_ids)}
+        placeholders = ", ".join(f":{key}" for key in parameters)
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM player_value_snapshots "
+                    f"WHERE canonical_player_id IN ({placeholders})"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_player_names(self, values: list[dict[str, Any]]) -> None:
+        """Upsert cached Chinese player-name translations with provenance."""
+
+        with self.engine.begin() as connection:
+            for value in values:
+                parameters = {
+                    "canonical_player_id": value["canonical_player_id"],
+                    "provider_player_id": value.get("provider_player_id"),
+                    "updated_at": value.get("created_at") or datetime.now(UTC).replace(microsecond=0).isoformat(),
+                    "payload": json.dumps(value, ensure_ascii=False),
+                }
+                exists = connection.execute(
+                    text(
+                        "SELECT canonical_player_id FROM player_name_snapshots "
+                        "WHERE canonical_player_id = :canonical_player_id"
+                    ),
+                    parameters,
+                ).first()
+                if exists:
+                    connection.execute(
+                        text(
+                            "UPDATE player_name_snapshots SET provider_player_id = :provider_player_id, "
+                            "updated_at = :updated_at, payload = :payload "
+                            "WHERE canonical_player_id = :canonical_player_id"
+                        ),
+                        parameters,
+                    )
+                else:
+                    connection.execute(
+                        text(
+                            "INSERT INTO player_name_snapshots "
+                            "(canonical_player_id, provider_player_id, updated_at, payload) "
+                            "VALUES (:canonical_player_id, :provider_player_id, :updated_at, :payload)"
+                        ),
+                        parameters,
+                    )
+
+    def player_names(self, canonical_player_ids: list[str]) -> list[dict[str, Any]]:
+        """Return cached Chinese names for the requested canonical players."""
+
+        if not canonical_player_ids:
+            return []
+        parameters = {f"player_{index}": player_id for index, player_id in enumerate(canonical_player_ids)}
+        placeholders = ", ".join(f":{key}" for key in parameters)
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM player_name_snapshots "
+                    f"WHERE canonical_player_id IN ({placeholders})"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
     @staticmethod
     def _current_balance(
         connection: Connection,
@@ -920,6 +1383,42 @@ class PredictionRepository:
                 {**transaction, "model_key": model_key, "competition_id": competition_id, "payload": json.dumps(transaction, ensure_ascii=False)},
             )
         return payload
+
+    def discard_open_fixture_bets(
+        self,
+        fixture_id: str,
+        model_key: str,
+        competition_id: str,
+        keep_prediction_id: str | None = None,
+    ) -> int:
+        """Remove superseded open simulation bets and restore the account ledger."""
+
+        with self.engine.begin() as connection:
+            clauses = [
+                "fixture_id = :fixture_id",
+                "model_key = :model_key",
+                "competition_id = :competition_id",
+                "status = 'placed'",
+            ]
+            parameters: dict[str, Any] = {
+                "fixture_id": fixture_id,
+                "model_key": model_key,
+                "competition_id": competition_id,
+            }
+            if keep_prediction_id:
+                clauses.append("prediction_id <> :keep_prediction_id")
+                parameters["keep_prediction_id"] = keep_prediction_id
+            rows = connection.execute(
+                text(f"SELECT id FROM bets WHERE {' AND '.join(clauses)}"),
+                parameters,
+            ).mappings().all()
+            bet_ids = {str(row["id"]) for row in rows}
+            if not bet_ids:
+                return 0
+            self._delete_values(connection, "bankroll_transactions", "reference_id", bet_ids)
+            self._delete_values(connection, "bets", "id", bet_ids)
+            self._rebuild_simulation_ledger(connection, competition_id, model_key)
+        return len(bet_ids)
 
     def bet_for_prediction(self, prediction_id: str) -> dict[str, Any] | None:
         """Return the simulated bet linked to one prediction version."""

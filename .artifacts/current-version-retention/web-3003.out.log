@@ -1,0 +1,9 @@
+
+> football-ai-web@0.1.0 start
+> next start -p 3003
+
+▲ Next.js 16.3.2
+- Local:         http://localhost:3003
+- Network:       http://169.254.83.107:3003
+✓ Ready in 283ms
+✓ Running next.config.ts took 54ms

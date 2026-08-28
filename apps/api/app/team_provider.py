@@ -106,6 +106,7 @@ def _map_player(player: dict[str, Any]) -> dict[str, Any]:
     status = player.get("status") or {}
     return {
         "id": str(player.get("id")) if player.get("id") is not None else None,
+        "provider_player_id": str(player["id"]) if player.get("id") is not None else None,
         "name": to_chinese_player_name(original_name),
         "original_name": original_name,
         "number": number,
@@ -121,6 +122,8 @@ def _map_player(player: dict[str, Any]) -> dict[str, Any]:
         "statistics": {
             "appearances": _stat_int(stats, "appearances"),
             "substitute_appearances": _stat_int(stats, "subIns"),
+            "starts": _stat_optional_int(stats, "starts", "gamesStarted"),
+            "minutes": _stat_optional_int(stats, "minutes", "minutesPlayed"),
             "goals": _stat_int(stats, "totalGoals"),
             "assists": _stat_int(stats, "goalAssists"),
             "yellow_cards": _stat_int(stats, "yellowCards"),
@@ -226,6 +229,10 @@ def _score(value: Any) -> int | None:
 
 def _stat_int(stats: dict[str, Any], key: str) -> int:
     return _optional_int(stats.get(key)) or 0
+
+
+def _stat_optional_int(stats: dict[str, Any], *keys: str) -> int | None:
+    return next((_optional_int(stats.get(key)) for key in keys if _optional_int(stats.get(key)) is not None), None)
 
 
 def _optional_int(value: Any) -> int | None:

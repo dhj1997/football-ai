@@ -27,8 +27,19 @@ from .evidence_chain import (
 from .espn_evidence_provider import EspnEvidenceProvider
 from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
+from .market_decision import apply_market_decision
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
+from .prompt_contract import DEFAULT_PROMPT_CONTRACT
+from .player_identity import public_payload
+from .player_impact import apply_player_impact
+from .player_name_provider import (
+    ChatGptPlayerNameProvider,
+    DeepSeekPlayerNameProvider,
+    FallbackPlayerNameProvider,
+    PlayerNameService,
+)
+from .player_value_provider import NullPlayerValueProvider, PlayerValueService
 from .schedule_provider import TheSportsDbProvider
 from .schedule_sync import ScheduleSyncService
 from .settlement import SettlementService
@@ -89,6 +100,8 @@ deepseek_provider = DeepSeekProvider(
     settings.deepseek_max_retries,
     settings.deepseek_max_tokens,
 )
+player_value_provider = NullPlayerValueProvider()
+player_value_service = PlayerValueService(player_value_provider, repository)
 chatgpt_provider = ChatGptProvider(
     settings.api_chatgpt_key,
     settings.chatgpt_model,
@@ -97,26 +110,50 @@ chatgpt_provider = ChatGptProvider(
     settings.deepseek_max_retries,
     settings.deepseek_max_tokens,
 )
+player_name_provider = FallbackPlayerNameProvider(
+    [
+        DeepSeekPlayerNameProvider(
+            settings.api_deepseek_key,
+            settings.deepseek_model,
+            settings.deepseek_base_url,
+            settings.deepseek_timeout_seconds,
+            settings.deepseek_max_retries,
+            settings.deepseek_max_tokens,
+        ),
+        ChatGptPlayerNameProvider(
+            settings.api_chatgpt_key,
+            settings.chatgpt_model,
+            settings.chatgpt_base_url,
+            settings.deepseek_timeout_seconds,
+            settings.deepseek_max_retries,
+            settings.deepseek_max_tokens,
+        ),
+    ]
+)
+player_name_service = PlayerNameService(player_name_provider, repository)
 deepseek_prediction_service = PredictionService(
     deepseek_provider,
     repository,
     "deepseek",
     settings.simulation_competition_id,
+    player_value_service,
 )
 chatgpt_prediction_service = PredictionService(
     chatgpt_provider,
     repository,
     "chatgpt",
     settings.simulation_competition_id,
+    player_value_service,
 )
 prediction_service = DualPredictionService(
     {"deepseek": deepseek_prediction_service, "chatgpt": chatgpt_prediction_service},
     settings.simulation_competition_id,
+    player_name_service,
 )
 bankroll_service = DualBankrollService(
     {
-        "deepseek": BankrollService(repository).configure("deepseek", settings.simulation_competition_id, True),
-        "chatgpt": BankrollService(repository).configure("chatgpt", settings.simulation_competition_id, True),
+        "deepseek": BankrollService(repository).configure("deepseek", settings.simulation_competition_id),
+        "chatgpt": BankrollService(repository).configure("chatgpt", settings.simulation_competition_id),
     },
     settings.simulation_competition_id,
 )
@@ -168,6 +205,15 @@ def _fixture_or_404(fixture_id: str) -> dict:
     return fixture
 
 
+def _kickoff_started(fixture: dict) -> bool:
+    try:
+        kickoff = datetime.fromisoformat(str(fixture.get("kickoff") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    kickoff = kickoff.replace(tzinfo=UTC) if kickoff.tzinfo is None else kickoff.astimezone(UTC)
+    return kickoff <= datetime.now(UTC)
+
+
 @app.get("/health")
 def health() -> dict:
     """Expose runtime health and provider readiness."""
@@ -199,6 +245,7 @@ def health() -> dict:
         "chatgpt_model": settings.chatgpt_model,
         "simulated_bankroll_balance": bankroll_service.summary()["accounts"]["deepseek"]["balance"],
         "automation_enabled": settings.automation_enabled,
+        "automation_analysis_enabled": settings.automation_analysis_enabled,
         "standings_last_synced_at": max(
             (item.get("updated_at") for item in standings_rows if item.get("updated_at")),
             default=None,
@@ -257,7 +304,7 @@ async def fixtures(
         mode = "empty"
     else:
         mode = "unconfigured"
-    return {
+    return public_payload({
         "items": rows,
         "mode": mode,
         "provider_configured": schedule_provider.configured,
@@ -268,7 +315,7 @@ async def fixtures(
         "sync_status": sync_state["status"],
         "league_counts": league_counts,
         "last_synced_at": sync["synced_at"] if sync else None,
-    }
+    })
 
 
 @app.get("/api/standings")
@@ -279,12 +326,12 @@ async def standings(
 
     sync_state = await league_sync.ensure_fresh()
     items = repository.league_snapshots(None if league == "all" else league)
-    return {
+    return public_payload({
         "items": items,
         "sync_status": sync_state["status"],
         "source": "espn",
         "last_synced_at": sync_state["last_synced_at"],
-    }
+    })
 
 
 @app.get("/api/teams/{league_key}/{team_id}")
@@ -313,7 +360,7 @@ async def team_detail(
     state = await team_sync.ensure_fresh(league_key, team_id, season_year)
     if state["item"] is None:
         raise HTTPException(status_code=503, detail="Current team data is unavailable")
-    return {"item": state["item"], "sync_status": state["status"]}
+    return public_payload({"item": state["item"], "sync_status": state["status"]})
 
 
 @app.get("/api/fixtures/{fixture_id}")
@@ -341,22 +388,17 @@ async def fixture_detail(fixture_id: str) -> dict:
         except Exception as error:
             evidence_error = str(error)
     predictions = {
-        key: repository.latest(fixture_id, key, settings.simulation_competition_id)
+        key: repository.latest_current(
+            fixture_id,
+            DEFAULT_PROMPT_CONTRACT.version,
+            key,
+            settings.simulation_competition_id,
+        )
         for key in prediction_service.model_keys
     }
     prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
     localize_evidence_players(context)
-    missing_model_keys = [key for key, item in predictions.items() if item is None]
-    if fixture["status"] == "scheduled" and context.get("synced_at") and missing_model_keys:
-        try:
-            created = await prediction_service.create(fixture, context, missing_model_keys)
-            for item in created:
-                predictions[item.get("model_key") or item["ai"]["provider"]] = item
-                bankroll_service.place_for_prediction(item, fixture, context)
-            prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
-        except Exception as error:
-            prediction_error = str(error)
     free_team_data = fixture.get("free_team_data") or {}
     for side in ("home", "away"):
         team = fixture[f"{side}_team"]
@@ -371,21 +413,20 @@ async def fixture_detail(fixture_id: str) -> dict:
         profile["venue"] = profile.get("venue") or fixture.get("venue")
         if not context["squads"].get(side):
             context["squads"][side] = free_data.get("squad") or []
+    await player_name_service.enrich(context, resolve_missing=False)
+    await player_value_service.enrich(context, str(fixture.get("league_key") or ""))
+    apply_player_impact(context)
+    for item in predictions.values():
+        if item:
+            apply_market_decision(item, context)
+    prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
     model_bets = {}
     for key, item in predictions.items():
         linked_bet = repository.bet_for_prediction(item["id"]) if item else None
-        model_bets[key] = linked_bet or next(
-            (
-                bet
-                for bet in repository.bets(
-                    model_key=key,
-                    competition_id=settings.simulation_competition_id,
-                )
-                if bet.get("fixture_id") == fixture_id
-            ),
-            None,
-        )
-    return {
+        model_bets[key] = linked_bet
+        if item:
+            item["execution"] = bankroll_service.execution_for_prediction(item, fixture)
+    return public_payload({
         "fixture": fixture,
         "context": context,
         "prediction": prediction,
@@ -401,7 +442,7 @@ async def fixture_detail(fixture_id: str) -> dict:
         },
         "evidence_error": evidence_error,
         "prediction_error": prediction_error,
-    }
+    })
 
 
 @app.get("/api/bankroll")
@@ -455,7 +496,12 @@ def automation_jobs(job_name: str | None = None, limit: int = 50) -> dict:
     """Return recent durable automation run history."""
 
     items = repository.job_runs(job_name, limit)
-    return {"items": items, "count": len(items), "enabled": settings.automation_enabled}
+    return {
+        "items": items,
+        "count": len(items),
+        "enabled": settings.automation_enabled,
+        "analysis_enabled": settings.automation_analysis_enabled,
+    }
 
 
 @app.post("/api/admin/jobs/{job_name}/run", dependencies=[Depends(require_admin)])
@@ -470,13 +516,75 @@ async def run_automation_job(job_name: str) -> dict:
 
 @app.get("/api/fixtures/{fixture_id}/predictions/latest")
 def latest_prediction(fixture_id: str) -> dict:
-    """Return the newest immutable prediction version."""
+    """Return the newest prediction compatible with the active prompt contract."""
 
-    _fixture_or_404(fixture_id)
-    result = repository.latest(fixture_id)
+    fixture = _fixture_or_404(fixture_id)
+    result = repository.latest_current(
+        fixture_id,
+        DEFAULT_PROMPT_CONTRACT.version,
+        competition_id=settings.simulation_competition_id,
+    )
     if not result:
-        raise HTTPException(status_code=404, detail="这场比赛尚未预测")
-    return result
+        raise HTTPException(status_code=404, detail="这场比赛暂无当前版本预测")
+    context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
+    apply_player_impact(context)
+    apply_market_decision(result, context)
+    result["execution"] = bankroll_service.execution_for_prediction(result, fixture)
+    return public_payload(result)
+
+
+@app.get(
+    "/api/admin/prediction-retention/preview",
+    dependencies=[Depends(require_admin)],
+)
+def preview_prediction_retention() -> dict:
+    """Preview superseded prediction and simulated-ledger cleanup."""
+
+    return repository.prediction_retention_preview(DEFAULT_PROMPT_CONTRACT.version)
+
+
+@app.post(
+    "/api/admin/prediction-retention/run",
+    dependencies=[Depends(require_admin)],
+)
+def run_prediction_retention() -> dict:
+    """Delete superseded prediction data after producing an explicit preview."""
+
+    preview = repository.prediction_retention_preview(DEFAULT_PROMPT_CONTRACT.version)
+    result = repository.prune_prediction_history(DEFAULT_PROMPT_CONTRACT.version)
+    return {"preview": preview, **result}
+
+
+@app.post(
+    "/api/admin/player-names/resolve",
+    dependencies=[Depends(require_admin)],
+)
+async def resolve_player_names() -> dict:
+    """Resolve and cache Chinese display names for current scheduled fixtures."""
+
+    fixture_count = 0
+    generated_count = 0
+    unresolved_count = 0
+    errors: list[str] = []
+    for fixture in repository.list_fixtures():
+        if fixture.get("status") != "scheduled" or not fixture.get("evidence"):
+            continue
+        fixture_count += 1
+        context = fixture["evidence"]
+        await player_name_service.enrich(context, resolve_missing=True)
+        state = context.get("player_name") or {}
+        generated_count += int(state.get("generated_count") or 0)
+        unresolved_count += int(state.get("unresolved_count") or 0)
+        if state.get("error"):
+            errors.append(f"{fixture['id']}: {state['error']}")
+    return {
+        "status": "success" if not errors else "partial",
+        "fixture_count": fixture_count,
+        "generated_count": generated_count,
+        "unresolved_count": unresolved_count,
+        "errors": errors[:20],
+        "source": player_name_provider.source_name,
+    }
 
 
 @app.get(
@@ -489,7 +597,7 @@ def evidence_snapshot(snapshot_id: str) -> dict:
     result = repository.evidence_snapshot(snapshot_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Evidence snapshot was not found")
-    return result
+    return public_payload(result)
 
 
 @app.post("/api/admin/fixtures/{fixture_id}/predictions", dependencies=[Depends(require_admin)])
@@ -497,18 +605,20 @@ async def run_prediction(fixture_id: str) -> dict:
     """Create and save a new prediction version for one selected fixture."""
 
     fixture = _fixture_or_404(fixture_id)
-    if fixture["status"] != "scheduled":
-        raise HTTPException(status_code=409, detail="已结束比赛不能重新预测")
+    if fixture["status"] != "scheduled" or _kickoff_started(fixture):
+        raise HTTPException(status_code=409, detail="比赛已开球，不能作废或重新创建赛前模拟单")
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence")
     if context is None:
         raise HTTPException(status_code=409, detail="请先同步这场比赛的真实赛前数据")
     results = await prediction_service.create(fixture, context)
     bets = bankroll_service.place_for_predictions(results, fixture, context)
-    return {
+    for item in results:
+        item["execution"] = bankroll_service.execution_for_prediction(item, fixture)
+    return public_payload({
         "predictions": results,
         "bets": bets,
         "prediction": next((item for item in results if item.get("model_key") == "deepseek"), results[0] if results else None),
-    }
+    })
 
 
 @app.post(
@@ -546,7 +656,7 @@ async def sync_fixture_evidence(fixture_id: str) -> dict:
     updated = repository.save_fixture_evidence(fixture_id, context)
     if updated is None:
         raise HTTPException(status_code=404, detail="未找到比赛")
-    return {"status": "synced", "fixture": updated, "context": context}
+    return public_payload({"status": "synced", "fixture": updated, "context": context})
 
 
 @app.post("/api/admin/sync", dependencies=[Depends(require_admin)])
