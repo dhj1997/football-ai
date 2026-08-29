@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Iterable
 
 
-MODEL_VERSION = "poisson-market-v0.1"
+MODEL_VERSION = "poisson-pure-v0.2"
 MAX_GOALS = 8
 
 
@@ -20,10 +20,6 @@ def _normalize(values: Iterable[float]) -> list[float]:
     items = list(values)
     total = sum(items)
     return [value / total for value in items]
-
-
-def _market_probabilities(odds: dict) -> tuple[float, float, float]:
-    return tuple(_normalize([1 / odds["home"], 1 / odds["draw"], 1 / odds["away"]]))  # type: ignore[return-value]
 
 
 def settle_asian_handicap(goal_difference: int, handicap: float) -> dict[str, float]:
@@ -90,11 +86,9 @@ def predict(fixture: dict, context: dict) -> dict:
         sum(probability for home, away, probability in score_matrix if home == away),
         sum(probability for home, away, probability in score_matrix if home < away),
     ]
-    if odds:
-        market = _market_probabilities(odds)
-        blended = _normalize(model * 0.75 + market_value * 0.25 for model, market_value in zip(model_1x2, market))
-    else:
-        blended = _normalize(model_1x2)
+    # Market odds are intentionally excluded from the forecast. They are evaluated
+    # later by market_decision.py as an independent assessment layer.
+    forecast_probabilities = _normalize(model_1x2)
 
     handicap = odds.get("asian_handicap") if odds else None
     handicap_result = None
@@ -116,9 +110,14 @@ def predict(fixture: dict, context: dict) -> dict:
         "phase": "confirmed_lineup" if lineup["confirmed"] else "preliminary",
         "model_version": MODEL_VERSION,
         "probabilities": {
-            "home": round(blended[0], 4),
-            "draw": round(blended[1], 4),
-            "away": round(blended[2], 4),
+            "home": round(forecast_probabilities[0], 4),
+            "draw": round(forecast_probabilities[1], 4),
+            "away": round(forecast_probabilities[2], 4),
+        },
+        "model_probabilities": {
+            "home": round(forecast_probabilities[0], 4),
+            "draw": round(forecast_probabilities[1], 4),
+            "away": round(forecast_probabilities[2], 4),
         },
         "expected_goals": {"home": round(home_xg, 2), "away": round(away_xg, 2)},
         "top_scores": [

@@ -1,6 +1,7 @@
 """Run independent model prediction services in parallel for one fixture."""
 
 import asyncio
+import inspect
 from typing import Any
 
 
@@ -26,8 +27,30 @@ class DualPredictionService:
             return []
         if self.player_name_service is not None:
             await self.player_name_service.enrich(context, resolve_missing=True)
+        snapshot_bundle = None
+        prepared_context = False
+        primary = selected[0]
+        prepare_context = getattr(primary, "prepare_context", None)
+        prepare_snapshot = getattr(primary, "prepare_snapshot", None)
+        persist_snapshot_bundle = getattr(primary, "persist_snapshot_bundle", None)
+        if callable(prepare_context) and callable(prepare_snapshot):
+            await prepare_context(fixture, context)
+            snapshot_bundle = prepare_snapshot(fixture, context)
+            if callable(persist_snapshot_bundle):
+                persist_snapshot_bundle(snapshot_bundle)
+            prepared_context = True
         results = await asyncio.gather(
-            *(service.create(fixture, context) for service in selected),
+            *(
+                service.create(
+                    fixture,
+                    context,
+                    snapshot_bundle=snapshot_bundle,
+                    prepared_context=prepared_context,
+                )
+                if snapshot_bundle is not None and "snapshot_bundle" in inspect.signature(service.create).parameters
+                else service.create(fixture, context)
+                for service in selected
+            ),
             return_exceptions=True,
         )
         predictions: list[dict[str, Any]] = []

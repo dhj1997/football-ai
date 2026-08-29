@@ -1,6 +1,7 @@
 """Deterministic market math, no-bet reasons, and bounded risk sizing."""
 
 from datetime import UTC, datetime, timedelta
+from copy import deepcopy
 from typing import Any
 
 from .prompt_contract import EVIDENCE_CONTRACT_VERSION
@@ -37,9 +38,12 @@ def apply_market_decision(
 ) -> dict[str, Any]:
     """Attach forecast, market assessment, and execution decision layers."""
 
-    probabilities = prediction.get("probabilities") or {}
+    # Decisions are derived views. Never mutate the persisted forecast object.
+    prediction = deepcopy(prediction)
+    probabilities = prediction.get("model_probabilities") or prediction.get("probabilities") or {}
     predicted_outcome = max(probabilities, key=probabilities.get) if probabilities else None
     assessment = assess_markets(prediction, context.get("odds"))
+    assessment["odds_snapshot_id"] = prediction.get("odds_snapshot_id")
     model_recommendation = prediction.get("model_recommendation") or {}
     candidate = max(assessment["markets"], key=lambda item: item["expected_edge"], default=None)
     confidence = _forecast_confidence(prediction)
@@ -101,12 +105,29 @@ def apply_market_decision(
     }
     prediction["forecast"] = {
         "predicted_outcome": predicted_outcome,
-        "probabilities": probabilities,
+        "probabilities": deepcopy(probabilities),
+        "model_probabilities": deepcopy(probabilities),
         "asian_handicap": prediction.get("asian_handicap_forecast") or _handicap_forecast(assessment["markets"]),
     }
     prediction["predicted_outcome"] = predicted_outcome
     prediction["market_assessment"] = assessment
     prediction["decision"] = decision
+    prediction["risk_gate"] = {
+        "status": "allowed" if status == "bet" else "blocked",
+        "reason_codes": list(reason_codes),
+        "confidence": decision["model_confidence"],
+        "data_completeness": prediction.get("data_completeness"),
+        "odds_status": assessment.get("odds_status"),
+        "lineup_confirmed": lineup_confirmed,
+        "risk_limits": {"min_stake_fraction": MIN_STAKE_FRACTION, "max_stake_fraction": MAX_STAKE_FRACTION},
+        "drawdown": None,
+    }
+    prediction["portfolio_selection"] = {
+        "status": "candidate" if status == "bet" else "not_selected",
+        "market": decision["market"],
+        "selection": decision["selection"],
+        "expected_edge": decision["expected_edge"],
+    }
     prediction["recommendation"] = {
         "market": decision["market"],
         "selection": decision["selection"],
@@ -141,7 +162,7 @@ def assess_markets(prediction: dict[str, Any], odds: Any) -> dict[str, Any]:
     if not isinstance(odds, dict):
         return {"odds_status": "missing", "odds_updated_at": None, "markets": []}
     rows: list[dict[str, Any]] = []
-    probabilities = prediction.get("probabilities") or {}
+    probabilities = prediction.get("model_probabilities") or prediction.get("probabilities") or {}
     one_x_two_prices = {key: _positive_price(odds.get(key)) for key in ("home", "draw", "away")}
     if all(one_x_two_prices.values()):
         implied = {key: 1 / price for key, price in one_x_two_prices.items() if price}
@@ -220,10 +241,12 @@ def _market_row(
     return {
         "market": market,
         "selection": selection,
+        "line": None,
         "bookmaker": bookmaker,
         "price": round(price, 4),
         "break_even_probability": round(1 / price, 4),
         "de_vig_probability": round(de_vig_probability, 4),
+        "market_probability": round(de_vig_probability, 4),
         "model_probability": round(model_probability, 4),
         "expected_edge": round(expected_edge, 4),
     }

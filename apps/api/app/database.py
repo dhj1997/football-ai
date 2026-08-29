@@ -2,6 +2,7 @@
 
 import json
 import uuid
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,11 @@ class PredictionRepository:
                         model_version VARCHAR(128) NOT NULL,
                         model_key VARCHAR(64) NULL,
                         competition_id VARCHAR(128) NULL,
+                        prompt_version VARCHAR(128) NULL,
+                        evidence_snapshot_id VARCHAR(255) NULL,
+                        evidence_hash VARCHAR(64) NULL,
+                        evidence_version VARCHAR(128) NULL,
+                        odds_snapshot_id VARCHAR(255) NULL,
                         payload TEXT NOT NULL
                     )
                     """
@@ -79,8 +85,30 @@ class PredictionRepository:
                         id VARCHAR(255) PRIMARY KEY,
                         fixture_id VARCHAR(255) NOT NULL,
                         created_at VARCHAR(64) NOT NULL,
+                        captured_at VARCHAR(64) NULL,
+                        evidence_version VARCHAR(128) NULL,
+                        hash_algorithm VARCHAR(32) NULL,
                         source_synced_at VARCHAR(64) NULL,
                         content_hash VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS odds_snapshots (
+                        id VARCHAR(255) PRIMARY KEY,
+                        snapshot_id VARCHAR(255) NOT NULL,
+                        fixture_id VARCHAR(255) NOT NULL,
+                        market VARCHAR(64) NOT NULL,
+                        selection VARCHAR(64) NOT NULL,
+                        line VARCHAR(64) NULL,
+                        price DECIMAL(14, 6) NULL,
+                        bookmaker VARCHAR(255) NULL,
+                        source VARCHAR(255) NULL,
+                        captured_at VARCHAR(64) NOT NULL,
                         payload TEXT NOT NULL
                     )
                     """
@@ -216,6 +244,14 @@ class PredictionRepository:
             )
             self._ensure_column(connection, "predictions", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "predictions", "competition_id", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "predictions", "prompt_version", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "predictions", "evidence_snapshot_id", "VARCHAR(255) NULL")
+            self._ensure_column(connection, "predictions", "evidence_hash", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "predictions", "evidence_version", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "predictions", "odds_snapshot_id", "VARCHAR(255) NULL")
+            self._ensure_column(connection, "evidence_snapshots", "captured_at", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "evidence_snapshots", "evidence_version", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "evidence_snapshots", "hash_algorithm", "VARCHAR(32) NULL")
             self._ensure_column(connection, "bets", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bets", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "bankroll_transactions", "model_key", "VARCHAR(64) NULL")
@@ -244,6 +280,7 @@ class PredictionRepository:
                 for table in (
                     "predictions",
                     "evidence_snapshots",
+                    "odds_snapshots",
                     "fixtures",
                     "sync_metadata",
                     "league_snapshots",
@@ -277,6 +314,12 @@ class PredictionRepository:
             )
             self._ensure_index(
                 connection,
+                "idx_odds_snapshot_fixture_captured",
+                "odds_snapshots",
+                "CREATE INDEX idx_odds_snapshot_fixture_captured ON odds_snapshots (fixture_id, snapshot_id, captured_at)",
+            )
+            self._ensure_index(
+                connection,
                 "idx_fixtures_date_league",
                 "fixtures",
                 "CREATE INDEX idx_fixtures_date_league ON fixtures (fixture_date, league_key, kickoff)",
@@ -306,6 +349,7 @@ class PredictionRepository:
                 "CREATE INDEX idx_job_runs_name_started ON job_runs (job_name, started_at)",
             )
             self._backfill_model_columns(connection)
+            self._backfill_prediction_integrity_columns(connection)
             self._ensure_simulation_accounts(connection)
             if self.is_sqlite:
                 self._migrate_provider_id_constraint(connection)
@@ -349,6 +393,65 @@ class PredictionRepository:
                     text(f"UPDATE {table} SET model_key = :model_key, competition_id = :competition_id WHERE id = :id"),
                     {"id": row["id"], "model_key": model_key, "competition_id": competition_id},
                 )
+
+    @staticmethod
+    def _backfill_prediction_integrity_columns(connection: Connection) -> None:
+        """Populate newly explicit frozen columns from legacy JSON payloads."""
+
+        rows = connection.execute(
+            text(
+                "SELECT id, payload FROM predictions WHERE prompt_version IS NULL "
+                "OR evidence_snapshot_id IS NULL OR odds_snapshot_id IS NULL"
+            )
+        ).mappings().all()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            ai = payload.get("ai") or {}
+            connection.execute(
+                text(
+                    "UPDATE predictions SET prompt_version = COALESCE(prompt_version, :prompt_version), "
+                    "evidence_snapshot_id = COALESCE(evidence_snapshot_id, :evidence_snapshot_id), "
+                    "evidence_hash = COALESCE(evidence_hash, :evidence_hash), "
+                    "evidence_version = COALESCE(evidence_version, :evidence_version), "
+                    "odds_snapshot_id = COALESCE(odds_snapshot_id, :odds_snapshot_id) WHERE id = :id"
+                ),
+                {
+                    "id": row["id"],
+                    "prompt_version": payload.get("prompt_version") or ai.get("prompt_version"),
+                    "evidence_snapshot_id": payload.get("evidence_snapshot_id"),
+                    "evidence_hash": payload.get("evidence_hash"),
+                    "evidence_version": payload.get("evidence_version") or ai.get("evidence_version"),
+                    "odds_snapshot_id": payload.get("odds_snapshot_id"),
+                },
+            )
+
+        snapshots = connection.execute(
+            text(
+                "SELECT id, payload FROM evidence_snapshots WHERE captured_at IS NULL "
+                "OR evidence_version IS NULL OR hash_algorithm IS NULL"
+            )
+        ).mappings().all()
+        for row in snapshots:
+            try:
+                payload = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            connection.execute(
+                text(
+                    "UPDATE evidence_snapshots SET captured_at = COALESCE(captured_at, :captured_at), "
+                    "evidence_version = COALESCE(evidence_version, :evidence_version), "
+                    "hash_algorithm = COALESCE(hash_algorithm, :hash_algorithm) WHERE id = :id"
+                ),
+                {
+                    "id": row["id"],
+                    "captured_at": payload.get("captured_at") or payload.get("created_at"),
+                    "evidence_version": payload.get("evidence_version"),
+                    "hash_algorithm": payload.get("hash_algorithm"),
+                },
+            )
 
     def _ensure_simulation_accounts(self, connection: Connection) -> None:
         created_at = datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -465,8 +568,15 @@ class PredictionRepository:
             connection.execute(
                 text(
                     """
-                    INSERT INTO predictions (id, fixture_id, created_at, phase, model_version, model_key, competition_id, payload)
-                    VALUES (:id, :fixture_id, :created_at, :phase, :model_version, :model_key, :competition_id, :payload)
+                    INSERT INTO predictions (
+                        id, fixture_id, created_at, phase, model_version, model_key, competition_id,
+                        prompt_version, evidence_snapshot_id, evidence_hash, evidence_version,
+                        odds_snapshot_id, payload
+                    ) VALUES (
+                        :id, :fixture_id, :created_at, :phase, :model_version, :model_key, :competition_id,
+                        :prompt_version, :evidence_snapshot_id, :evidence_hash, :evidence_version,
+                        :odds_snapshot_id, :payload
+                    )
                     """
                 ),
                 {
@@ -477,6 +587,11 @@ class PredictionRepository:
                     "model_version": prediction["model_version"],
                     "model_key": prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek",
                     "competition_id": prediction.get("competition_id") or self.competition_id,
+                    "prompt_version": prediction.get("prompt_version") or (prediction.get("ai") or {}).get("prompt_version"),
+                    "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
+                    "evidence_hash": prediction.get("evidence_hash"),
+                    "evidence_version": prediction.get("evidence_version") or (prediction.get("ai") or {}).get("evidence_version"),
+                    "odds_snapshot_id": prediction.get("odds_snapshot_id"),
                     "payload": json.dumps(prediction, ensure_ascii=False),
                 },
             )
@@ -484,14 +599,33 @@ class PredictionRepository:
     def save_evidence_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Insert one immutable prediction evidence snapshot."""
 
+        if snapshot.get("hash_algorithm") == "sha256":
+            encoded = json.dumps(
+                snapshot.get("payload") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            if hashlib.sha256(encoded).hexdigest() != snapshot.get("content_hash"):
+                raise ValueError("Evidence snapshot hash does not match payload")
         with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT content_hash, payload FROM evidence_snapshots WHERE id = :id"),
+                {"id": snapshot["id"]},
+            ).mappings().first()
+            if existing:
+                if existing["content_hash"] != snapshot["content_hash"] or json.loads(existing["payload"]) != snapshot:
+                    raise ValueError("Evidence snapshot is immutable")
+                return
             connection.execute(
                 text(
                     """
                     INSERT INTO evidence_snapshots (
-                        id, fixture_id, created_at, source_synced_at, content_hash, payload
+                        id, fixture_id, created_at, captured_at, evidence_version, hash_algorithm,
+                        source_synced_at, content_hash, payload
                     ) VALUES (
-                        :id, :fixture_id, :created_at, :source_synced_at, :content_hash, :payload
+                        :id, :fixture_id, :created_at, :captured_at, :evidence_version, :hash_algorithm,
+                        :source_synced_at, :content_hash, :payload
                     )
                     """
                 ),
@@ -499,6 +633,9 @@ class PredictionRepository:
                     "id": snapshot["id"],
                     "fixture_id": snapshot["fixture_id"],
                     "created_at": snapshot["created_at"],
+                    "captured_at": snapshot.get("captured_at") or snapshot.get("created_at"),
+                    "evidence_version": snapshot.get("evidence_version"),
+                    "hash_algorithm": snapshot.get("hash_algorithm"),
                     "source_synced_at": snapshot.get("source_synced_at"),
                     "content_hash": snapshot["content_hash"],
                     "payload": json.dumps(snapshot, ensure_ascii=False),
@@ -514,6 +651,153 @@ class PredictionRepository:
                 {"snapshot_id": snapshot_id},
             ).mappings().first()
         return json.loads(row["payload"]) if row else None
+
+    def save_odds_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Persist one append-only odds capture, represented by quote rows."""
+
+        group_id = snapshot.get("snapshot_id") or snapshot.get("id")
+        quotes = snapshot.get("quotes") or []
+        if not quotes and snapshot.get("market") and snapshot.get("selection"):
+            quotes = [
+                {
+                    "market": snapshot["market"],
+                    "selection": snapshot["selection"],
+                    "line": snapshot.get("line"),
+                    "price": snapshot.get("price"),
+                    "bookmaker": snapshot.get("bookmaker"),
+                    "source": snapshot.get("source"),
+                    "captured_at": snapshot.get("captured_at"),
+                }
+            ]
+        if not quotes:
+            return
+        if not group_id:
+            raise ValueError("Odds snapshot id is required")
+        snapshot = {**snapshot, "id": group_id, "quotes": quotes}
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text(
+                    "SELECT fixture_id, captured_at, bookmaker, source, payload "
+                    "FROM odds_snapshots WHERE snapshot_id = :snapshot_id ORDER BY id"
+                ),
+                {"snapshot_id": snapshot["id"]},
+            ).mappings().all()
+            if existing:
+                existing_quotes = [json.loads(row["payload"]) for row in existing]
+                if (
+                    existing_quotes != quotes
+                    or existing[0]["fixture_id"] != snapshot["fixture_id"]
+                    or existing[0]["captured_at"] != snapshot["captured_at"]
+                    or existing[0]["bookmaker"] != snapshot.get("bookmaker")
+                    or existing[0]["source"] != snapshot.get("source")
+                ):
+                    raise ValueError("Odds snapshot is immutable")
+                return
+            for quote in quotes:
+                quote_id = f"{snapshot['id']}:{quote['market']}:{quote['selection']}:{quote.get('line')}"
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO odds_snapshots (
+                            id, snapshot_id, fixture_id, market, selection, line, price,
+                            bookmaker, source, captured_at, payload
+                        ) VALUES (
+                            :id, :snapshot_id, :fixture_id, :market, :selection, :line, :price,
+                            :bookmaker, :source, :captured_at, :payload
+                        )
+                        """
+                    ),
+                    {
+                        "id": quote_id,
+                        "snapshot_id": snapshot["id"],
+                        "fixture_id": snapshot["fixture_id"],
+                        "market": quote["market"],
+                        "selection": quote["selection"],
+                        "line": str(quote["line"]) if quote.get("line") is not None else None,
+                        "price": quote.get("price"),
+                        "bookmaker": quote.get("bookmaker"),
+                        "source": quote.get("source"),
+                        "captured_at": quote.get("captured_at") or snapshot["captured_at"],
+                        "payload": json.dumps(quote, ensure_ascii=False),
+                    },
+                )
+
+    def save_odds_snapshots(self, snapshots: list[dict[str, Any]]) -> None:
+        """Persist a batch of independent odds captures."""
+
+        for snapshot in snapshots:
+            self.save_odds_snapshot(snapshot)
+
+    def odds_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        """Return one immutable odds capture and its quote rows."""
+
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT snapshot_id, fixture_id, captured_at, bookmaker, source, payload "
+                    "FROM odds_snapshots WHERE snapshot_id = :snapshot_id ORDER BY id"
+                ),
+                {"snapshot_id": snapshot_id},
+            ).mappings().all()
+        if not rows:
+            return None
+        quotes = [json.loads(row["payload"]) for row in rows]
+        return {
+            "id": snapshot_id,
+            "fixture_id": rows[0]["fixture_id"],
+            "captured_at": rows[0]["captured_at"],
+            "bookmaker": rows[0]["bookmaker"],
+            "source": rows[0]["source"],
+            "quotes": quotes,
+            "payload": _odds_payload_from_quotes(quotes),
+        }
+
+    def odds_snapshots(self, fixture_id: str | None = None) -> list[dict[str, Any]]:
+        """List immutable odds captures, newest capture last."""
+
+        clauses = ["1 = 1"]
+        parameters: dict[str, Any] = {}
+        if fixture_id:
+            clauses.append("fixture_id = :fixture_id")
+            parameters["fixture_id"] = fixture_id
+        with self.engine.connect() as connection:
+            ids = connection.execute(
+                text(
+                    "SELECT snapshot_id, MAX(captured_at) AS captured_at "
+                    f"FROM odds_snapshots WHERE {' AND '.join(clauses)} "
+                    "GROUP BY snapshot_id ORDER BY captured_at, snapshot_id"
+                ),
+                parameters,
+            ).mappings().all()
+        return [item for row in ids if (item := self.odds_snapshot(row["snapshot_id"] or ""))]
+
+    def update_prediction(
+        self,
+        prediction_id: str,
+        updates: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """Update lifecycle metadata only; frozen forecast fields are rejected."""
+
+        updates = {**(updates or {}), **kwargs}
+        allowed = {"status", "metadata"}
+        forbidden = set(updates) - allowed
+        if forbidden:
+            raise ValueError(f"Prediction fields are immutable: {', '.join(sorted(forbidden))}")
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM predictions WHERE id = :id"),
+                {"id": prediction_id},
+            ).mappings().first()
+            if not row:
+                return None
+            payload = json.loads(row["payload"])
+            payload.update({key: value for key, value in updates.items() if key in allowed})
+            connection.execute(
+                text("UPDATE predictions SET payload = :payload WHERE id = :id"),
+                {"id": prediction_id, "payload": json.dumps(payload, ensure_ascii=False)},
+            )
+        return payload
 
     def latest(
         self,
@@ -1084,7 +1368,10 @@ class PredictionRepository:
                 text("UPDATE fixtures SET payload = :payload WHERE id = :fixture_id"),
                 {"payload": json.dumps(payload, ensure_ascii=False), "fixture_id": fixture_id},
             )
-            return payload
+        odds_snapshot = _odds_snapshot_document(fixture_id, context)
+        if odds_snapshot:
+            self.save_odds_snapshot(odds_snapshot)
+        return payload
 
     def restore_fixture_evidence_from_latest_snapshot(
         self,
@@ -1740,3 +2027,73 @@ class PredictionRepository:
 
         rows = self.job_runs(job_name, 1)
         return rows[0] if rows else None
+
+
+def _odds_payload_from_quotes(quotes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reconstruct the legacy odds mapping for consumers of a frozen snapshot."""
+
+    payload: dict[str, Any] = {}
+    for quote in quotes:
+        selection = quote.get("selection")
+        market = quote.get("market")
+        if market == "1x2" and selection in {"home", "draw", "away"}:
+            payload[selection] = quote.get("price")
+        elif market == "asian_handicap":
+            payload["asian_handicap"] = quote.get("line")
+            key = "asian_handicap_home_odd" if selection == "home_handicap" else "asian_handicap_away_odd"
+            payload[key] = quote.get("price")
+        payload["bookmaker"] = quote.get("bookmaker")
+        payload["source"] = quote.get("source")
+        payload["updated_at"] = quote.get("captured_at")
+    return payload
+
+
+def _odds_snapshot_document(fixture_id: str, context: dict[str, Any]) -> dict[str, Any] | None:
+    """Create a deterministic capture document from refreshed fixture evidence."""
+
+    odds = context.get("odds")
+    if not isinstance(odds, dict):
+        return None
+    captured_at = str(odds.get("updated_at") or datetime.now(UTC).isoformat())
+    source = odds.get("source") or context.get("source") or "unknown"
+    bookmaker = odds.get("bookmaker")
+    quotes: list[dict[str, Any]] = []
+    for selection in ("home", "draw", "away"):
+        if odds.get(selection) is not None:
+            quotes.append(
+                {
+                    "market": "1x2",
+                    "selection": selection,
+                    "line": None,
+                    "price": odds.get(selection),
+                    "bookmaker": bookmaker,
+                    "source": source,
+                    "captured_at": captured_at,
+                }
+            )
+    line = odds.get("asian_handicap")
+    for selection, key in (("home_handicap", "asian_handicap_home_odd"), ("away_handicap", "asian_handicap_away_odd")):
+        if line is not None and odds.get(key) is not None:
+            quotes.append(
+                {
+                    "market": "asian_handicap",
+                    "selection": selection,
+                    "line": line,
+                    "price": odds.get(key),
+                    "bookmaker": bookmaker,
+                    "source": source,
+                    "captured_at": captured_at,
+                }
+            )
+    if not quotes:
+        return None
+    encoded = json.dumps({"fixture_id": fixture_id, "quotes": quotes}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "id": f"odds:{fixture_id}:{hashlib.sha256(encoded).hexdigest()[:32]}",
+        "fixture_id": fixture_id,
+        "captured_at": captured_at,
+        "source": source,
+        "bookmaker": bookmaker,
+        "quotes": quotes,
+        "payload": odds,
+    }
