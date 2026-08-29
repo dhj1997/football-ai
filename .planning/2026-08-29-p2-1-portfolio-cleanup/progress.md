@@ -12,3 +12,4 @@
 - Added legacy open-bet normalization to the current Portfolio stake once, without restoring legacy thresholds.
 - Added focused canonical boundary tests and a DeepSeek/GPT/Poisson candidate selection integration test.
 - Focused tests: 36 passed. Full API suite: 169 passed, 1 warning. Web lint/build passed. Diff check passed.
+- P2.1 implementation and verification complete; changes committed and pushed to `main`.

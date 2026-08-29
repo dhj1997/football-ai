@@ -19,7 +19,7 @@ Remove the old BankrollService betting policy from production, centralize cash/e
 - Remove legacy production branches and make BankrollService use the canonical Portfolio policy without changing P0/P1/P2 prediction or settlement contracts.
 
 ### Phase 4: Boundary and integration verification
-- Status: in_progress
+- Status: complete
 - Add focused boundary and DeepSeek/GPT/Poisson integration tests, run regressions and checks, commit, and push directly to `main`.
 
 ## Constraints
