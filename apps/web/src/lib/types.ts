@@ -2,6 +2,31 @@ export type DateFilter = "today" | "tomorrow" | "history";
 export type LeagueFilter = "all" | "epl" | "laliga" | "csl";
 export type ModelKey = "deepseek" | "chatgpt";
 
+export interface ModelEvaluationMetric {
+  status: string;
+  sample_count: number;
+  brier: number | null;
+  log_loss: number | null;
+  rps: number | null;
+  ece: number | null;
+  clv: number | null;
+  confidence: string;
+}
+
+export interface ModelEvaluationReport {
+  league: string;
+  sample_count: number;
+  confidence: string;
+  models: Record<string, ModelEvaluationMetric>;
+}
+
+export interface ModelEvaluationResponse {
+  experiment_id: string;
+  status: string;
+  reports: Record<string, ModelEvaluationReport>;
+  leakage_audit: { violations: number; violation_rate: number; passed: boolean };
+}
+
 export interface StandingRow {
   rank: number;
   team: Team;

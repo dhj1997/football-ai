@@ -90,6 +90,24 @@ def test_p5_data_registry_and_history_endpoints_are_read_only() -> None:
     assert client.get("/api/fixtures/history", params={"league": "Bundesliga"}).status_code == 400
 
 
+def test_p6_evaluation_endpoints_return_frozen_insufficient_report() -> None:
+    evaluation = client.get("/api/model-evaluation")
+    assert evaluation.status_code == 200
+    payload = evaluation.json()
+    assert payload["status"] == "insufficient_sample"
+    assert payload["test_set"]["frozen"] is True
+    assert set(payload["reports"]) == {"CSL", "EPL", "LAL", "GLOBAL"}
+    experiment_id = payload["experiment_id"]
+
+    assert client.get(f"/api/model-evaluation/{experiment_id}").status_code == 200
+    comparison = client.get("/api/model-comparison")
+    assert comparison.status_code == 200
+    assert comparison.json()["experiment_id"] == experiment_id
+    assert client.get("/api/leagues/EPL/model-evaluation").status_code == 200
+    assert client.get("/api/leakage-audit").json()["violations"] == 0
+    assert client.get("/api/leagues/Bundesliga/model-evaluation").status_code == 400
+
+
 def test_public_fixture_payload_removes_supplier_player_names() -> None:
     fixture = seed_real_fixture("api-player-boundary", 127)
     fixture["status"] = "finished"

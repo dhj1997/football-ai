@@ -33,6 +33,7 @@ from .league_data_pipeline import (
     public_registry,
     run_three_league_backtest,
 )
+from .model_evaluation import ModelEvaluationService
 from .espn_evidence_provider import EspnEvidenceProvider
 from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
@@ -176,6 +177,7 @@ settlement_service = SettlementService(repository, settings.simulation_competiti
 league_provider = EspnLeagueProvider(settings.espn_base_url)
 p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
+model_evaluation_service = ModelEvaluationService(repository)
 for _provider in p5_provider_registry.descriptors():
     repository.save_provider_registry({**_provider.as_dict(), "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat()})
 league_sync = LeagueSyncService(
@@ -446,6 +448,74 @@ def three_league_backtest(
         fixture_reader=repository.fixture,
     )
     return serialize_public(report)
+
+
+def _evaluate_p6(league: str | None = None) -> dict:
+    result = model_evaluation_service.evaluate(league=league)
+    existing_reader = getattr(repository, "model_evaluation_experiment", None)
+    existing = existing_reader(result["experiment_id"]) if callable(existing_reader) else None
+    if existing is not None:
+        return existing
+    saver = getattr(repository, "save_model_evaluation", None)
+    if callable(saver):
+        return saver(result)
+    return result
+
+
+@app.get("/api/model-evaluation")
+def model_evaluation(experiment_id: str | None = None, league: str | None = None) -> dict:
+    """Return one deterministic P6 experiment, creating its read-only report if needed."""
+
+    if experiment_id:
+        reader = getattr(repository, "model_evaluation_experiment", None)
+        result = reader(experiment_id) if callable(reader) else None
+        if result is None:
+            raise HTTPException(status_code=404, detail="Model evaluation experiment was not found")
+    else:
+        try:
+            result = _evaluate_p6(league)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    return serialize_public(result)
+
+
+@app.get("/api/model-evaluation/{experiment_id}")
+def model_evaluation_detail(experiment_id: str) -> dict:
+    reader = getattr(repository, "model_evaluation_experiment", None)
+    result = reader(experiment_id) if callable(reader) else None
+    if result is None:
+        raise HTTPException(status_code=404, detail="Model evaluation experiment was not found")
+    return serialize_public(result)
+
+
+@app.get("/api/model-comparison")
+def model_comparison(experiment_id: str | None = None) -> dict:
+    if experiment_id:
+        result = model_evaluation(experiment_id=experiment_id)
+    else:
+        listing = getattr(repository, "model_evaluation_experiments", None)
+        latest = listing(limit=1) if callable(listing) else []
+        result = serialize_public(latest[0]) if latest else serialize_public(_evaluate_p6())
+    return {"experiment_id": result.get("experiment_id"), "reports": result.get("reports") or {}, "model_comparison": result.get("model_comparison") or {}, "leakage_audit": result.get("leakage_audit") or {}}
+
+
+@app.get("/api/leagues/{league}/model-evaluation")
+def league_model_evaluation(league: str) -> dict:
+    try:
+        result = _evaluate_p6(league)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    code = normalize_league_code(league)
+    report = (result.get("reports") or {}).get(code or "")
+    if report is None:
+        raise HTTPException(status_code=404, detail="Model evaluation league report was not found")
+    return serialize_public({"experiment_id": result.get("experiment_id"), **report})
+
+
+@app.get("/api/leakage-audit")
+def leakage_audit(experiment_id: str | None = None) -> dict:
+    result = model_evaluation(experiment_id=experiment_id) if experiment_id else _evaluate_p6()
+    return serialize_public(result.get("leakage_audit") or {})
 
 
 @app.get("/api/teams/{league_key}/{team_id}")

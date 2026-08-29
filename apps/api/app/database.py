@@ -5,7 +5,7 @@ import uuid
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
@@ -407,6 +407,44 @@ class PredictionRepository:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS model_evaluation_experiments (
+                        experiment_id VARCHAR(255) PRIMARY KEY,
+                        created_at VARCHAR(64) NOT NULL,
+                        code_version VARCHAR(128) NOT NULL,
+                        feature_version VARCHAR(128) NULL,
+                        ensemble_version VARCHAR(128) NULL,
+                        calibration_version VARCHAR(128) NULL,
+                        league VARCHAR(16) NULL,
+                        dataset_version VARCHAR(128) NULL,
+                        train_range TEXT NULL,
+                        validation_range TEXT NULL,
+                        test_range TEXT NULL,
+                        sample_count INTEGER NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS model_evaluation_metrics (
+                        metric_id VARCHAR(255) PRIMARY KEY,
+                        experiment_id VARCHAR(255) NOT NULL,
+                        league VARCHAR(16) NOT NULL,
+                        model_key VARCHAR(64) NOT NULL,
+                        sample_count INTEGER NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        payload TEXT NOT NULL,
+                        UNIQUE (experiment_id, league, model_key)
+                    )
+                    """
+                )
+            )
             self._ensure_column(connection, "predictions", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "predictions", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "predictions", "prompt_version", "VARCHAR(128) NULL")
@@ -441,6 +479,9 @@ class PredictionRepository:
             self._ensure_column(connection, "fixture_settlements", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "fixture_settlements", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "raw_data_records", "payload_hash", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "model_evaluation_experiments", "train_range", "TEXT NULL")
+            self._ensure_column(connection, "model_evaluation_experiments", "validation_range", "TEXT NULL")
+            self._ensure_column(connection, "model_evaluation_experiments", "test_range", "TEXT NULL")
             self._backfill_raw_payload_hash(connection)
             connection.execute(text("CREATE TABLE IF NOT EXISTS simulation_competitions (id VARCHAR(128) PRIMARY KEY, created_at VARCHAR(64) NOT NULL, status VARCHAR(32) NOT NULL, payload TEXT NOT NULL)"))
             connection.execute(text("CREATE TABLE IF NOT EXISTS simulation_accounts (id VARCHAR(255) PRIMARY KEY, competition_id VARCHAR(128) NOT NULL, model_key VARCHAR(64) NOT NULL, initial_balance DECIMAL(14, 2) NOT NULL, created_at VARCHAR(64) NOT NULL, payload TEXT NOT NULL, UNIQUE (competition_id, model_key))"))
@@ -482,6 +523,8 @@ class PredictionRepository:
                     "team_identity_map",
                     "fixture_identity_map",
                     "backtest_runs",
+                    "model_evaluation_experiments",
+                    "model_evaluation_metrics",
                     "job_runs",
                     "simulation_competitions",
                     "simulation_accounts",
@@ -587,6 +630,18 @@ class PredictionRepository:
                 "idx_backtest_runs_started",
                 "backtest_runs",
                 "CREATE INDEX idx_backtest_runs_started ON backtest_runs (started_at, run_id)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_model_evaluation_experiments_created",
+                "model_evaluation_experiments",
+                "CREATE INDEX idx_model_evaluation_experiments_created ON model_evaluation_experiments (created_at, experiment_id)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_model_evaluation_metrics_lookup",
+                "model_evaluation_metrics",
+                "CREATE INDEX idx_model_evaluation_metrics_lookup ON model_evaluation_metrics (experiment_id, league, model_key)",
             )
             self._backfill_model_columns(connection)
             self._backfill_prediction_integrity_columns(connection)
@@ -2552,6 +2607,16 @@ class PredictionRepository:
             ).mappings().first()
         return json.loads(row["payload"]) if row else None
 
+    def prediction(self, prediction_id: str) -> dict[str, Any] | None:
+        """Return one immutable prediction by its stable ID."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM predictions WHERE id = :prediction_id"),
+                {"prediction_id": prediction_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
     def execution_for_prediction(self, prediction_id: str) -> dict[str, Any] | None:
         """Return the paper execution linked to one prediction."""
 
@@ -2972,6 +3037,136 @@ class PredictionRepository:
                 parameters,
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 200))]]
+
+    def save_model_evaluation_experiment(self, experiment: dict[str, Any]) -> dict[str, Any]:
+        """Persist one immutable P6 evaluation experiment."""
+
+        required = ("experiment_id", "created_at", "code_version", "status")
+        if any(not experiment.get(key) for key in required):
+            raise ValueError("Model evaluation experiment identity fields are required")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM model_evaluation_experiments WHERE experiment_id = :experiment_id"),
+                {"experiment_id": experiment["experiment_id"]},
+            ).mappings().first()
+            if existing:
+                stored = json.loads(existing["payload"])
+                if stored != experiment:
+                    raise ValueError("Model evaluation experiment is immutable")
+                return stored
+            connection.execute(
+                text(
+                    "INSERT INTO model_evaluation_experiments ("
+                    "experiment_id, created_at, code_version, feature_version, ensemble_version, calibration_version, "
+                    "league, dataset_version, train_range, validation_range, test_range, sample_count, status, payload) VALUES ("
+                    ":experiment_id, :created_at, :code_version, :feature_version, :ensemble_version, :calibration_version, "
+                    ":league, :dataset_version, :train_range, :validation_range, :test_range, :sample_count, :status, :payload)"
+                ),
+                {
+                    "experiment_id": experiment["experiment_id"],
+                    "created_at": experiment["created_at"],
+                    "code_version": experiment["code_version"],
+                    "feature_version": experiment.get("feature_version"),
+                    "ensemble_version": experiment.get("ensemble_version"),
+                    "calibration_version": experiment.get("calibration_version"),
+                    "league": experiment.get("league"),
+                    "dataset_version": experiment.get("dataset_version"),
+                    "train_range": json.dumps(experiment.get("train_range") or {}, ensure_ascii=False),
+                    "validation_range": json.dumps(experiment.get("validation_range") or {}, ensure_ascii=False),
+                    "test_range": json.dumps(experiment.get("test_range") or {}, ensure_ascii=False),
+                    "sample_count": int(experiment.get("sample_count") or 0),
+                    "status": experiment["status"],
+                    "payload": json.dumps(experiment, ensure_ascii=False),
+                },
+            )
+        return experiment
+
+    def model_evaluation_experiment(self, experiment_id: str) -> dict[str, Any] | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM model_evaluation_experiments WHERE experiment_id = :experiment_id"),
+                {"experiment_id": experiment_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def model_evaluation_experiments(
+        self,
+        league: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = " WHERE league = :league" if league else ""
+        parameters = {"league": league} if league else {}
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT payload FROM model_evaluation_experiments" f"{clauses} ORDER BY created_at DESC, experiment_id DESC"),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 200))]]
+
+    def save_model_evaluation_metrics(self, experiment_id: str, metrics: Iterable[dict[str, Any]]) -> None:
+        """Persist immutable model/league metric rows for one experiment."""
+
+        with self.engine.begin() as connection:
+            for metric in metrics:
+                league = str(metric.get("league") or "GLOBAL")
+                model_key = str(metric.get("model_key") or "unknown")
+                metric_id = f"{experiment_id}:{league}:{model_key}"
+                item = {**metric, "experiment_id": experiment_id, "metric_id": metric_id}
+                existing = connection.execute(
+                    text("SELECT payload FROM model_evaluation_metrics WHERE metric_id = :metric_id"),
+                    {"metric_id": metric_id},
+                ).mappings().first()
+                if existing:
+                    if json.loads(existing["payload"]) != item:
+                        raise ValueError("Model evaluation metric is immutable")
+                    continue
+                connection.execute(
+                    text(
+                        "INSERT INTO model_evaluation_metrics (metric_id, experiment_id, league, model_key, sample_count, status, payload) "
+                        "VALUES (:metric_id, :experiment_id, :league, :model_key, :sample_count, :status, :payload)"
+                    ),
+                    {
+                        "metric_id": metric_id,
+                        "experiment_id": experiment_id,
+                        "league": league,
+                        "model_key": model_key,
+                        "sample_count": int(metric.get("sample_count") or 0),
+                        "status": metric.get("status") or "unavailable",
+                        "payload": json.dumps(item, ensure_ascii=False),
+                    },
+                )
+
+    def model_evaluation_metrics(
+        self,
+        experiment_id: str | None = None,
+        league: str | None = None,
+        model_key: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        clauses = []
+        parameters: dict[str, Any] = {}
+        for column, value in (("experiment_id", experiment_id), ("league", league), ("model_key", model_key)):
+            if value:
+                clauses.append(f"{column} = :{column}")
+                parameters[column] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT payload FROM model_evaluation_metrics" f"{where} ORDER BY league, model_key"),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
+
+    def save_model_evaluation(self, experiment: dict[str, Any]) -> dict[str, Any]:
+        """Persist the experiment and its flattened model metrics idempotently."""
+
+        stored = self.save_model_evaluation_experiment(experiment)
+        metrics: list[dict[str, Any]] = []
+        for league, report in (experiment.get("reports") or {}).items():
+            for model_key, metric in (report.get("models") or {}).items():
+                metrics.append({"league": league, "model_key": model_key, **metric})
+        self.save_model_evaluation_metrics(experiment["experiment_id"], metrics)
+        return stored
 
     def start_job_run(self, job_name: str, started_at: str) -> dict[str, Any]:
         """Persist a durable running marker before external work starts."""

@@ -1,4 +1,4 @@
-import type { BankrollSummary, DateFilter, DecisionAudit, Fixture, FixtureDetail, LeagueFilter, ModelKey, PredictionMetrics, SimulatedBet, StandingsResponse, StrategyPerformance, TeamDetailResponse } from "./types";
+import type { BankrollSummary, DateFilter, DecisionAudit, Fixture, FixtureDetail, LeagueFilter, ModelEvaluationResponse, ModelKey, PredictionMetrics, SimulatedBet, StandingsResponse, StrategyPerformance, TeamDetailResponse } from "./types";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/backend";
 
@@ -66,4 +66,8 @@ export async function fetchPredictionMetrics(parameters = "", model?: ModelKey):
   if (model) query.set("model", model);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return readJson(await fetch(`${apiBase}/api/metrics/predictions${suffix}`, { cache: "no-store" }));
+}
+
+export async function fetchModelEvaluation(): Promise<ModelEvaluationResponse> {
+  return readJson(await fetch(`${apiBase}/api/model-evaluation`, { cache: "no-store" }));
 }

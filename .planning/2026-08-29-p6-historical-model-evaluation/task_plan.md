@@ -11,19 +11,19 @@ Evaluate the frozen P5/P4 historical dataset with chronological, leakage-audited
 - Reuse P3 probability/ensemble/calibration utilities and P4 rolling validation; define P6 experiment and audit contracts.
 
 ### Phase 2: Evaluation and leakage services
-- Status: in_progress
+- Status: completed
 - Implement deterministic chronological splits, frozen experiment metadata, model comparison metrics, confidence, and automatic leakage audit.
 
 ### Phase 3: Persistence and APIs
-- Status: pending
+- Status: completed
 - Add idempotent experiment/metric persistence and read-only P6 evaluation/comparison/audit endpoints.
 
 ### Phase 4: Tests and verification
-- Status: pending
+- Status: completed
 - Add focused P6 tests for split, leakage, calibration/weights, frozen test sets, league isolation, insufficient samples, and virtual betting boundaries; run required regression checks.
 
 ### Phase 5: Delivery
-- Status: pending
+- Status: completed
 - Commit as documented and push directly to `main`; verify clean tree and origin parity.
 
 ## Constraints

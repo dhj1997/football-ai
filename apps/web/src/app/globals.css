@@ -1327,6 +1327,7 @@ button, input, select, textarea { font: inherit; }
 .ai-caveats > span { color: var(--color-text-secondary); font-size: 10px; font-weight: 700; }
 
 .performance-summary { margin-top: 14px; }
+.model-evaluation-footnote { padding: 12px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 .standings-table-scroll {
   max-height: min(68vh, 780px);

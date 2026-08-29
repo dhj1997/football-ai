@@ -4,7 +4,7 @@ import { Filter, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { DataFreshness, EmptyState, ErrorState, LoadingState, PageHeader, SectionHeader, StatCard, StatusBadge, Tabs } from "@/components/ui";
-import { fetchBankroll, fetchBets, fetchDecisionAudits, fetchPredictionMetrics, fetchStrategyPerformance } from "@/lib/api";
+import { fetchBankroll, fetchBets, fetchDecisionAudits, fetchModelEvaluation, fetchPredictionMetrics, fetchStrategyPerformance } from "@/lib/api";
 import { formatHandicapSide } from "@/lib/handicap";
 import type { BankrollSummary, DecisionAudit, LeagueFilter, ModelKey, PredictionMetrics, SimulatedBet, StrategyPerformance } from "@/lib/types";
 
@@ -112,6 +112,7 @@ export function PerformanceDashboard() {
           <ModelComparisonStrip bankroll={bankroll} />
           <StrategyLeaderboard strategies={strategies} />
           <EvaluationSummary metrics={metrics} />
+          <ModelEvaluationPanel />
           <AsianOutcomeStrip metrics={metrics} />
           <EquityCurve points={(bankroll.accounts?.[selectedModel] ?? bankroll).equity_curve} />
           <DecisionAuditTable decisions={visibleDecisions} />
@@ -121,6 +122,38 @@ export function PerformanceDashboard() {
       ) : null}
     </main>
   );
+}
+
+function ModelEvaluationPanel() {
+  const [evaluation, setEvaluation] = useState<Awaited<ReturnType<typeof fetchModelEvaluation>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetchModelEvaluation()
+      .then((result) => { if (active) setEvaluation(result); })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "模型评估请求失败"); });
+    return () => { active = false; };
+  }, []);
+
+  const reportKeys = ["CSL", "EPL", "LAL", "GLOBAL"];
+  const modelKeys = ["baseline", "poisson", "gpt", "deepseek", "ensemble", "calibrated_ensemble"];
+  const modelLabels: Record<string, string> = { baseline: "Baseline", poisson: "Poisson", gpt: "GPT", deepseek: "DeepSeek", ensemble: "Ensemble", calibrated_ensemble: "Calibrated" };
+  return <section className="performance-section model-evaluation-section" aria-label="Model Evaluation">
+    <SectionHeader className="team-section-heading" eyebrow="MODEL EVALUATION" title="历史模型评估" meta={evaluation ? `实验 ${evaluation.experiment_id.slice(-8)}` : "P6"} />
+    {error ? <ErrorState>{error}</ErrorState> : !evaluation ? <LoadingState>正在读取历史评估</LoadingState> : <>
+      <div className="team-table-scroll"><table className="performance-table"><thead><tr><th>联赛</th><th>模型</th><th>样本</th><th>Brier</th><th>LogLoss</th><th>RPS</th><th>ECE</th><th>CLV</th><th>ROI</th><th>状态</th></tr></thead><tbody>{reportKeys.flatMap((key) => modelKeys.map((model) => {
+        const report = evaluation.reports[key];
+        const metric = report?.models?.[model];
+        return <tr key={`${key}-${model}`}><th scope="row"><b>{key}</b></th><td>{modelLabels[model]}</td><td>{report?.sample_count ?? 0}</td><td>{formatEvaluationValue(metric?.brier)}</td><td>{formatEvaluationValue(metric?.log_loss)}</td><td>{formatEvaluationValue(metric?.rps)}</td><td>{formatEvaluationValue(metric?.ece)}</td><td>{formatEvaluationValue(metric?.clv)}</td><td>-</td><td><StatusBadge variant={report?.confidence === "adequate" ? "ready" : "partial"}>{report?.confidence ?? "unavailable"}</StatusBadge></td></tr>;
+      }))}</tbody></table></div>
+      <div className="model-evaluation-footnote">Leakage violations {evaluation.leakage_audit.violations} · {evaluation.status}</div>
+    </>}
+  </section>;
+}
+
+function formatEvaluationValue(value: number | null | undefined): string {
+  return value === null || value === undefined ? "-" : value.toFixed(3);
 }
 
 function StrategyLeaderboard({ strategies }: { strategies: StrategyPerformance[] }) {
