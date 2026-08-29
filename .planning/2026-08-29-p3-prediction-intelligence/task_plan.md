@@ -7,19 +7,19 @@ Add timestamp-safe feature snapshots, explainable dynamic ensemble weighting, ou
 ## Phases
 
 ### Phase 1: Feature snapshot
-- Status: in_progress
+- Status: complete
 - Build deterministic `p3-v1` features from existing evidence with strict as-of filtering.
 
 ### Phase 2: Ensemble and calibration
-- Status: pending
+- Status: complete
 - Add weighted DeepSeek/GPT/Poisson ensemble, profile hierarchy, shrinkage, drift monitoring, and temperature calibration.
 
 ### Phase 3: Backtest and API
-- Status: pending
+- Status: complete
 - Add historical evaluator, ablation reporting, and read-only intelligence endpoints without changing frontend behavior.
 
 ### Phase 4: Verification and delivery
-- Status: pending
+- Status: complete
 - Add focused tests, run required regression checks, commit, and push directly to `main`.
 
 ## Constraints

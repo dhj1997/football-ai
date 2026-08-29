@@ -62,6 +62,14 @@ def test_fixture_list_and_detail_are_consistent() -> None:
     assert fixture_response.json()["mode"] == "cached"
 
 
+def test_p3_intelligence_endpoints_return_read_only_contracts() -> None:
+    assert client.get("/api/model-performance").status_code == 200
+    assert client.get("/api/features").status_code == 200
+    assert client.get("/api/calibration").status_code == 200
+    assert client.get("/api/backtest").status_code == 200
+    assert client.get("/api/ensemble/missing-fixture").status_code == 404
+
+
 def test_public_fixture_payload_removes_supplier_player_names() -> None:
     fixture = seed_real_fixture("api-player-boundary", 127)
     fixture["status"] = "finished"

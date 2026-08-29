@@ -4,6 +4,8 @@ import asyncio
 import inspect
 from typing import Any
 
+from .prediction_intelligence import build_performance_profiles, weighted_ensemble
+
 
 class DualPredictionService:
     def __init__(self, services: dict[str, Any], competition_id: str, player_name_service: Any | None = None) -> None:
@@ -59,4 +61,44 @@ class DualPredictionService:
                 continue
             else:
                 predictions.append(result)
+        base_predictions = {
+            str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek"): item.get("model_probabilities") or item.get("probabilities") or {}
+            for item in predictions
+        }
+        baseline = next(
+            (
+                (item.get("baseline") or {}).get("probabilities")
+                for item in predictions
+                if (item.get("baseline") or {}).get("probabilities")
+            ),
+            None,
+        )
+        if baseline:
+            base_predictions["poisson"] = baseline
+        profiles: dict[str, dict[str, Any]] = {}
+        reader = getattr(getattr(primary, "repository", None), "fixture_settlements", None)
+        if callable(reader):
+            profiles = build_performance_profiles(
+                reader(competition_id=self.competition_id),
+            )
+        ensemble = weighted_ensemble(
+            base_predictions,
+            profiles=profiles,
+            league_key=fixture.get("league_key"),
+        )
+        repository = getattr(primary, "repository", None)
+        metadata_updater = getattr(repository, "update_prediction", None)
+        for item in predictions:
+            item["p3_ensemble"] = ensemble
+            if callable(metadata_updater) and item.get("id"):
+                metadata = {
+                    **(item.get("metadata") or {}),
+                    "p3_ensemble": ensemble,
+                }
+                try:
+                    metadata_updater(item["id"], {"metadata": metadata})
+                except Exception:
+                    # P3 explainability must not make an otherwise valid prediction fail.
+                    continue
+                item["metadata"] = metadata
         return predictions

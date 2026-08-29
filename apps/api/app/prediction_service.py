@@ -14,6 +14,7 @@ from .player_impact import apply_player_impact
 from .player_identity import public_payload
 from .market_decision import apply_market_decision
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT, EVIDENCE_CONTRACT_VERSION
+from .prediction_intelligence import build_feature_snapshot
 
 
 STRATEGY_ID = "baseline"
@@ -55,6 +56,14 @@ class PredictionService:
         if snapshot_bundle is None:
             self.persist_snapshot_bundle(bundle)
         model_input = _model_input(fixture, context, standings, quality)
+        feature_snapshot = build_feature_snapshot(
+            fixture,
+            context,
+            baseline["created_at"],
+            standings=standings,
+        )
+        model_input["feature_snapshot"] = feature_snapshot
+        baseline["feature_snapshot"] = feature_snapshot
         balance_reader = getattr(self.repository, "current_balance", None)
         current_balance = (
             balance_reader(self.model_key, self.competition_id)

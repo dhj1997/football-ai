@@ -41,6 +41,11 @@ from .player_name_provider import (
 )
 from .player_value_provider import NullPlayerValueProvider, PlayerValueService
 from .portfolio import PortfolioConfig
+from .prediction_intelligence import (
+    build_performance_profiles,
+    run_backtest,
+    weighted_ensemble,
+)
 from .schedule_provider import TheSportsDbProvider
 from .schedule_sync import ScheduleSyncService
 from .settlement import SettlementService
@@ -662,6 +667,131 @@ def strategy_performance(
     for rank, row in enumerate(rows, start=1):
         row["rank"] = rank
     return {"items": rows, "count": len(rows), "ranking": "ROI_THEN_PNL", "is_simulated": True}
+
+
+@app.get("/api/model-performance")
+def model_performance(
+    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    season: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """Return P3 dynamic model profiles derived from P1 evaluation rows."""
+
+    rows = repository.fixture_settlements(
+        None if league == "all" else league,
+        season,
+        start_date,
+        end_date,
+        competition_id=settings.simulation_competition_id,
+    )
+    profiles = build_performance_profiles(rows)
+    return {"items": list(profiles.values()), "count": len(profiles), "is_simulated": True}
+
+
+@app.get("/api/features")
+def feature_snapshots(fixture_id: str | None = None) -> dict:
+    """Return persisted P3 feature snapshots without changing predictions."""
+
+    if fixture_id:
+        predictions = repository.current_predictions_for_fixture(
+            fixture_id,
+            DEFAULT_PROMPT_CONTRACT.version,
+            settings.simulation_competition_id,
+        )
+        items = [
+            {
+                "fixture_id": fixture_id,
+                "prediction_id": item.get("id"),
+                "model_key": item.get("model_key"),
+                "feature_snapshot": item.get("feature_snapshot"),
+            }
+            for item in predictions
+            if item.get("feature_snapshot")
+        ]
+        return {"items": public_payload(items), "count": len(items), "is_simulated": True}
+    rows = repository.current_prediction_decisions(
+        DEFAULT_PROMPT_CONTRACT.version,
+        competition_id=settings.simulation_competition_id,
+    )
+    items = [
+        {
+            "fixture_id": (row.get("prediction") or {}).get("fixture_id"),
+            "prediction_id": (row.get("prediction") or {}).get("id"),
+            "model_key": (row.get("prediction") or {}).get("model_key"),
+            "feature_snapshot": (row.get("prediction") or {}).get("feature_snapshot"),
+        }
+        for row in rows
+        if (row.get("prediction") or {}).get("feature_snapshot")
+    ]
+    return {"items": public_payload(items), "count": len(items), "is_simulated": True}
+
+
+@app.get("/api/features/{fixture_id}")
+def feature_snapshot(fixture_id: str) -> dict:
+    """Return one fixture's versioned P3 features."""
+
+    return feature_snapshots(fixture_id)
+
+
+@app.get("/api/ensemble/{fixture_id}")
+def fixture_ensemble(fixture_id: str) -> dict:
+    """Build one explainable P3 ensemble from current model predictions."""
+
+    predictions = repository.current_predictions_for_fixture(
+        fixture_id,
+        DEFAULT_PROMPT_CONTRACT.version,
+        settings.simulation_competition_id,
+    )
+    if not predictions:
+        raise HTTPException(status_code=404, detail="Prediction was not found")
+    base_predictions = {
+        str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek"): item.get("model_probabilities") or item.get("probabilities") or {}
+        for item in predictions
+    }
+    baseline = next(
+        (
+            (item.get("baseline") or {}).get("probabilities")
+            for item in predictions
+            if (item.get("baseline") or {}).get("probabilities")
+        ),
+        None,
+    )
+    if baseline:
+        base_predictions["poisson"] = baseline
+    rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    ensemble = weighted_ensemble(
+        base_predictions,
+        profiles=build_performance_profiles(rows),
+        league_key=(predictions[0].get("league_key") or "") if predictions else None,
+    )
+    return public_payload({"fixture_id": fixture_id, "ensemble": ensemble})
+
+
+@app.get("/api/ensemble")
+def ensemble_summary(fixture_id: str | None = None) -> dict:
+    """Return one requested ensemble or an empty collection for dashboard callers."""
+
+    if fixture_id:
+        return fixture_ensemble(fixture_id)
+    return {"items": [], "count": 0, "is_simulated": True}
+
+
+@app.get("/api/calibration")
+def calibration_state() -> dict:
+    """Return the current out-of-sample calibration availability."""
+
+    rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    result = run_backtest(rows)
+    return {"calibration": result.get("calibration"), "is_simulated": True}
+
+
+@app.get("/api/backtest")
+def prediction_backtest() -> dict:
+    """Return the honest P3 baseline/ensemble backtest and ablation report."""
+
+    rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    return public_payload(run_backtest(rows))
 
 
 @app.get("/api/admin/jobs", dependencies=[Depends(require_admin)])
