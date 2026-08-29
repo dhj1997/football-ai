@@ -224,6 +224,20 @@ class SettlementService:
                     return_amount,
                     settlement_metadata=clv_data,
                 )
+                execution_id = bet.get("execution_id") if bet else None
+                if not execution_id and bet:
+                    execution_reader = getattr(self.repository, "execution_for_prediction", None)
+                    execution = execution_reader(bet.get("prediction_id")) if callable(execution_reader) else None
+                    execution_id = execution.get("execution_id") if execution else None
+                settle_execution = getattr(self.repository, "settle_bet_execution", None)
+                if execution_id and callable(settle_execution) and bet:
+                    settle_execution(
+                        execution_id,
+                        result=result,
+                        profit_loss=float(bet.get("net_profit") or 0),
+                        settled_at=settled_at,
+                        metadata={"clv": clv_data.get("clv"), "closing_odds": clv_data.get("closing_odds")},
+                    )
             results.append({"prediction": settlement, "bet": bet})
         return {"fixture_id": fixture["id"], "settled_count": len(results), "items": results}
 
@@ -410,6 +424,15 @@ class SettlementService:
             },
             "decision_counts": decision_counts,
             "portfolio": portfolio,
+            "forecast_performance": {
+                "samples": len(rows),
+                "accuracy": round(correct / len(rows), 4) if rows else 0.0,
+                "brier": model_metrics["brier"],
+                "log_loss": model_metrics["log_loss"],
+                "rps": model_metrics["rps"],
+                "ece": model_metrics["ece"],
+            },
+            "betting_performance": portfolio,
             "quality_gate": quality,
             "experiment": _experiment_summary(rows, model_key),
             "asian_handicap_results": asian_counts,
@@ -671,20 +694,33 @@ def _portfolio_metrics(bets: list[dict[str, Any]]) -> dict[str, Any]:
         balance = round(balance + float(bet.get("net_profit") or 0), 2)
         peak = max(peak, balance)
         max_drawdown = max(max_drawdown, (peak - balance) / peak if peak else 0.0)
+    wins = sum(float(item.get("net_profit") or 0) > 0 for item in bets)
+    losses = sum(float(item.get("net_profit") or 0) < 0 for item in bets)
+    decided = sum(item.get("settlement_result") != "push" for item in bets)
+    average_clv = (
+        round(
+            sum(float(item["clv"]) for item in bets if item.get("clv") is not None)
+            / sum(1 for item in bets if item.get("clv") is not None),
+            4,
+        )
+        if any(item.get("clv") is not None for item in bets)
+        else None
+    )
     return {
         "settled_position_count": len(bets),
-        "wins": sum(float(item.get("net_profit") or 0) > 0 for item in bets),
-        "losses": sum(float(item.get("net_profit") or 0) < 0 for item in bets),
+        "bets": len(bets),
+        "wins": wins,
+        "losses": losses,
         "settled_staked": settled_staked,
+        "stake": settled_staked,
         "realized_pnl": profit,
+        "profit": profit,
         "roi": round(profit / settled_staked, 4) if settled_staked else 0.0,
+        "win_rate": round(wins / decided, 4) if decided else 0.0,
         "max_drawdown": round(max_drawdown, 4),
+        "drawdown": round(max_drawdown, 4),
         "clv_samples": sum(1 for item in bets if item.get("clv") is not None),
-        "average_clv": (
-            round(sum(float(item["clv"]) for item in bets if item.get("clv") is not None) / sum(1 for item in bets if item.get("clv") is not None), 4)
-            if any(item.get("clv") is not None for item in bets)
-            else None
-        ),
+        "average_clv": average_clv,
     }
 
 

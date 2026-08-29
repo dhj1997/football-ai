@@ -91,6 +91,12 @@ def apply_market_decision(
         "considered_market": candidate["market"] if candidate else None,
         "considered_selection": candidate["selection"] if candidate else None,
         "price": candidate["price"] if candidate else None,
+        "edge": (
+            candidate.get("edge")
+            if candidate
+            else None
+        ),
+        "ev": candidate.get("ev") if candidate else None,
         "expected_edge": candidate["expected_edge"] if candidate else None,
         "model_confidence": round(confidence, 4),
         "uncertainty": uncertainty,
@@ -248,6 +254,8 @@ def _market_row(
         "de_vig_probability": round(de_vig_probability, 4),
         "market_probability": round(de_vig_probability, 4),
         "model_probability": round(model_probability, 4),
+        "edge": round(model_probability - de_vig_probability, 4),
+        "ev": round(expected_edge, 4),
         "expected_edge": round(expected_edge, 4),
     }
 

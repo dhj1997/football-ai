@@ -40,6 +40,7 @@ from .player_name_provider import (
     PlayerNameService,
 )
 from .player_value_provider import NullPlayerValueProvider, PlayerValueService
+from .portfolio import PortfolioConfig
 from .schedule_provider import TheSportsDbProvider
 from .schedule_sync import ScheduleSyncService
 from .settlement import SettlementService
@@ -152,8 +153,8 @@ prediction_service = DualPredictionService(
 )
 bankroll_service = DualBankrollService(
     {
-        "deepseek": BankrollService(repository).configure("deepseek", settings.simulation_competition_id),
-        "chatgpt": BankrollService(repository).configure("chatgpt", settings.simulation_competition_id),
+        "deepseek": BankrollService(repository, PortfolioConfig.from_settings(settings)).configure("deepseek", settings.simulation_competition_id),
+        "chatgpt": BankrollService(repository, PortfolioConfig.from_settings(settings)).configure("chatgpt", settings.simulation_competition_id),
     },
     settings.simulation_competition_id,
 )
@@ -469,6 +470,24 @@ def simulated_bets(
     return {"items": items, "count": len(items), "is_simulated": True}
 
 
+@app.get("/api/executions")
+def paper_executions(
+    status: Literal["all", "PENDING", "EXECUTED", "CANCELLED", "REJECTED", "SETTLED"] = "all",
+    fixture_date: str | None = None,
+    model: Literal["all", "deepseek", "chatgpt"] = "all",
+) -> dict:
+    """Return the append-only paper execution ledger; no real execution exists."""
+
+    reader = getattr(repository, "bet_executions", None)
+    items = reader(
+        None if status == "all" else status,
+        fixture_date,
+        None if model == "all" else model,
+        settings.simulation_competition_id,
+    ) if callable(reader) else []
+    return {"items": items, "count": len(items), "is_simulated": True}
+
+
 @app.get("/api/decisions")
 def prediction_decisions(
     league: Literal["all", "epl", "laliga", "csl"] = "all",
@@ -503,6 +522,9 @@ def prediction_decisions(
                 "status": "bet",
                 "reason": "已进入模拟组合" if bet_matches else "已有模拟单，但当前预测候选已变化，请核对",
                 "bet_id": linked_bet["id"],
+                "execution_id": linked_bet.get("execution_id"),
+                "execution_status": "SETTLED" if linked_bet.get("status") == "settled" else "EXECUTED",
+                "risk_gate": linked_bet.get("risk_gate"),
             }
         elif decision.get("status") in {"bet", "no_bet", "insufficient_data"}:
             execution = bankroll_service.execution_for_prediction(prediction, fixture) if fixture else {
@@ -551,6 +573,12 @@ def prediction_decisions(
                 "execution_status": execution["status"],
                 "execution_reason": execution["reason"],
                 "bet_id": execution.get("bet_id"),
+                "execution_id": (
+                    execution.get("execution_id")
+                    or ((linked_bet or {}).get("execution_id") if linked_bet else None)
+                ),
+                "risk_gate": execution.get("risk_gate") or (linked_bet or {}).get("risk_gate"),
+                "portfolio_candidate": prediction.get("portfolio_candidate") or execution.get("portfolio_candidate") or execution.get("candidate"),
                 "model_recommendation_status": (prediction.get("model_recommendation") or {}).get("status"),
             }
         )
@@ -600,6 +628,7 @@ def strategy_performance(
             settings.simulation_competition_id,
         )
         portfolio = report.get("portfolio") or {}
+        betting = report.get("betting_performance") or portfolio
         comparison = report.get("market_comparison") or {}
         gate = report.get("quality_gate") or {}
         rows.append(
@@ -610,6 +639,12 @@ def strategy_performance(
                 "strategy_name": (report.get("experiment") or {}).get("strategy_name") or "基准",
                 "realized_pnl": portfolio.get("realized_pnl", 0.0),
                 "roi": portfolio.get("roi", 0.0),
+                "bets": betting.get("bets", 0),
+                "wins": betting.get("wins", 0),
+                "losses": betting.get("losses", 0),
+                "stake": betting.get("stake", betting.get("settled_staked", 0.0)),
+                "profit": betting.get("profit", betting.get("realized_pnl", 0.0)),
+                "win_rate": betting.get("win_rate", 0.0),
                 "prediction_samples": report.get("sample_size", 0),
                 "market_comparison_samples": comparison.get("sample_size", 0),
                 "average_brier": report.get("average_brier_score"),

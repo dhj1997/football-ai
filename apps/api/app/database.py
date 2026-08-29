@@ -235,6 +235,34 @@ class PredictionRepository:
             connection.execute(
                 text(
                     """
+                    CREATE TABLE IF NOT EXISTS bet_executions (
+                        execution_id VARCHAR(255) PRIMARY KEY,
+                        prediction_id VARCHAR(255) NOT NULL,
+                        fixture_id VARCHAR(255) NOT NULL,
+                        fixture_date VARCHAR(10) NULL,
+                        model_key VARCHAR(64) NULL,
+                        competition_id VARCHAR(128) NULL,
+                        market VARCHAR(64) NOT NULL,
+                        selection VARCHAR(128) NOT NULL,
+                        line VARCHAR(64) NULL,
+                        odds DECIMAL(14, 6) NOT NULL,
+                        stake DECIMAL(14, 2) NOT NULL,
+                        requested_at VARCHAR(64) NOT NULL,
+                        executed_at VARCHAR(64) NULL,
+                        status VARCHAR(32) NOT NULL,
+                        source VARCHAR(32) NOT NULL,
+                        result VARCHAR(64) NULL,
+                        profit_loss DECIMAL(14, 2) NULL,
+                        settled_at VARCHAR(64) NULL,
+                        payload TEXT NOT NULL,
+                        UNIQUE (prediction_id, market, selection, line)
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
                     CREATE TABLE IF NOT EXISTS fixture_settlements (
                         id VARCHAR(255) PRIMARY KEY,
                         prediction_id VARCHAR(255) NOT NULL UNIQUE,
@@ -272,6 +300,14 @@ class PredictionRepository:
             self._ensure_column(connection, "bets", "line_at_close", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bets", "line_changed", "BOOLEAN NULL")
             self._ensure_column(connection, "bets", "odds_snapshot_id", "VARCHAR(255) NULL")
+            self._ensure_column(connection, "bet_executions", "fixture_date", "VARCHAR(10) NULL")
+            self._ensure_column(connection, "bet_executions", "model_key", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "bet_executions", "competition_id", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "bet_executions", "line", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "bet_executions", "executed_at", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "bet_executions", "result", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "bet_executions", "profit_loss", "DECIMAL(14, 2) NULL")
+            self._ensure_column(connection, "bet_executions", "settled_at", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bankroll_transactions", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bankroll_transactions", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "fixture_settlements", "model_key", "VARCHAR(64) NULL")
@@ -306,6 +342,7 @@ class PredictionRepository:
                     "player_value_snapshots",
                     "player_name_snapshots",
                     "bets",
+                    "bet_executions",
                     "bankroll_transactions",
                     "fixture_settlements",
                     "job_runs",
@@ -353,6 +390,12 @@ class PredictionRepository:
                 "idx_bets_date_status",
                 "bets",
                 "CREATE INDEX idx_bets_date_status ON bets (fixture_date, status)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_bet_executions_fixture_status",
+                "bet_executions",
+                "CREATE INDEX idx_bet_executions_fixture_status ON bet_executions (fixture_id, status)",
             )
             self._ensure_index(
                 connection,
@@ -1836,6 +1879,173 @@ class PredictionRepository:
             )
         return payload
 
+    def create_bet_execution(self, execution: dict[str, Any]) -> dict[str, Any]:
+        """Create an idempotent paper execution with frozen price and stake."""
+
+        execution_id = str(execution.get("execution_id") or execution.get("id") or "")
+        if not execution_id:
+            raise ValueError("Execution id is required")
+        required = ("prediction_id", "fixture_id", "market", "selection", "odds", "stake", "requested_at")
+        missing = [key for key in required if execution.get(key) is None]
+        if missing:
+            raise ValueError(f"Execution fields are required: {', '.join(missing)}")
+        status = str(execution.get("status") or "PENDING").upper()
+        source = str(execution.get("source") or "paper")
+        payload = {
+            **execution,
+            "execution_id": execution_id,
+            "status": status,
+            "source": source,
+            "line": execution.get("line"),
+            "odds": round(float(execution["odds"]), 6),
+            "stake": round(float(execution["stake"]), 2),
+        }
+        immutable = ("prediction_id", "fixture_id", "model_key", "competition_id", "market", "selection", "line", "odds", "stake", "source")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM bet_executions WHERE execution_id = :execution_id"),
+                {"execution_id": execution_id},
+            ).mappings().first()
+            if existing:
+                current = json.loads(existing["payload"])
+                if any(current.get(key) != payload.get(key) for key in immutable):
+                    raise ValueError("Bet execution immutable fields cannot change")
+                return current
+            duplicate = connection.execute(
+                text(
+                    "SELECT payload FROM bet_executions WHERE prediction_id = :prediction_id "
+                    "AND market = :market AND selection = :selection "
+                    "AND (line = :line OR (line IS NULL AND :line IS NULL))"
+                ),
+                {
+                    "prediction_id": payload["prediction_id"],
+                    "market": payload["market"],
+                    "selection": payload["selection"],
+                    "line": str(payload["line"]) if payload["line"] is not None else None,
+                },
+            ).mappings().first()
+            if duplicate:
+                current = json.loads(duplicate["payload"])
+                if any(current.get(key) != payload.get(key) for key in immutable):
+                    raise ValueError("Bet execution identity already exists with different immutable fields")
+                return current
+            connection.execute(
+                text(
+                    "INSERT INTO bet_executions (execution_id, prediction_id, fixture_id, fixture_date, model_key, competition_id, "
+                    "market, selection, line, odds, stake, requested_at, executed_at, status, source, result, profit_loss, settled_at, payload) "
+                    "VALUES (:execution_id, :prediction_id, :fixture_id, :fixture_date, :model_key, :competition_id, :market, :selection, :line, :odds, :stake, :requested_at, :executed_at, :status, :source, NULL, NULL, NULL, :payload)"
+                ),
+                {
+                    **payload,
+                    "line": str(payload["line"]) if payload["line"] is not None else None,
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                },
+            )
+        return payload
+
+    def bet_execution(self, execution_id: str) -> dict[str, Any] | None:
+        """Return one paper execution by its immutable identifier."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM bet_executions WHERE execution_id = :execution_id"),
+                {"execution_id": execution_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def execution_for_prediction(self, prediction_id: str) -> dict[str, Any] | None:
+        """Return the paper execution linked to one prediction."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM bet_executions WHERE prediction_id = :prediction_id ORDER BY requested_at DESC LIMIT 1"),
+                {"prediction_id": prediction_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def bet_executions(
+        self,
+        status: str | None = None,
+        fixture_date: str | None = None,
+        model_key: str | None = None,
+        competition_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List paper executions with optional lifecycle filters."""
+
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        for column, value in (
+            ("status", status.upper() if status else None),
+            ("fixture_date", fixture_date),
+            ("model_key", model_key),
+            ("competition_id", competition_id),
+        ):
+            if value:
+                clauses.append(f"{column} = :{column}")
+                parameters[column] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(f"SELECT payload FROM bet_executions{where} ORDER BY requested_at DESC, execution_id DESC"),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def settle_bet_execution(
+        self,
+        execution_id: str,
+        *,
+        result: str,
+        profit_loss: float,
+        settled_at: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Append settlement fields without changing frozen execution fields."""
+
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM bet_executions WHERE execution_id = :execution_id"),
+                {"execution_id": execution_id},
+            ).mappings().first()
+            if not row:
+                return None
+            payload = json.loads(row["payload"])
+            if str(payload.get("status") or "").upper() == "SETTLED":
+                return payload
+            frozen = {key: payload.get(key) for key in ("prediction_id", "fixture_id", "model_key", "competition_id", "market", "selection", "line", "odds", "stake", "source")}
+            settlement_fields = {
+                key: value
+                for key, value in (metadata or {}).items()
+                if key in {"clv", "closing_odds", "closing_odds_captured_at", "line_at_close", "line_changed", "result_metadata"}
+            }
+            payload.update(
+                {
+                    "status": "SETTLED",
+                    "result": result,
+                    "profit_loss": round(float(profit_loss), 2),
+                    "settled_at": settled_at,
+                    **settlement_fields,
+                }
+            )
+            payload.update(frozen)
+            connection.execute(
+                text(
+                    "UPDATE bet_executions SET status = 'SETTLED', result = :result, profit_loss = :profit_loss, "
+                    "settled_at = :settled_at, payload = :payload WHERE execution_id = :execution_id"
+                ),
+                {
+                    "execution_id": execution_id,
+                    "result": result,
+                    "profit_loss": round(float(profit_loss), 2),
+                    "settled_at": settled_at,
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                },
+            )
+        return payload
+
+    save_bet_execution = create_bet_execution
+    settle_execution = settle_bet_execution
+
     def discard_open_fixture_bets(
         self,
         fixture_id: str,
@@ -1867,6 +2077,21 @@ class PredictionRepository:
             bet_ids = {str(row["id"]) for row in rows}
             if not bet_ids:
                 return 0
+            execution_rows = connection.execute(
+                text("SELECT payload FROM bets WHERE id IN (" + ", ".join(f":bet_{index}" for index, _ in enumerate(sorted(bet_ids))) + ")"),
+                {f"bet_{index}": bet_id for index, bet_id in enumerate(sorted(bet_ids))},
+            ).mappings().all()
+            for execution_row in execution_rows:
+                execution_payload = json.loads(execution_row["payload"])
+                execution_id = execution_payload.get("execution_id")
+                if execution_id:
+                    connection.execute(
+                        text("UPDATE bet_executions SET status = 'CANCELLED', payload = :payload WHERE execution_id = :execution_id"),
+                        {
+                            "execution_id": execution_id,
+                            "payload": json.dumps({**execution_payload, "status": "CANCELLED"}, ensure_ascii=False),
+                        },
+                    )
             self._delete_values(connection, "bankroll_transactions", "reference_id", bet_ids)
             self._delete_values(connection, "bets", "id", bet_ids)
             self._rebuild_simulation_ledger(connection, competition_id, model_key)
@@ -1938,6 +2163,21 @@ class PredictionRepository:
             competition_id = payload.get("competition_id") or self.competition_id
             balance_before = self._current_balance(connection, model_key, competition_id)
             balance_after = round(balance_before + amount, 2)
+            frozen = {
+                key: payload.get(key)
+                for key in (
+                    "prediction_id",
+                    "fixture_id",
+                    "market",
+                    "selection",
+                    "handicap_line",
+                    "line_at_bet",
+                    "odds",
+                    "bet_odds",
+                    "stake",
+                    "odds_snapshot_id",
+                )
+            }
             payload.update(
                 {
                     "status": "settled",
@@ -1949,6 +2189,7 @@ class PredictionRepository:
                     **(settlement_metadata or {}),
                 }
             )
+            payload.update(frozen)
             connection.execute(
                 text("UPDATE bets SET status = 'settled', payload = :payload WHERE id = :bet_id"),
                 {"payload": json.dumps(payload, ensure_ascii=False), "bet_id": bet_id},

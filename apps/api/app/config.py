@@ -51,6 +51,25 @@ class Settings(BaseSettings):
     lineup_refresh_hours: int = 2
     model_retry_minutes: int = 180
     automation_evidence_refresh_limit: int = 1
+    # P2 deterministic portfolio policy. Fractions are relative to bankroll.
+    portfolio_min_edge: float = 0.05
+    portfolio_min_ev: float = 0.05
+    portfolio_max_odds_age_minutes: float = 180.0
+    portfolio_stake_fraction: float = 0.01
+    portfolio_max_single_bet_fraction: float = 0.01
+    portfolio_max_daily_exposure: float = 0.05
+    portfolio_max_league_exposure: float = 0.02
+    portfolio_max_total_exposure: float = 0.10
+    portfolio_max_drawdown: float = 0.30
+    portfolio_min_data_completeness: float = 0.70
+    portfolio_max_league_candidates: int | None = 2
+    portfolio_ev_weight: float = 1.0
+    portfolio_edge_weight: float = 1.0
+    portfolio_confidence_weight: float = 0.25
+    portfolio_data_quality_weight: float = 0.25
+    portfolio_clv_weight: float = 0.10
+    portfolio_freshness_weight: float = 0.10
+    portfolio_risk_weight: float = 0.25
 
 @lru_cache
 def get_settings() -> Settings:
