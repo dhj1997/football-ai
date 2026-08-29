@@ -89,9 +89,9 @@ def test_initial_balance_and_duplicate_bet_protection(tmp_path) -> None:
     duplicate = service.place_for_prediction(prediction(), fixture(), context())
 
     assert first is not None
-    assert first["stake"] == 250.0
+    assert first["stake"] == 10.0
     assert duplicate["id"] == first["id"]
-    assert repository.current_balance() == 750.0
+    assert repository.current_balance() == 990.0
     assert len(repository.bankroll_transactions()) == 2
     assert service.summary()["equity"] == 1000.0
     assert service.summary()["net_profit"] == 0.0
@@ -127,9 +127,9 @@ def test_legacy_two_percent_bet_is_refunded_and_resized(tmp_path) -> None:
     resized = BankrollService(repository).place_for_prediction(prediction(), fixture(), context())
 
     assert resized is not None and resized["id"] != "legacy-bet"
-    assert resized["stake"] == 250.0
+    assert resized["stake"] == 10.0
     assert len(repository.bets()) == 1
-    assert repository.current_balance() == 750.0
+    assert repository.current_balance() == 990.0
 
 
 def test_missing_price_and_degraded_ai_never_place_a_bet(tmp_path) -> None:
@@ -168,9 +168,9 @@ def test_daily_unsettled_exposure_is_capped(tmp_path) -> None:
         service.place_for_prediction(prediction(f"prediction-{index}"), next_fixture, context())
 
     exposure = sum(item["stake"] for item in repository.bets(status="placed"))
-    assert exposure == 500.0
-    assert all(item["stake"] >= item["balance_before"] * 0.10 for item in repository.bets())
-    assert all(item["stake"] <= item["balance_before"] * 0.25 for item in repository.bets())
+    assert exposure == 50.0
+    assert len(repository.bets(status="placed")) == 5
+    assert all(item["stake"] == 10.0 for item in repository.bets())
 
 
 def test_multiple_prediction_versions_do_not_multiply_fixture_exposure(tmp_path) -> None:
@@ -185,7 +185,7 @@ def test_multiple_prediction_versions_do_not_multiply_fixture_exposure(tmp_path)
     assert second is not None
     assert second["prediction_id"] == "confirmed"
     assert len(repository.bets()) == 1
-    assert repository.current_balance() == 750.0
+    assert repository.current_balance() == 990.0
 
 
 def test_new_ineligible_prediction_discards_the_old_open_fixture_bet(tmp_path) -> None:
@@ -216,10 +216,10 @@ def test_low_confidence_warning_does_not_duplicate_the_market_gate(tmp_path) -> 
     placed = service.place_for_prediction(item, fixture(), context())
 
     assert placed is not None
-    assert placed["stake"] == 250.0
+    assert placed["stake"] == 10.0
 
 
-def test_higher_edge_fixture_replaces_the_open_league_day_bet(tmp_path) -> None:
+def test_higher_edge_fixture_can_share_the_league_day_until_portfolio_limit(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "league-day.db"))
     repository.initialize()
     service = BankrollService(repository)
@@ -244,10 +244,10 @@ def test_higher_edge_fixture_replaces_the_open_league_day_bet(tmp_path) -> None:
 
     assert first_bet is not None
     assert second_bet is not None and second_bet["prediction_id"] == "league-p2"
-    assert repository.bet_for_prediction("league-p1") is None
-    assert len(repository.bets()) == 1
-    assert repository.current_balance() == 750.0
-    assert service.execution_for_prediction(first_prediction, first_fixture)["reason_codes"] == ["league_daily_limit"]
+    assert repository.bet_for_prediction("league-p1") is not None
+    assert len(repository.bets()) == 2
+    assert repository.current_balance() == 980.0
+    assert service.execution_for_prediction(first_prediction, first_fixture)["execution_status"] == "EXECUTED"
 
 
 def test_started_league_day_bet_is_not_replaced(tmp_path) -> None:
@@ -280,6 +280,6 @@ def test_started_league_day_bet_is_not_replaced(tmp_path) -> None:
     )
 
     assert first_bet is not None
-    assert selected is not None and selected["prediction_id"] == "started-p1"
-    assert repository.bet_for_prediction("started-p2") is None
-    assert len(repository.bets()) == 1
+    assert selected is not None and selected["prediction_id"] == "started-p2"
+    assert repository.bet_for_prediction("started-p1") is not None
+    assert len(repository.bets()) == 2

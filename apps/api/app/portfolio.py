@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 from typing import Any, Iterable, Mapping
 
 
-ACTIVE_STATUSES = {"placed", "pending", "executed", "selected"}
+ACTIVE_BET_STATUSES = frozenset({"placed", "pending", "executed", "selected"})
+# Backward-compatible import name; all callers should use the shared set.
+ACTIVE_STATUSES = ACTIVE_BET_STATUSES
 
 
 def _number(value: Any, default: float | None = None) -> float | None:
@@ -35,6 +37,69 @@ def _timestamp(value: Any) -> datetime | None:
     except (TypeError, ValueError):
         return None
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def is_active_bet(status: Any) -> bool:
+    """Return whether a bet contributes to open exposure."""
+
+    return str(status or "").strip().lower() in ACTIVE_BET_STATUSES
+
+
+def cash_balance(transactions: Iterable[Mapping[str, Any]]) -> float:
+    """Return cash balance from the append-only bankroll transaction ledger."""
+
+    return round(sum(_number(row.get("amount"), 0) or 0 for row in transactions), 2)
+
+
+def open_exposure(
+    bets: Iterable[Mapping[str, Any]],
+    *,
+    fixture_date: str | None = None,
+    league_key: str | None = None,
+) -> float:
+    """Return active stake exposure using one shared status definition."""
+
+    return round(
+        sum(
+            _number(bet.get("stake"), 0) or 0
+            for bet in bets
+            if is_active_bet(bet.get("status"))
+            and (fixture_date is None or bet.get("fixture_date") == fixture_date)
+            and (league_key is None or bet.get("league_key") == league_key)
+        ),
+        2,
+    )
+
+
+def equity(cash: Any, exposure: Any) -> float:
+    """Return marked-to-stake equity: cash balance plus open exposure."""
+
+    return round((_number(cash, 0) or 0) + (_number(exposure, 0) or 0), 2)
+
+
+def exposure_snapshot(
+    bets: Iterable[Mapping[str, Any]],
+    transactions: Iterable[Mapping[str, Any]],
+    *,
+    fixture_date: str | None = None,
+    league_key: str | None = None,
+) -> dict[str, float]:
+    """Compute the canonical cash/equity/exposure values once for an account."""
+
+    rows = list(bets)
+    ledger = list(transactions)
+    cash = cash_balance(ledger)
+    total_open = open_exposure(rows)
+    daily = open_exposure(rows, fixture_date=fixture_date)
+    league = open_exposure(rows, fixture_date=fixture_date, league_key=league_key)
+    return {
+        "cash_balance": cash,
+        "open_exposure": total_open,
+        "equity": equity(cash, total_open),
+        "daily_exposure": daily,
+        "league_exposure": league,
+        "total_exposure": total_open,
+    }
 
 
 def calculate_edge(model_probability: Any, market_probability: Any) -> float | None:
@@ -68,7 +133,7 @@ def odds_age_minutes(updated_at: Any, now: datetime | None = None) -> float | No
 
 @dataclass(frozen=True)
 class PortfolioConfig:
-    """Configurable P2 policy; values are fractions of bankroll unless noted."""
+    """Configurable P2 policy; exposure values are fractions of equity unless noted."""
 
     min_edge: float = 0.05
     min_ev: float = 0.05
@@ -228,6 +293,12 @@ def build_candidates(
     historical_clv: float | None = None,
 ) -> list[BetCandidate]:
     config = config or PortfolioConfig()
+    if fixture.get("status") != "scheduled":
+        return []
+    kickoff = _timestamp(fixture.get("kickoff"))
+    reference = now.astimezone(UTC) if now and now.tzinfo else (now.replace(tzinfo=UTC) if now else datetime.now(UTC))
+    if kickoff is not None and kickoff <= reference:
+        return []
     assessment = prediction.get("market_assessment") or {}
     if assessment.get("odds_status") != "fresh":
         return []
@@ -295,14 +366,31 @@ def score_candidate_values(
     return round(score, 6)
 
 
-def candidate_sort_key(candidate: BetCandidate | Mapping[str, Any]) -> tuple[float, float, float, str, str]:
+def candidate_sort_key(candidate: BetCandidate | Mapping[str, Any]) -> tuple[float, float, float, str, str, str]:
     return (
         -(_number(_value(candidate, "candidate_score"), 0) or 0),
         -(_number(_value(candidate, "ev"), 0) or 0),
         -(_number(_value(candidate, "edge"), 0) or 0),
         str(_value(candidate, "fixture_id") or ""),
+        str(_value(candidate, "model_key") or ""),
         str(_value(candidate, "prediction_id") or ""),
     )
+
+
+def select_best_candidates(
+    candidates: Iterable[BetCandidate | Mapping[str, Any]],
+) -> list[BetCandidate | Mapping[str, Any]]:
+    """Select one highest-ranked candidate for each fixture correlation group."""
+
+    selected: list[BetCandidate | Mapping[str, Any]] = []
+    groups: set[str] = set()
+    for candidate in sorted(candidates, key=candidate_sort_key):
+        candidate_groups = _correlation_keys(candidate)
+        if candidate_groups & groups:
+            continue
+        groups.update(candidate_groups)
+        selected.append(candidate)
+    return selected
 
 
 def calculate_drawdown(equity_curve: Iterable[Any], initial_bankroll: float = 0.0) -> float:
@@ -325,17 +413,10 @@ def exposure_totals(
     league_key: str | None = None,
 ) -> dict[str, float]:
     all_rows = list(bets)
-    rows = [
-        bet
-        for bet in all_rows
-        if str(bet.get("status") or "").lower() in ACTIVE_STATUSES
-        and (fixture_date is None or bet.get("fixture_date") == fixture_date)
-    ]
-    league_rows = [bet for bet in rows if league_key is None or bet.get("league_key") == league_key]
     return {
-        "daily": round(sum(_number(bet.get("stake"), 0) or 0 for bet in rows), 2),
-        "league": round(sum(_number(bet.get("stake"), 0) or 0 for bet in league_rows), 2),
-        "total": round(sum(_number(bet.get("stake"), 0) or 0 for bet in all_rows if str(bet.get("status") or "").lower() in ACTIVE_STATUSES), 2),
+        "daily": open_exposure(all_rows, fixture_date=fixture_date),
+        "league": open_exposure(all_rows, fixture_date=fixture_date, league_key=league_key),
+        "total": open_exposure(all_rows),
     }
 
 
@@ -423,58 +504,50 @@ def allocate_stake(
 
 def select_portfolio(
     candidates: Iterable[BetCandidate | Mapping[str, Any]],
-    bankroll: float,
+    bankroll: float | None = None,
     *,
     existing_bets: Iterable[Mapping[str, Any]] = (),
+    correlation_bets: Iterable[Mapping[str, Any]] = (),
     config: PortfolioConfig | None = None,
     drawdown: float = 0.0,
+    account_snapshot: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     config = config or PortfolioConfig()
     existing = list(existing_bets)
-    active = [bet for bet in existing if str(bet.get("status") or "").lower() in ACTIVE_STATUSES]
+    active = [bet for bet in existing if is_active_bet(bet.get("status"))]
+    correlated = [bet for bet in correlation_bets if is_active_bet(bet.get("status"))]
     selected: list[dict[str, Any]] = []
-    groups: set[str] = {
-        str(bet.get("correlation_group") or bet.get("fixture_id") or "")
-        for bet in active
-    }
+    groups: set[str] = set()
+    for bet in [*active, *correlated]:
+        groups.update(_correlation_keys(bet))
+    equity_base = _number((account_snapshot or {}).get("equity"))
+    if equity_base is None:
+        equity_base = max(0.0, _number(bankroll, 0) or 0)
     league_counts: dict[tuple[str, str | None], int] = {}
-    total = sum(_number(bet.get("stake"), 0) or 0 for bet in active)
-    for candidate in sorted(candidates, key=candidate_sort_key):
+    for bet in active:
+        key = (str(bet.get("league_key") or ""), bet.get("fixture_date"))
+        league_counts[key] = league_counts.get(key, 0) + 1
+    candidates = select_best_candidates(candidates)
+    for candidate in candidates:
+        candidate_groups = _correlation_keys(candidate)
         group = str(_value(candidate, "correlation_group") or _value(candidate, "fixture_id") or "")
         league = str(_value(candidate, "league_key") or "")
         fixture_date = _value(candidate, "fixture_date")
-        if group in groups:
+        if candidate_groups & groups:
             continue
         league_count_key = (league, fixture_date)
         if config.max_league_candidates is not None and league_counts.get(league_count_key, 0) >= config.max_league_candidates:
             continue
-        league_exposure = sum(
-            _number(bet.get("stake"), 0) or 0
-            for bet in active
-            if str(bet.get("league_key") or "") == league
-            and (fixture_date is None or bet.get("fixture_date") == fixture_date)
-        ) + sum(
-            item["stake"]
-            for item in selected
-            if str(item.get("league_key") or "") == league
-            and (fixture_date is None or item.get("fixture_date") == fixture_date)
-        )
-        daily_exposure = sum(
-            _number(bet.get("stake"), 0) or 0
-            for bet in active
-            if fixture_date is None or bet.get("fixture_date") == fixture_date
-        ) + sum(
-            item["stake"]
-            for item in selected
-            if fixture_date is None or item.get("fixture_date") == fixture_date
-        )
-        selected_total = sum(item["stake"] for item in selected)
+        current_rows = [*active, *selected]
+        daily_exposure = open_exposure(current_rows, fixture_date=fixture_date)
+        league_exposure = open_exposure(current_rows, fixture_date=fixture_date, league_key=league)
+        total_exposure = open_exposure(current_rows)
         gate = risk_gate(
             candidate,
-            bankroll,
+            equity_base,
             daily_exposure=daily_exposure,
             league_exposure=league_exposure,
-            total_exposure=total + selected_total,
+            total_exposure=total_exposure,
             drawdown=drawdown,
             config=config,
         )
@@ -484,19 +557,32 @@ def select_portfolio(
         payload.update(
             {
                 "stake": gate["allowed_stake"],
+                "status": "selected",
                 "risk_gate": gate,
                 "league_key": league or payload.get("league_key"),
+                "fixture_date": fixture_date or payload.get("fixture_date"),
                 "correlation_group": group,
             }
         )
         selected.append(payload)
-        groups.add(group)
+        groups.update(candidate_groups)
         league_counts[league_count_key] = league_counts.get(league_count_key, 0) + 1
     return selected
 
 
 def _value(candidate: BetCandidate | Mapping[str, Any], key: str) -> Any:
     return getattr(candidate, key, None) if isinstance(candidate, BetCandidate) else candidate.get(key)
+
+
+def _correlation_keys(candidate: BetCandidate | Mapping[str, Any]) -> set[str]:
+    fixture_id = str(_value(candidate, "fixture_id") or "")
+    correlation_group = str(_value(candidate, "correlation_group") or "")
+    keys = set()
+    if fixture_id:
+        keys.add(f"fixture:{fixture_id}")
+    if correlation_group:
+        keys.add(f"group:{correlation_group}")
+    return keys or {"group:"}
 
 
 def _freshness_score(age: float | None, config: PortfolioConfig) -> float:

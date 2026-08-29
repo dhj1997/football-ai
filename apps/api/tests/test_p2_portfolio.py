@@ -5,14 +5,21 @@ import pytest
 from app.bankroll import BankrollService
 from app.database import PredictionRepository
 from app.portfolio import (
+    ACTIVE_BET_STATUSES,
     BetCandidate,
     PortfolioConfig,
     build_candidates,
     calculate_drawdown,
     calculate_edge,
     calculate_ev,
+    cash_balance,
+    equity,
+    exposure_snapshot,
     is_candidate_eligible,
+    is_active_bet,
+    open_exposure,
     risk_gate,
+    select_best_candidates,
     select_portfolio,
 )
 from app.settlement import calculate_clv
@@ -22,6 +29,8 @@ def candidate(
     fixture_id: str = "fixture-1",
     prediction_id: str = "prediction-1",
     league_key: str = "epl",
+    model_key: str = "deepseek",
+    correlation_group: str | None = None,
     edge: float = 0.10,
     ev: float = 0.20,
     score: float = 0.8,
@@ -31,7 +40,7 @@ def candidate(
         fixture_date="2099-08-27",
         league_key=league_key,
         prediction_id=prediction_id,
-        model_key="deepseek",
+        model_key=model_key,
         market="1x2",
         selection="home",
         line=None,
@@ -44,6 +53,7 @@ def candidate(
         data_quality=0.9,
         odds_age_minutes=0.0,
         confidence=0.8,
+        correlation_group=correlation_group,
         candidate_score=score,
     )
 
@@ -51,6 +61,55 @@ def candidate(
 def test_edge_and_ev_use_decimal_formulas() -> None:
     assert calculate_edge(0.60, 0.50) == pytest.approx(0.10)
     assert calculate_ev(0.60, 2.00) == pytest.approx(0.20)
+
+
+def test_account_snapshot_uses_one_ledger_and_active_status_set() -> None:
+    transactions = [
+        {"amount": 1000},
+        {"amount": -100},
+        {"amount": 50},
+    ]
+    bets = [
+        {"status": "placed", "stake": 40, "fixture_date": "2099-08-27", "league_key": "epl"},
+        {"status": "pending", "stake": 20, "fixture_date": "2099-08-27", "league_key": "epl"},
+        {"status": "executed", "stake": 10, "fixture_date": "2099-08-27", "league_key": "laliga"},
+        {"status": "selected", "stake": 5, "fixture_date": "2099-08-28", "league_key": "epl"},
+        {"status": "settled", "stake": 999, "fixture_date": "2099-08-27", "league_key": "epl"},
+    ]
+
+    snapshot = exposure_snapshot(
+        bets,
+        transactions,
+        fixture_date="2099-08-27",
+        league_key="epl",
+    )
+
+    assert ACTIVE_BET_STATUSES == frozenset({"placed", "pending", "executed", "selected"})
+    assert all(is_active_bet(status) for status in ACTIVE_BET_STATUSES)
+    assert not is_active_bet("settled")
+    assert cash_balance(transactions) == 950.0
+    assert open_exposure(bets) == 75.0
+    assert snapshot == {
+        "cash_balance": 950.0,
+        "open_exposure": 75.0,
+        "equity": 1025.0,
+        "daily_exposure": 70.0,
+        "league_exposure": 60.0,
+        "total_exposure": 75.0,
+    }
+
+
+def test_candidate_tie_break_is_deterministic_by_model_and_prediction_id() -> None:
+    selected = select_best_candidates(
+        [
+            candidate(model_key="deepseek", prediction_id="z-prediction", correlation_group="deep-group", score=0.8),
+            candidate(model_key="chatgpt", prediction_id="a-prediction", correlation_group="gpt-group", score=0.8),
+        ]
+    )
+
+    assert len(selected) == 1
+    assert selected[0].model_key == "chatgpt"
+    assert selected[0].prediction_id == "a-prediction"
 
 
 def test_candidate_filter_rejects_ev_below_p2_threshold() -> None:
@@ -163,7 +222,7 @@ def test_p2_bankroll_freezes_execution_and_uses_one_percent_stake(tmp_path) -> N
 
 
 def test_build_candidates_exposes_edge_and_ev_separately() -> None:
-    fixture = {"id": "f1", "fixture_date": "2099-08-27", "league_key": "epl"}
+    fixture = {"id": "f1", "fixture_date": "2099-08-27", "league_key": "epl", "status": "scheduled"}
     prediction = {
         "id": "p1",
         "model_key": "deepseek",

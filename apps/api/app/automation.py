@@ -208,20 +208,31 @@ class AutomationRunner:
                         )
                     ]
                 if due_model_keys == []:
-                    for current in current_predictions.values():
-                        if current:
-                            self.bankroll_service.place_for_prediction(current, fixture, context)
+                    current = [item for item in current_predictions.values() if item]
+                    counts["bet_count"] += len(self._place_predictions(current, fixture, context))
                     continue
                 created = await self.prediction_service.create(fixture, context, due_model_keys) if model_keys else await self.prediction_service.create(fixture, context)
                 predictions = created if isinstance(created, list) else [created]
                 counts["prediction_count"] += len(predictions)
-                for prediction in predictions:
-                    bet = self.bankroll_service.place_for_prediction(prediction, fixture, context)
-                    if bet:
-                        counts["bet_count"] += 1
+                counts["bet_count"] += len(self._place_predictions(predictions, fixture, context))
             except Exception as error:
                 errors.append(f"{fixture.get('id')}: {_bounded_error(error)}")
         return {**counts, "item_count": counts["prediction_count"], "errors": errors[:20]}
+
+    def _place_predictions(
+        self,
+        predictions: list[dict[str, Any]],
+        fixture: dict[str, Any],
+        context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        bulk = getattr(self.bankroll_service, "place_for_predictions", None)
+        if callable(bulk):
+            return bulk(predictions, fixture, context)
+        return [
+            bet
+            for prediction in predictions
+            if (bet := self.bankroll_service.place_for_prediction(prediction, fixture, context))
+        ]
 
     def _evidence_refresh_due(
         self,

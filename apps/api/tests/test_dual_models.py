@@ -1,9 +1,10 @@
 import asyncio
 from datetime import UTC, datetime
 
-from app.bankroll import BankrollService
+from app.bankroll import BankrollService, DualBankrollService
 from app.database import PredictionRepository
 from app.dual_prediction_service import DualPredictionService
+from app.portfolio import BetCandidate, PortfolioConfig
 
 
 class FakeProvider:
@@ -66,6 +67,30 @@ def prediction(model_key: str, prediction_id: str) -> dict:
     }
 
 
+def candidate(model_key: str, prediction_id: str, score: float) -> BetCandidate:
+    return BetCandidate(
+        fixture_id="dual-fixture",
+        fixture_date="2099-08-27",
+        league_key="epl",
+        prediction_id=prediction_id,
+        model_key=model_key,
+        market="1x2",
+        selection="home",
+        line=None,
+        odds=2.1,
+        model_probability=0.7,
+        market_probability=0.5,
+        edge=0.2,
+        ev=0.47,
+        risk_score=0.1,
+        data_quality=0.9,
+        odds_age_minutes=0.0,
+        confidence=0.8,
+        correlation_group="dual-fixture",
+        candidate_score=score,
+    )
+
+
 def test_prediction_services_run_for_both_models() -> None:
     started: list[str] = []
     service = DualPredictionService(
@@ -99,7 +124,7 @@ def test_player_names_are_resolved_once_before_both_models() -> None:
     assert started.count("player-names") == 1
 
 
-def test_models_have_independent_accounts_but_cannot_bypass_risk_cap(tmp_path) -> None:
+def test_global_portfolio_selects_one_cross_model_fixture_candidate(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "dual.db"), "dual", ("deepseek", "chatgpt"))
     repository.initialize()
     context = {
@@ -110,14 +135,29 @@ def test_models_have_independent_accounts_but_cannot_bypass_risk_cap(tmp_path) -
             "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         }
     }
-    deepseek = BankrollService(repository).configure("deepseek", "dual", uncapped=True)
-    chatgpt = BankrollService(repository).configure("chatgpt", "dual", uncapped=True)
+    services = {
+        model_key: BankrollService(repository, PortfolioConfig()).configure(model_key, "dual")
+        for model_key in ("deepseek", "chatgpt")
+    }
+    dual = DualBankrollService(services, "dual")
+    deepseek_prediction = prediction("deepseek", "prediction-deepseek")
+    chatgpt_prediction = prediction("chatgpt", "prediction-chatgpt")
+    chatgpt_prediction["probabilities"]["home"] = 0.8
 
-    first = deepseek.place_for_prediction(prediction("deepseek", "prediction-deepseek"), fixture(), context)
-    second = chatgpt.place_for_prediction(prediction("chatgpt", "prediction-chatgpt"), fixture(), context)
+    bets = dual.place_for_predictions(
+        [deepseek_prediction, chatgpt_prediction],
+        fixture(),
+        context,
+    )
 
-    assert first is not None and first["stake"] == 250.0
-    assert second is not None and second["stake"] == 250.0
-    assert repository.current_balance("deepseek", "dual") == 750.0
-    assert repository.current_balance("chatgpt", "dual") == 750.0
-    assert len(repository.bets(competition_id="dual")) == 2
+    assert len(bets) == 1
+    assert bets[0]["model_key"] == "chatgpt"
+    assert len(repository.bet_executions(competition_id="dual")) == 1
+    assert repository.current_balance("deepseek", "dual") == 1000.0
+    assert repository.current_balance("chatgpt", "dual") == 990.0
+
+    selected = dual.select_portfolio_candidates(
+        [candidate("deepseek", "prediction-deepseek", 0.8), candidate("chatgpt", "prediction-chatgpt", 0.9), candidate("poisson", "prediction-poisson", 0.7)]
+    )
+    assert len(selected) == 1
+    assert selected[0].model_key == "chatgpt"
