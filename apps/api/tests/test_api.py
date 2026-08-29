@@ -74,6 +74,22 @@ def test_p3_intelligence_endpoints_return_read_only_contracts() -> None:
     assert client.get("/api/backtest/runs/missing-run").status_code == 404
 
 
+def test_p5_data_registry_and_history_endpoints_are_read_only() -> None:
+    sources = client.get("/api/data-sources")
+    assert sources.status_code == 200
+    assert {item["provider"] for item in sources.json()["providers"]} == {"api-football", "espn", "thesportsdb"}
+
+    leagues_response = client.get("/api/leagues")
+    assert leagues_response.status_code == 200
+    assert [item["code"] for item in leagues_response.json()["items"]] == ["CSL", "EPL", "LAL"]
+
+    assert client.get("/api/data-sync/runs").status_code == 200
+    assert client.get("/api/fixtures/history", params={"league": "EPL", "season": "2025"}).status_code == 200
+    assert client.get("/api/fixtures", params={"league": "EPL", "season": "2025", "date_from": "2025-01-01", "date_to": "2025-01-31"}).status_code == 200
+    assert client.get("/api/data-quality", params={"league": "EPL"}).status_code == 200
+    assert client.get("/api/fixtures/history", params={"league": "Bundesliga"}).status_code == 400
+
+
 def test_public_fixture_payload_removes_supplier_player_names() -> None:
     fixture = seed_real_fixture("api-player-boundary", 127)
     fixture["status"] = "finished"

@@ -25,6 +25,14 @@ from .evidence_chain import (
     should_use_secondary,
 )
 from .historical_validation import assess_data_quality, serialize_public
+from .league_data_pipeline import (
+    SUPPORTED_LEAGUES,
+    HistoricalLeagueDataService,
+    build_default_provider_registry,
+    normalize_league_code,
+    public_registry,
+    run_three_league_backtest,
+)
 from .espn_evidence_provider import EspnEvidenceProvider
 from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
@@ -166,6 +174,10 @@ bankroll_service = DualBankrollService(
 )
 settlement_service = SettlementService(repository, settings.simulation_competition_id)
 league_provider = EspnLeagueProvider(settings.espn_base_url)
+p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
+historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
+for _provider in p5_provider_registry.descriptors():
+    repository.save_provider_registry({**_provider.as_dict(), "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat()})
 league_sync = LeagueSyncService(
     league_provider,
     repository,
@@ -263,15 +275,26 @@ def health() -> dict:
 @app.get("/api/fixtures")
 async def fixtures(
     date_filter: Annotated[Literal["today", "tomorrow", "history"], Query(alias="date")] = "today",
-    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    league: str = "all",
+    season: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> dict:
     """List cached fixtures for one browse view."""
 
     sync_state = await schedule_sync.ensure_fresh()
+    if league != "all":
+        canonical_league = normalize_league_code(league)
+        if canonical_league is None:
+            raise HTTPException(status_code=400, detail="仅支持 CSL、EPL、LAL")
+        league = canonical_league.casefold()
     now = datetime.now(CHINA_TZ).date()
     start_date: str | None
     end_date: str | None
-    if date_filter == "today":
+    if date_from is not None or date_to is not None:
+        start_date = date_from
+        end_date = date_to
+    elif date_filter == "today":
         start_date = end_date = now.isoformat()
     elif date_filter == "tomorrow":
         start_date = end_date = (now + timedelta(days=1)).isoformat()
@@ -281,6 +304,8 @@ async def fixtures(
     all_rows = repository.list_fixtures(start_date, end_date)
     league_key = None if league == "all" else league
     rows = all_rows if league_key is None else [row for row in all_rows if row["league_key"] == league_key]
+    if season is not None:
+        rows = [row for row in rows if str(row.get("season") or "") == str(season)]
     if date_filter == "history":
         rows.reverse()
 
@@ -339,6 +364,88 @@ async def standings(
         "source": "espn",
         "last_synced_at": sync_state["last_synced_at"],
     })
+
+
+@app.get("/api/data-sources")
+def data_sources() -> dict:
+    """Return the configured P5 providers and their declared capabilities."""
+
+    return public_payload(public_registry(p5_provider_registry))
+
+
+@app.get("/api/data-sync/runs")
+def data_sync_runs(
+    provider_name: str | None = Query(default=None, alias="provider"),
+    league: str | None = None,
+    entity_type: str | None = None,
+    limit: int = 100,
+) -> dict:
+    """List persisted P5 synchronization runs without starting a sync."""
+
+    code = normalize_league_code(league) if league else None
+    if league and code is None:
+        raise HTTPException(status_code=400, detail="仅支持 CSL、EPL、LAL")
+    reader = getattr(repository, "data_sync_runs", None)
+    items = reader(provider_name, code, entity_type, limit) if callable(reader) else []
+    return serialize_public({"items": items, "count": len(items), "is_simulated": False})
+
+
+@app.get("/api/leagues")
+def leagues() -> dict:
+    """Return the P5 league registry with actual canonical fixture coverage."""
+
+    coverage = historical_data_service.coverage()
+    items = [
+        {
+            "code": code,
+            "name": config["name"],
+            "fixture_count": coverage["leagues"].get(code, 0),
+            "limit": coverage["limits"]["per_league"],
+        }
+        for code, config in SUPPORTED_LEAGUES.items()
+    ]
+    return {"items": items, "count": len(items), "total_fixture_count": coverage["total"], "limits": coverage["limits"]}
+
+
+@app.get("/api/fixtures/history")
+def historical_fixture_list(
+    league: str | None = None,
+    season: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 100,
+) -> dict:
+    """List bounded historical fixtures from the canonical P5 dataset."""
+
+    code = normalize_league_code(league) if league else None
+    if league and code is None:
+        raise HTTPException(status_code=400, detail="仅支持 CSL、EPL、LAL")
+    rows = repository.list_fixtures(
+        start_date=date_from,
+        end_date=date_to,
+        league_key=code.casefold() if code else None,
+    )
+    if season:
+        rows = [row for row in rows if str(row.get("season") or "") == str(season)]
+    rows = rows[: max(1, min(int(limit), 300))]
+    return serialize_public({"items": rows, "count": len(rows), "coverage": historical_data_service.coverage(), "is_simulated": False})
+
+
+@app.get("/api/backtest/three-leagues")
+def three_league_backtest(
+    start: str = "2000-01-01T00:00:00+00:00",
+    end: str | None = None,
+) -> dict:
+    """Return independent CSL/EPL/LAL P4 rolling reports plus global context."""
+
+    rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    report = run_three_league_backtest(
+        rows,
+        start=start,
+        end=end or datetime.now(UTC).replace(microsecond=0).isoformat(),
+        fixture_reader=repository.fixture,
+    )
+    return serialize_public(report)
 
 
 @app.get("/api/teams/{league_key}/{team_id}")
@@ -829,15 +936,24 @@ def historical_snapshots(
 
 
 @app.get("/api/data-quality")
-def historical_data_quality(fixture_id: str | None = None, as_of: str | None = None) -> dict:
+def historical_data_quality(
+    fixture_id: str | None = None,
+    as_of: str | None = None,
+    league: str | None = None,
+) -> dict:
     """Return explicit quality checks for cached fixtures without altering forecasts."""
 
+    code = normalize_league_code(league) if league else None
+    if league and code is None:
+        raise HTTPException(status_code=400, detail="仅支持 CSL、EPL、LAL")
     fixture_reader = getattr(repository, "fixture", None)
     if fixture_id and callable(fixture_reader):
         fixtures = [fixture_reader(fixture_id)]
     else:
         fixtures = repository.list_fixtures()
     fixtures = [fixture for fixture in fixtures if fixture]
+    if code:
+        fixtures = [fixture for fixture in fixtures if normalize_league_code(fixture.get("canonical_league") or fixture.get("league_key")) == code]
     items = []
     for fixture in fixtures:
         current_id = str(fixture.get("id") or "")

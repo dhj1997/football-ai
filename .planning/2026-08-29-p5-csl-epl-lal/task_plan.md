@@ -7,23 +7,23 @@ Build a small, real, traceable CSL/EPL/LAL historical data pipeline with strict 
 ## Phases
 
 ### Phase 1: Registry and provenance
-- Status: in_progress
+- Status: completed
 - Add canonical three-league registry, provider capability/priority contracts, raw payload hash, identity mappings, and idempotent sync-run persistence.
 
 ### Phase 2: Bounded provider sync
-- Status: pending
+- Status: completed
 - Add paginated/limited fixture/result/odds sync orchestration with explicit unavailable states, retries, and no large downloads.
 
 ### Phase 3: Historical pipeline integration
-- Status: pending
+- Status: completed
 - Connect bounded records to P4 snapshots, 24h backfill, and CSL/EPL/LAL independent rolling evaluation.
 
 ### Phase 4: APIs and tests
-- Status: pending
+- Status: completed
 - Add read-only source/sync/coverage APIs and focused P5 integration, limit, identity, conflict, timestamp, and idempotency tests.
 
 ### Phase 5: Verification and delivery
-- Status: pending
+- Status: in_progress
 - Run proportional regression/lint/build/migration checks, report inventories and limitations, commit, and push directly to `main`.
 
 ## Constraints

@@ -58,12 +58,15 @@ def build_raw_data_record(
     source_id = str(source_record_id or "")
     if not source_id:
         raise ValueError("source_record_id is required")
-    record_key = "|".join((entity_type, source, source_id, captured.isoformat()))
+    payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    payload_hash = hashlib.sha256(payload_json.encode()).hexdigest()
+    record_key = "|".join((entity_type, source, source_id, payload_hash))
     return {
         "record_id": f"raw:{hashlib.sha256(record_key.encode()).hexdigest()[:32]}",
         "entity_type": entity_type,
         "source": source,
         "source_record_id": source_id,
+        "payload_hash": payload_hash,
         "captured_at": captured.isoformat(),
         "ingested_at": ingested.isoformat(),
         "payload": dict(payload),

@@ -306,9 +306,82 @@ class PredictionRepository:
                         entity_type VARCHAR(64) NOT NULL,
                         source VARCHAR(255) NOT NULL,
                         source_record_id VARCHAR(255) NOT NULL,
+                        payload_hash VARCHAR(64) NULL,
                         captured_at VARCHAR(64) NOT NULL,
                         ingested_at VARCHAR(64) NOT NULL,
                         payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS data_sync_runs (
+                        run_id VARCHAR(255) PRIMARY KEY,
+                        provider VARCHAR(255) NOT NULL,
+                        league VARCHAR(16) NULL,
+                        entity_type VARCHAR(64) NOT NULL,
+                        started_at VARCHAR(64) NOT NULL,
+                        finished_at VARCHAR(64) NULL,
+                        status VARCHAR(32) NOT NULL,
+                        records_seen INTEGER NOT NULL,
+                        records_inserted INTEGER NOT NULL,
+                        records_updated INTEGER NOT NULL,
+                        records_rejected INTEGER NOT NULL,
+                        error_category VARCHAR(64) NULL,
+                        errors TEXT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS provider_registry (
+                        provider VARCHAR(255) PRIMARY KEY,
+                        capabilities TEXT NOT NULL,
+                        source_priority TEXT NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS team_identity_map (
+                        canonical_team_id VARCHAR(255) NOT NULL,
+                        league VARCHAR(16) NOT NULL,
+                        season VARCHAR(32) NOT NULL,
+                        source VARCHAR(255) NOT NULL,
+                        source_team_id VARCHAR(255) NOT NULL,
+                        normalized_name VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        identity_status VARCHAR(32) NOT NULL,
+                        conflict BOOLEAN NOT NULL,
+                        payload TEXT NOT NULL,
+                        PRIMARY KEY (source, source_team_id, league, season)
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS fixture_identity_map (
+                        canonical_fixture_id VARCHAR(255) NOT NULL,
+                        league VARCHAR(16) NOT NULL,
+                        season VARCHAR(32) NOT NULL,
+                        source VARCHAR(255) NOT NULL,
+                        source_fixture_id VARCHAR(255) NOT NULL,
+                        kickoff_at VARCHAR(64) NOT NULL,
+                        identity_status VARCHAR(32) NOT NULL,
+                        conflict BOOLEAN NOT NULL,
+                        payload TEXT NOT NULL,
+                        PRIMARY KEY (source, source_fixture_id, league, season)
                     )
                     """
                 )
@@ -367,6 +440,8 @@ class PredictionRepository:
             self._ensure_column(connection, "bankroll_transactions", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "fixture_settlements", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "fixture_settlements", "competition_id", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "raw_data_records", "payload_hash", "VARCHAR(64) NULL")
+            self._backfill_raw_payload_hash(connection)
             connection.execute(text("CREATE TABLE IF NOT EXISTS simulation_competitions (id VARCHAR(128) PRIMARY KEY, created_at VARCHAR(64) NOT NULL, status VARCHAR(32) NOT NULL, payload TEXT NOT NULL)"))
             connection.execute(text("CREATE TABLE IF NOT EXISTS simulation_accounts (id VARCHAR(255) PRIMARY KEY, competition_id VARCHAR(128) NOT NULL, model_key VARCHAR(64) NOT NULL, initial_balance DECIMAL(14, 2) NOT NULL, created_at VARCHAR(64) NOT NULL, payload TEXT NOT NULL, UNIQUE (competition_id, model_key))"))
             connection.execute(
@@ -402,6 +477,10 @@ class PredictionRepository:
                     "fixture_settlements",
                     "historical_snapshots",
                     "raw_data_records",
+                    "data_sync_runs",
+                    "provider_registry",
+                    "team_identity_map",
+                    "fixture_identity_map",
                     "backtest_runs",
                     "job_runs",
                     "simulation_competitions",
@@ -481,6 +560,30 @@ class PredictionRepository:
             )
             self._ensure_index(
                 connection,
+                "idx_raw_data_source_hash",
+                "raw_data_records",
+                "CREATE INDEX idx_raw_data_source_hash ON raw_data_records (source, source_record_id, payload_hash)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_data_sync_runs_started",
+                "data_sync_runs",
+                "CREATE INDEX idx_data_sync_runs_started ON data_sync_runs (started_at, run_id)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_fixture_identity_canonical",
+                "fixture_identity_map",
+                "CREATE INDEX idx_fixture_identity_canonical ON fixture_identity_map (canonical_fixture_id)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_team_identity_canonical",
+                "team_identity_map",
+                "CREATE INDEX idx_team_identity_canonical ON team_identity_map (canonical_team_id)",
+            )
+            self._ensure_index(
+                connection,
                 "idx_backtest_runs_started",
                 "backtest_runs",
                 "CREATE INDEX idx_backtest_runs_started ON backtest_runs (started_at, run_id)",
@@ -506,6 +609,27 @@ class PredictionRepository:
         columns = {item["name"] for item in inspect(connection).get_columns(table)}
         if column not in columns:
             connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+
+    @staticmethod
+    def _backfill_raw_payload_hash(connection: Connection) -> None:
+        """Populate the hash column for pre-P5 raw rows without rewriting payloads."""
+
+        rows = connection.execute(
+            text("SELECT record_id, payload FROM raw_data_records WHERE payload_hash IS NULL")
+        ).mappings().all()
+        for row in rows:
+            try:
+                record = json.loads(row["payload"])
+                payload = record.get("payload") if isinstance(record, dict) else {}
+                payload_hash = hashlib.sha256(
+                    json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
+                ).hexdigest()
+            except (TypeError, json.JSONDecodeError):
+                continue
+            connection.execute(
+                text("UPDATE raw_data_records SET payload_hash = :payload_hash WHERE record_id = :record_id"),
+                {"record_id": row["record_id"], "payload_hash": payload_hash},
+            )
 
     def _backfill_model_columns(self, connection: Connection) -> None:
         """Classify pre-dual-model rows as legacy without changing their payloads."""
@@ -1049,26 +1173,56 @@ class PredictionRepository:
         required = ("record_id", "entity_type", "source", "source_record_id", "captured_at", "ingested_at")
         if any(not record.get(key) for key in required):
             raise ValueError("Raw data provenance fields are required")
+        payload = record.get("payload") or {}
+        computed_hash = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+        if record.get("payload_hash") and str(record["payload_hash"]) != computed_hash:
+            raise ValueError("Raw data record is immutable: payload_hash does not match payload")
+        payload_hash = computed_hash
+        record = {**record, "payload_hash": payload_hash}
         with self.engine.begin() as connection:
             existing = connection.execute(
-                text("SELECT payload FROM raw_data_records WHERE record_id = :record_id"),
+                text("SELECT source, source_record_id, payload_hash, payload FROM raw_data_records WHERE record_id = :record_id"),
                 {"record_id": record["record_id"]},
             ).mappings().first()
             if existing:
+                # Capture/ingest timestamps are observation metadata; the same
+                # source payload remains one immutable version.
+                if (
+                    str(existing.get("source")) == str(record["source"])
+                    and str(existing.get("source_record_id")) == str(record["source_record_id"])
+                    and str(existing.get("payload_hash")) == str(payload_hash)
+                ):
+                    return
                 if json.loads(existing["payload"]) != record:
                     raise ValueError("Raw data record is immutable")
                 return
+            duplicate = connection.execute(
+                text(
+                    "SELECT payload FROM raw_data_records WHERE source = :source "
+                    "AND source_record_id = :source_record_id AND payload_hash = :payload_hash LIMIT 1"
+                ),
+                {
+                    "source": record["source"],
+                    "source_record_id": record["source_record_id"],
+                    "payload_hash": payload_hash,
+                },
+            ).mappings().first()
+            if duplicate:
+                return
             connection.execute(
                 text(
-                    "INSERT INTO raw_data_records (record_id, entity_type, source, source_record_id, "
+                    "INSERT INTO raw_data_records (record_id, entity_type, source, source_record_id, payload_hash, "
                     "captured_at, ingested_at, payload) VALUES ("
-                    ":record_id, :entity_type, :source, :source_record_id, :captured_at, :ingested_at, :payload)"
+                    ":record_id, :entity_type, :source, :source_record_id, :payload_hash, :captured_at, :ingested_at, :payload)"
                 ),
                 {
                     "record_id": record["record_id"],
                     "entity_type": record["entity_type"],
                     "source": record["source"],
                     "source_record_id": record["source_record_id"],
+                    "payload_hash": payload_hash,
                     "captured_at": record["captured_at"],
                     "ingested_at": record["ingested_at"],
                     "payload": json.dumps(record, ensure_ascii=False),
@@ -1101,6 +1255,220 @@ class PredictionRepository:
                 parameters,
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
+
+    def save_data_sync_run(self, run: dict[str, Any]) -> None:
+        """Persist one append-only data synchronization run."""
+
+        required = ("run_id", "provider", "entity_type", "started_at", "status")
+        if any(not run.get(key) for key in required):
+            raise ValueError("Data sync run identity fields are required")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM data_sync_runs WHERE run_id = :run_id"),
+                {"run_id": run["run_id"]},
+            ).mappings().first()
+            if existing:
+                if json.loads(existing["payload"]) != run:
+                    raise ValueError("Data sync run is immutable")
+                return
+            connection.execute(
+                text(
+                    "INSERT INTO data_sync_runs (run_id, provider, league, entity_type, started_at, finished_at, "
+                    "status, records_seen, records_inserted, records_updated, records_rejected, error_category, errors, payload) "
+                    "VALUES (:run_id, :provider, :league, :entity_type, :started_at, :finished_at, :status, "
+                    ":records_seen, :records_inserted, :records_updated, :records_rejected, :error_category, :errors, :payload)"
+                ),
+                {
+                    "run_id": run["run_id"],
+                    "provider": run["provider"],
+                    "league": run.get("league"),
+                    "entity_type": run["entity_type"],
+                    "started_at": run["started_at"],
+                    "finished_at": run.get("finished_at"),
+                    "status": run["status"],
+                    "records_seen": int(run.get("records_seen") or 0),
+                    "records_inserted": int(run.get("records_inserted") or 0),
+                    "records_updated": int(run.get("records_updated") or 0),
+                    "records_rejected": int(run.get("records_rejected") or 0),
+                    "error_category": run.get("error_category"),
+                    "errors": json.dumps(run.get("errors") or [], ensure_ascii=False),
+                    "payload": json.dumps(run, ensure_ascii=False),
+                },
+            )
+
+    def update_data_sync_run(self, run_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Finalize a sync run while preserving its original start record."""
+
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM data_sync_runs WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            ).mappings().first()
+            if not row:
+                return None
+            payload = json.loads(row["payload"])
+            payload.update(updates)
+            connection.execute(
+                text(
+                    "UPDATE data_sync_runs SET finished_at = :finished_at, status = :status, records_seen = :records_seen, "
+                    "records_inserted = :records_inserted, records_updated = :records_updated, records_rejected = :records_rejected, "
+                    "error_category = :error_category, errors = :errors, payload = :payload WHERE run_id = :run_id"
+                ),
+                {
+                    "run_id": run_id,
+                    "finished_at": payload.get("finished_at"),
+                    "status": payload.get("status"),
+                    "records_seen": int(payload.get("records_seen") or 0),
+                    "records_inserted": int(payload.get("records_inserted") or 0),
+                    "records_updated": int(payload.get("records_updated") or 0),
+                    "records_rejected": int(payload.get("records_rejected") or 0),
+                    "error_category": payload.get("error_category"),
+                    "errors": json.dumps(payload.get("errors") or [], ensure_ascii=False),
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                },
+            )
+            return payload
+
+    def data_sync_runs(
+        self,
+        provider: str | None = None,
+        league: str | None = None,
+        entity_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List synchronization runs newest first."""
+
+        clauses = []
+        parameters: dict[str, Any] = {}
+        for column, value in (("provider", provider), ("league", league), ("entity_type", entity_type)):
+            if value:
+                clauses.append(f"{column} = :{column}")
+                parameters[column] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT payload FROM data_sync_runs" f"{where} ORDER BY started_at DESC, run_id DESC"),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 300))]]
+
+    def save_provider_registry(self, item: dict[str, Any]) -> None:
+        """Upsert provider capability metadata, which is configuration rather than history."""
+
+        with self.engine.begin() as connection:
+            values = {
+                "provider": item["provider"],
+                "capabilities": json.dumps(item.get("capabilities") or {}, ensure_ascii=False),
+                "source_priority": json.dumps(item.get("source_priority") or {}, ensure_ascii=False),
+                "updated_at": item.get("updated_at") or datetime.now(UTC).isoformat(),
+                "payload": json.dumps(item, ensure_ascii=False),
+            }
+            existing = connection.execute(
+                text("SELECT provider FROM provider_registry WHERE provider = :provider"),
+                {"provider": values["provider"]},
+            ).first()
+            if existing:
+                connection.execute(
+                    text("UPDATE provider_registry SET capabilities = :capabilities, source_priority = :source_priority, updated_at = :updated_at, payload = :payload WHERE provider = :provider"),
+                    values,
+                )
+            else:
+                connection.execute(
+                    text("INSERT INTO provider_registry (provider, capabilities, source_priority, updated_at, payload) VALUES (:provider, :capabilities, :source_priority, :updated_at, :payload)"),
+                    values,
+                )
+
+    def provider_registry(self) -> list[dict[str, Any]]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(text("SELECT payload FROM provider_registry ORDER BY provider")).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_team_identity(self, item: dict[str, Any]) -> None:
+        """Upsert one source-to-canonical team mapping."""
+
+        with self.engine.begin() as connection:
+            values = {
+                **item,
+                "season": str(item.get("season") or "unknown"),
+                "conflict": bool(item.get("conflict")),
+                "payload": json.dumps(item, ensure_ascii=False),
+            }
+            key = {field: values[field] for field in ("source", "source_team_id", "league", "season")}
+            existing = connection.execute(
+                text("SELECT source FROM team_identity_map WHERE source = :source AND source_team_id = :source_team_id AND league = :league AND season = :season"),
+                key,
+            ).first()
+            if existing:
+                connection.execute(
+                    text("UPDATE team_identity_map SET canonical_team_id = :canonical_team_id, normalized_name = :normalized_name, display_name = :display_name, identity_status = :identity_status, conflict = :conflict, payload = :payload WHERE source = :source AND source_team_id = :source_team_id AND league = :league AND season = :season"),
+                    values,
+                )
+            else:
+                connection.execute(
+                    text("INSERT INTO team_identity_map (canonical_team_id, league, season, source, source_team_id, normalized_name, display_name, identity_status, conflict, payload) VALUES (:canonical_team_id, :league, :season, :source, :source_team_id, :normalized_name, :display_name, :identity_status, :conflict, :payload)"),
+                    values,
+                )
+
+    def save_fixture_identity(self, item: dict[str, Any]) -> None:
+        """Upsert one source-to-canonical fixture mapping."""
+
+        with self.engine.begin() as connection:
+            values = {
+                **item,
+                "season": str(item.get("season") or "unknown"),
+                "conflict": bool(item.get("conflict")),
+                "payload": json.dumps(item, ensure_ascii=False),
+            }
+            key = {field: values[field] for field in ("source", "source_fixture_id", "league", "season")}
+            existing = connection.execute(
+                text("SELECT source FROM fixture_identity_map WHERE source = :source AND source_fixture_id = :source_fixture_id AND league = :league AND season = :season"),
+                key,
+            ).first()
+            if existing:
+                connection.execute(
+                    text("UPDATE fixture_identity_map SET canonical_fixture_id = :canonical_fixture_id, kickoff_at = :kickoff_at, identity_status = :identity_status, conflict = :conflict, payload = :payload WHERE source = :source AND source_fixture_id = :source_fixture_id AND league = :league AND season = :season"),
+                    values,
+                )
+            else:
+                connection.execute(
+                    text("INSERT INTO fixture_identity_map (canonical_fixture_id, league, season, source, source_fixture_id, kickoff_at, identity_status, conflict, payload) VALUES (:canonical_fixture_id, :league, :season, :source, :source_fixture_id, :kickoff_at, :identity_status, :conflict, :payload)"),
+                    values,
+                )
+
+    def team_identities(self, league: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        clauses = " WHERE league = :league" if league else ""
+        parameters = {"league": league} if league else {}
+        with self.engine.connect() as connection:
+            rows = connection.execute(text("SELECT payload FROM team_identity_map" f"{clauses} ORDER BY league, normalized_name"), parameters).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
+
+    def fixture_identities(self, league: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        clauses = " WHERE league = :league" if league else ""
+        parameters = {"league": league} if league else {}
+        with self.engine.connect() as connection:
+            rows = connection.execute(text("SELECT payload FROM fixture_identity_map" f"{clauses} ORDER BY league, kickoff_at"), parameters).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
+
+    def upsert_fixture(self, fixture: dict[str, Any], synced_at: str | None = None) -> None:
+        """Upsert one fixture without replacing another historical date window."""
+
+        synced_at = synced_at or datetime.now(UTC).replace(microsecond=0).isoformat()
+        with self.engine.begin() as connection:
+            existing = connection.execute(text("SELECT payload FROM fixtures WHERE id = :id"), {"id": fixture["id"]}).mappings().first()
+            if existing:
+                previous = json.loads(existing["payload"])
+                for field in ("evidence", "evidence_synced_at", "lineup_confirmed"):
+                    if field in previous and field not in fixture:
+                        fixture[field] = previous[field]
+                connection.execute(
+                    text("UPDATE fixtures SET provider_id = :provider_id, league_key = :league_key, fixture_date = :fixture_date, kickoff = :kickoff, payload = :payload, synced_at = :synced_at WHERE id = :id"),
+                    {"id": fixture["id"], "provider_id": fixture.get("provider_id"), "league_key": fixture["league_key"], "fixture_date": fixture["fixture_date"], "kickoff": fixture["kickoff"], "payload": json.dumps(fixture, ensure_ascii=False), "synced_at": synced_at},
+                )
+                return
+            connection.execute(
+                text("INSERT INTO fixtures (id, provider_id, league_key, fixture_date, kickoff, payload, synced_at) VALUES (:id, :provider_id, :league_key, :fixture_date, :kickoff, :payload, :synced_at)"),
+                {"id": fixture["id"], "provider_id": fixture.get("provider_id"), "league_key": fixture["league_key"], "fixture_date": fixture["fixture_date"], "kickoff": fixture["kickoff"], "payload": json.dumps(fixture, ensure_ascii=False), "synced_at": synced_at},
+            )
 
     def closing_odds_for_bet(
         self,

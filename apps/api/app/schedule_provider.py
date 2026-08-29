@@ -48,6 +48,51 @@ class TheSportsDbProvider:
                 current += timedelta(days=1)
         return sorted(results.values(), key=lambda fixture: fixture["kickoff"])
 
+    async def historical_fixtures(
+        self,
+        league: str,
+        season: int | None = None,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int = 20,
+        **_: object,
+    ) -> dict:
+        """Fetch one league/date window and stop collecting at the requested limit."""
+
+        if not self.configured:
+            raise RuntimeError("THESPORTSDB_API_KEY is not configured")
+        league_key = str(league).casefold()
+        league_id = self.LEAGUE_IDS.get(league_key)
+        if league_id is None:
+            raise ValueError(f"Unsupported TheSportsDB league: {league}")
+        start = start_date or date(int(season or datetime.now(UTC).year), 1, 1)
+        end = end_date or date(int(season or datetime.now(UTC).year), 12, 31)
+        results: dict[str, dict] = {}
+        async with httpx.AsyncClient(timeout=15) as client:
+            current = start
+            while current <= end and len(results) < max(1, int(limit)):
+                response = await client.get(
+                    f"{self.base_url}/{self.api_key}/eventsday.php",
+                    params={"d": current.isoformat(), "s": "Soccer", "l": league_id},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                for item in payload.get("events") or []:
+                    mapped = self._map_fixture(item, league_key)
+                    mapped["source"] = "thesportsdb"
+                    mapped["captured_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
+                    results[mapped["id"]] = mapped
+                    if len(results) >= max(1, int(limit)):
+                        break
+                current += timedelta(days=1)
+        return {"items": sorted(results.values(), key=lambda fixture: fixture["kickoff"]), "has_more": False}
+
+    async def historical_results(self, **kwargs: object) -> dict:
+        response = await self.historical_fixtures(**kwargs)
+        response["items"] = [item for item in response.get("items") or [] if item.get("score")]
+        return response
+
     async def enrich_fixtures(self, fixtures: list[dict], max_teams: int = 10) -> list[dict]:
         """Attach free team profiles and basic squad lists without evidence claims."""
 

@@ -61,6 +61,65 @@ class ApiFootballProvider:
                     results.append(self._map_fixture(item, league_key))
         return results
 
+    async def historical_fixtures(
+        self,
+        league: str,
+        season: int,
+        *,
+        page: int = 1,
+        limit: int = 20,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        **_: object,
+    ) -> dict:
+        """Fetch one bounded provider page for historical validation."""
+
+        if not self.configured:
+            raise RuntimeError("API_FOOTBALL_KEY is not configured")
+        league_id = self.LEAGUE_IDS.get(str(league).casefold())
+        if league_id is None:
+            raise ValueError(f"Unsupported API-Football league: {league}")
+        params = {
+            "league": league_id,
+            "season": season,
+            "page": max(1, int(page)),
+            "timezone": "UTC",
+        }
+        if start_date:
+            params["from"] = start_date.isoformat()
+        if end_date:
+            params["to"] = end_date.isoformat()
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"x-apisports-key": self.api_key},
+            timeout=15,
+        ) as client:
+            response = await client.get("/fixtures", params=params)
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("errors"):
+            raise RuntimeError(f"API-Football error for {league}: {payload['errors']}")
+        captured_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        items = []
+        for item in payload.get("response", [])[: max(1, int(limit))]:
+            mapped = self._map_fixture(item, str(league).casefold())
+            mapped["source"] = "api-football"
+            mapped["captured_at"] = captured_at
+            items.append(mapped)
+        paging = payload.get("paging") or {}
+        return {
+            "items": items,
+            "page": paging.get("current") or page,
+            "has_more": bool((paging.get("current") or page) < (paging.get("total") or page)),
+        }
+
+    async def historical_results(self, **kwargs: object) -> dict:
+        """Reuse the fixture endpoint for final scores without a second data shape."""
+
+        response = await self.historical_fixtures(**kwargs)
+        response["items"] = [item for item in response.get("items") or [] if item.get("score")]
+        return response
+
     @staticmethod
     def _map_fixture(item: dict, league_key: str) -> dict:
         fixture = item["fixture"]
