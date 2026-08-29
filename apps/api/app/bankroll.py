@@ -2,6 +2,7 @@
 
 import math
 import uuid
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -43,13 +44,14 @@ class BankrollService:
         latest = latest_reader(fixture["id"], self.model_key, self.competition_id) if callable(latest_reader) else None
         if latest is not None and latest.get("id") != prediction.get("id"):
             return None
-        _complete_candidate_decision(prediction, context)
+        working_prediction = deepcopy(prediction)
+        _complete_candidate_decision(working_prediction, context, self.repository)
         discard = getattr(self.repository, "discard_open_fixture_bets", None)
         if callable(discard):
-            discard(fixture["id"], self.model_key, self.competition_id, prediction.get("id"))
+            discard(fixture["id"], self.model_key, self.competition_id, working_prediction.get("id"))
 
         fixtures = self._league_day_fixtures(fixture)
-        candidates = self._league_day_candidates(prediction, fixture, fixtures, context)
+        candidates = self._league_day_candidates(working_prediction, fixture, fixtures, context)
         group_bets = self._league_day_bets(fixture["fixture_date"], fixture.get("league_key"))
         locked = next(
             (
@@ -149,7 +151,8 @@ class BankrollService:
                     if grouped_fixture["id"] == fixture["id"]
                     else grouped_fixture.get("evidence") or {}
                 )
-                _complete_candidate_decision(current, candidate_context)
+                current = deepcopy(current)
+                _complete_candidate_decision(current, candidate_context, self.repository)
             if current and _eligible_candidate(current, grouped_fixture):
                 rows.append((current, grouped_fixture))
         return sorted(rows, key=_candidate_rank)
@@ -287,8 +290,20 @@ def _eligible_candidate(prediction: dict[str, Any], fixture: dict[str, Any]) -> 
     )
 
 
-def _complete_candidate_decision(prediction: dict[str, Any], context: dict[str, Any]) -> None:
-    prediction["market_assessment"] = assess_markets(prediction, context.get("odds"))
+def _complete_candidate_decision(
+    prediction: dict[str, Any],
+    context: dict[str, Any],
+    repository: Any | None = None,
+) -> None:
+    odds = context.get("odds")
+    snapshot_id = prediction.get("odds_snapshot_id")
+    reader = getattr(repository, "odds_snapshot", None) if repository is not None else None
+    if snapshot_id and callable(reader):
+        snapshot = reader(str(snapshot_id))
+        if snapshot and isinstance(snapshot.get("payload"), dict):
+            odds = snapshot["payload"]
+    prediction["market_assessment"] = assess_markets(prediction, odds)
+    prediction["market_assessment"]["odds_snapshot_id"] = snapshot_id
     _apply_current_market_policy(prediction)
 
 

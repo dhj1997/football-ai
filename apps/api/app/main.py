@@ -416,9 +416,9 @@ async def fixture_detail(fixture_id: str) -> dict:
     await player_name_service.enrich(context, resolve_missing=False)
     await player_value_service.enrich(context, str(fixture.get("league_key") or ""))
     apply_player_impact(context)
-    for item in predictions.values():
+    for key, item in list(predictions.items()):
         if item:
-            apply_market_decision(item, context)
+            predictions[key] = apply_market_decision(item, context)
     prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
     model_bets = {}
     for key, item in predictions.items():
@@ -533,6 +533,11 @@ def prediction_decisions(
                 "strategy_version": experiment.get("strategy_version") or "v1",
                 "strategy_name": experiment.get("strategy_name") or "基准",
                 "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
+                "evidence_hash": prediction.get("evidence_hash"),
+                "evidence_version": prediction.get("evidence_version") or (prediction.get("ai") or {}).get("evidence_version"),
+                "odds_snapshot_id": prediction.get("odds_snapshot_id"),
+                "model_probabilities": prediction.get("model_probabilities") or prediction.get("probabilities"),
+                "forecast": prediction.get("forecast"),
                 "decision_status": decision.get("status") or "unknown",
                 "market": decision.get("market") or "no_bet",
                 "selection": decision.get("selection") or "none",
@@ -659,7 +664,7 @@ def latest_prediction(fixture_id: str) -> dict:
         raise HTTPException(status_code=404, detail="这场比赛暂无当前版本预测")
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
     apply_player_impact(context)
-    apply_market_decision(result, context)
+    result = apply_market_decision(result, context)
     result["execution"] = bankroll_service.execution_for_prediction(result, fixture)
     return public_payload(result)
 

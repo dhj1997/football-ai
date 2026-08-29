@@ -45,7 +45,7 @@ class SettlementService:
         ):
             settlement = self.repository.settlement_for_prediction(prediction["id"])
             if settlement is None:
-                probabilities = prediction["probabilities"]
+                probabilities = prediction.get("model_probabilities") or prediction["probabilities"]
                 brier = sum(
                     (float(probabilities[key]) - (1.0 if key == actual else 0.0)) ** 2
                     for key in ("home", "draw", "away")
@@ -69,8 +69,13 @@ class SettlementService:
                         "brier_score": round(brier, 4),
                         "score": {"home": home_score, "away": away_score},
                         "probabilities": probabilities,
+                        "model_probabilities": probabilities,
                         "phase": prediction.get("phase"),
+                        "prediction_created_at": prediction.get("created_at"),
                         "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
+                        "evidence_hash": prediction.get("evidence_hash"),
+                        "evidence_version": prediction.get("evidence_version") or (prediction.get("ai") or {}).get("evidence_version"),
+                        "odds_snapshot_id": prediction.get("odds_snapshot_id"),
                         "data_completeness": prediction.get("data_completeness"),
                         "decision": prediction.get("decision"),
                         "experiment": prediction.get("experiment"),
@@ -142,8 +147,14 @@ class SettlementService:
             result = bet.get("settlement_result")
             if result in asian_counts:
                 asian_counts[result] += 1
-        log_losses = [float(row["log_loss"]) for row in rows if row.get("log_loss") is not None]
-        rps_scores = [float(row["rps"]) for row in rows if row.get("rps") is not None]
+        log_losses = [
+            _log_loss(_forecast_probabilities(row), row["actual_outcome"])
+            for row in rows
+        ]
+        rps_scores = [
+            _rps(_forecast_probabilities(row), row["actual_outcome"])
+            for row in rows
+        ]
         market_rows = [
             row for row in rows
             if isinstance(row.get("market_probabilities"), dict)
@@ -157,9 +168,18 @@ class SettlementService:
             _log_loss(row["market_probabilities"], row["actual_outcome"])
             for row in market_rows
         ]
-        prediction_brier = [float(row["brier_score"]) for row in rows]
-        market_prediction_brier = [float(row["brier_score"]) for row in market_rows]
-        market_prediction_log_loss = [float(row["log_loss"]) for row in market_rows if row.get("log_loss") is not None]
+        prediction_brier = [
+            _brier(_forecast_probabilities(row), row["actual_outcome"])
+            for row in rows
+        ]
+        market_prediction_brier = [
+            _brier(_forecast_probabilities(row), row["actual_outcome"])
+            for row in market_rows
+        ]
+        market_prediction_log_loss = [
+            _log_loss(_forecast_probabilities(row), row["actual_outcome"])
+            for row in market_rows
+        ]
         settled_bets = [
             bet for bet in self.repository.bets(
                 status="settled",
@@ -200,7 +220,7 @@ class SettlementService:
             "correct_count": correct,
             "accuracy": round(correct / len(rows), 4) if rows else 0.0,
             "average_brier_score": (
-                round(sum(float(row["brier_score"]) for row in rows) / len(rows), 4)
+                round(sum(prediction_brier) / len(prediction_brier), 4)
                 if rows
                 else None
             ),
@@ -291,12 +311,18 @@ def _rps(probabilities: dict[str, Any], actual: str) -> float:
 def _market_probabilities(assessment: dict[str, Any] | None) -> dict[str, float] | None:
     rows = (assessment or {}).get("markets") or []
     one_x_two = {
-        row.get("selection"): float(row.get("de_vig_probability"))
+        row.get("selection"): float(row.get("market_probability") or row.get("de_vig_probability"))
         for row in rows
         if row.get("market") == "1x2" and row.get("selection") in {"home", "draw", "away"}
         and isinstance(row.get("de_vig_probability"), (int, float))
     }
     return one_x_two if set(one_x_two) == {"home", "draw", "away"} else None
+
+
+def _forecast_probabilities(row: dict[str, Any]) -> dict[str, Any]:
+    """Read the frozen pure-model probabilities from a settlement row."""
+
+    return row.get("model_probabilities") or row.get("probabilities") or {}
 
 
 def _portfolio_metrics(bets: list[dict[str, Any]]) -> dict[str, Any]:

@@ -4,6 +4,7 @@ import hashlib
 import json
 import uuid
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,7 +13,7 @@ from .evidence_chain import localize_evidence_players
 from .player_impact import apply_player_impact
 from .player_identity import public_payload
 from .market_decision import apply_market_decision
-from .prompt_contract import DEFAULT_PROMPT_CONTRACT
+from .prompt_contract import DEFAULT_PROMPT_CONTRACT, EVIDENCE_CONTRACT_VERSION
 
 
 STRATEGY_ID = "baseline"
@@ -36,16 +37,23 @@ class PredictionService:
         self.competition_id = competition_id
         self.player_value_service = player_value_service
 
-    async def create(self, fixture: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        localize_evidence_players(context)
-        if self.player_value_service is not None:
-            await self.player_value_service.enrich(context, str(fixture.get("league_key") or ""))
-        apply_player_impact(context)
+    async def create(
+        self,
+        fixture: dict[str, Any],
+        context: dict[str, Any],
+        snapshot_bundle: dict[str, Any] | None = None,
+        prepared_context: bool = False,
+    ) -> dict[str, Any]:
+        if not prepared_context:
+            await self.prepare_context(fixture, context)
         baseline = predict(fixture, context)
-        standings = _standings_evidence(self.repository, fixture)
-        quality = _data_completeness(context, standings)
-        snapshot = _evidence_snapshot(fixture, context, standings)
-        self.repository.save_evidence_snapshot(snapshot)
+        bundle = snapshot_bundle or self.prepare_snapshot(fixture, context)
+        snapshot = bundle["evidence"]
+        odds_snapshot = bundle.get("odds")
+        standings = bundle["standings"]
+        quality = bundle["quality"]
+        if snapshot_bundle is None:
+            self.persist_snapshot_bundle(bundle)
         model_input = _model_input(fixture, context, standings, quality)
         balance_reader = getattr(self.repository, "current_balance", None)
         current_balance = (
@@ -63,14 +71,19 @@ class PredictionService:
         }
         baseline_summary = {
             "model_version": baseline["model_version"],
-            "probabilities": baseline["probabilities"],
+            "probabilities": deepcopy(baseline["probabilities"]),
             "expected_goals": baseline["expected_goals"],
             "top_scores": baseline["top_scores"],
             "asian_handicap": baseline["asian_handicap"],
         }
         baseline["baseline"] = baseline_summary
+        baseline["model_probabilities"] = deepcopy(baseline["probabilities"])
+        baseline["prediction_timestamp"] = baseline["created_at"]
         baseline["evidence_snapshot_id"] = snapshot["id"]
         baseline["evidence_hash"] = snapshot["content_hash"]
+        baseline["evidence_version"] = snapshot.get("evidence_version") or EVIDENCE_CONTRACT_VERSION
+        baseline["odds_snapshot_id"] = odds_snapshot["id"] if odds_snapshot else None
+        baseline["prompt_version"] = DEFAULT_PROMPT_CONTRACT.version
         baseline["data_completeness"] = quality["score"]
         baseline["evidence_fields"] = quality["fields"]
         baseline["model_key"] = self.model_key
@@ -91,6 +104,7 @@ class PredictionService:
         baseline["probabilities"] = {
             key: round(value / total, 4) for key, value in probabilities.items()
         }
+        baseline["model_probabilities"] = deepcopy(baseline["probabilities"])
         provider_name = response.get("provider") or getattr(
             self.model_provider, "provider_name", "deepseek"
         )
@@ -117,7 +131,7 @@ class PredictionService:
             "provider_failures": response.get("provider_failures") or [],
         }
         _attach_experiment_metadata(baseline, self.model_key)
-        apply_market_decision(baseline, context)
+        baseline = apply_market_decision(baseline, context)
         self._save_current(baseline)
         return baseline
 
@@ -161,12 +175,39 @@ class PredictionService:
             "provider_failures": [],
         }
         prediction["forecast_confidence"] = 0.0
+        prediction["model_probabilities"] = deepcopy(prediction.get("probabilities") or {})
+        prediction["prompt_version"] = DEFAULT_PROMPT_CONTRACT.version
         _attach_experiment_metadata(prediction, self.model_key)
-        apply_market_decision(prediction, context)
+        prediction = apply_market_decision(prediction, context)
         prediction["model_key"] = self.model_key
         prediction["competition_id"] = self.competition_id
         self._save_current(prediction)
         return prediction
+
+    async def prepare_context(self, fixture: dict[str, Any], context: dict[str, Any]) -> None:
+        """Normalize shared evidence before creating any immutable snapshots."""
+
+        localize_evidence_players(context)
+        if self.player_value_service is not None:
+            await self.player_value_service.enrich(context, str(fixture.get("league_key") or ""))
+        apply_player_impact(context)
+
+    def prepare_snapshot(self, fixture: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        standings = _standings_evidence(self.repository, fixture)
+        quality = _data_completeness(context, standings)
+        return {
+            "evidence": _evidence_snapshot(fixture, context, standings),
+            "odds": _odds_snapshot(fixture, context),
+            "standings": standings,
+            "quality": quality,
+        }
+
+    def persist_snapshot_bundle(self, bundle: dict[str, Any]) -> None:
+        self.repository.save_evidence_snapshot(bundle["evidence"])
+        odds = bundle.get("odds")
+        saver = getattr(self.repository, "save_odds_snapshot", None)
+        if odds and callable(saver):
+            saver(odds)
 
     def _save_current(self, prediction: dict[str, Any]) -> None:
         self.repository.save(prediction)
@@ -192,9 +233,58 @@ def _evidence_snapshot(
         "id": str(uuid.uuid4()),
         "fixture_id": fixture["id"],
         "created_at": created_at,
+        "captured_at": created_at,
+        "evidence_version": EVIDENCE_CONTRACT_VERSION,
+        "hash_algorithm": "sha256",
         "source_synced_at": context.get("synced_at"),
         "content_hash": hashlib.sha256(encoded).hexdigest(),
-        "payload": payload,
+        "payload": deepcopy(payload),
+    }
+
+
+def _odds_snapshot(fixture: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
+    odds = context.get("odds")
+    if not isinstance(odds, dict):
+        return None
+    captured_at = str(odds.get("updated_at") or datetime.now(UTC).isoformat())
+    source = odds.get("source") or context.get("source") or "unknown"
+    bookmaker = odds.get("bookmaker")
+    quotes: list[dict[str, Any]] = []
+    for selection in ("home", "draw", "away"):
+        if odds.get(selection) is not None:
+            quotes.append(
+                {
+                    "market": "1x2",
+                    "selection": selection,
+                    "line": None,
+                    "price": odds.get(selection),
+                    "bookmaker": bookmaker,
+                    "source": source,
+                    "captured_at": captured_at,
+                }
+            )
+    line = odds.get("asian_handicap")
+    for selection, key in (("home_handicap", "asian_handicap_home_odd"), ("away_handicap", "asian_handicap_away_odd")):
+        if line is not None and odds.get(key) is not None:
+            quotes.append(
+                {
+                    "market": "asian_handicap",
+                    "selection": selection,
+                    "line": line,
+                    "price": odds.get(key),
+                    "bookmaker": bookmaker,
+                    "source": source,
+                    "captured_at": captured_at,
+                }
+            )
+    return {
+        "id": str(uuid.uuid4()),
+        "fixture_id": fixture["id"],
+        "captured_at": captured_at,
+        "source": source,
+        "bookmaker": bookmaker,
+        "quotes": quotes,
+        "payload": deepcopy(odds),
     }
 
 
@@ -221,7 +311,7 @@ def _model_input(
     quality: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "evidence_version": "fixture-evidence-v3",
+        "evidence_version": EVIDENCE_CONTRACT_VERSION,
         "fixture": {
             "id": fixture["id"],
             "league": fixture.get("league"),
