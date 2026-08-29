@@ -1,9 +1,10 @@
 """Simulated bankroll placement rules and aggregate reporting."""
 
 import uuid
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Iterable
 
 from .market_decision import assess_markets
 from .portfolio import (
@@ -19,6 +20,10 @@ from .portfolio import (
 
 
 INITIAL_BANKROLL = 1000.0
+
+
+def _candidate_value(candidate: Any, key: str) -> Any:
+    return candidate.get(key) if isinstance(candidate, Mapping) else getattr(candidate, key, None)
 
 
 class BankrollService:
@@ -104,6 +109,69 @@ class BankrollService:
             historical_clv=self._historical_clv(),
         )
         return candidates[0] if candidates else None
+
+    def candidate_for_poisson(
+        self,
+        prediction: dict[str, Any],
+        fixture: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Any | None:
+        """Build the existing Poisson baseline as a candidate-only input."""
+
+        baseline = prediction.get("baseline") or {}
+        probabilities = baseline.get("probabilities") or {}
+        if not probabilities:
+            return None
+        working_prediction = deepcopy(prediction)
+        working_prediction["model_key"] = "poisson"
+        working_prediction["model_version"] = baseline.get("model_version") or "poisson-baseline"
+        working_prediction["probabilities"] = deepcopy(probabilities)
+        working_prediction["model_probabilities"] = deepcopy(probabilities)
+        working_prediction["ai"] = {"status": "completed", "provider": "poisson"}
+        working_prediction["forecast_confidence"] = 0.0
+        working_prediction["decision"] = {
+            **(working_prediction.get("decision") or {}),
+            "model_confidence": 0.0,
+        }
+        _complete_candidate_decision(working_prediction, context, self.repository)
+        candidates = build_candidates(
+            working_prediction,
+            fixture,
+            self.portfolio_config,
+            historical_clv=self._historical_clv(),
+        )
+        return candidates[0] if candidates else None
+
+    def place_for_candidate(
+        self,
+        prediction: dict[str, Any],
+        fixture: dict[str, Any],
+        candidate: Any,
+    ) -> dict[str, Any] | None:
+        """Execute one globally selected candidate without re-ranking its model peers."""
+
+        if fixture.get("status") != "scheduled" or _fixture_started(fixture):
+            return None
+        payload = candidate.to_dict() if hasattr(candidate, "to_dict") else dict(candidate)
+        working_prediction = deepcopy(prediction)
+        working_prediction["portfolio_candidate"] = payload
+        working_prediction["decision"] = {
+            **(working_prediction.get("decision") or {}),
+            "status": "bet",
+            "market": payload.get("market"),
+            "selection": payload.get("selection"),
+        }
+        latest_reader = getattr(self.repository, "latest", None)
+        latest = latest_reader(fixture["id"], self.model_key, self.competition_id) if callable(latest_reader) else None
+        if latest is not None and latest.get("id") != prediction.get("id"):
+            return None
+        existing = self.repository.bet_for_prediction(prediction["id"])
+        if existing and _bet_matches_candidate(existing, working_prediction):
+            return existing
+        discard = getattr(self.repository, "discard_open_fixture_bets", None)
+        if callable(discard):
+            discard(fixture["id"], self.model_key, self.competition_id, prediction.get("id"))
+        return self._place_portfolio_candidate(working_prediction, fixture)
 
     def execution_for_prediction(self, prediction: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
         """Describe portfolio execution without mutating the immutable prediction."""
@@ -517,7 +585,7 @@ def _equity_curve(
 
 
 class DualBankrollService:
-    """Dispatch independent model investments and expose comparable summaries."""
+    """Aggregate model candidates before account-level simulated execution."""
 
     def __init__(self, services: dict[str, BankrollService], competition_id: str) -> None:
         self.services = services
@@ -528,9 +596,15 @@ class DualBankrollService:
         service = self.services.get(model_key)
         return service.place_for_prediction(prediction, fixture, context) if service else None
 
-    def place_for_predictions(self, predictions: list[dict[str, Any]], fixture: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
+    def place_for_predictions(
+        self,
+        predictions: list[dict[str, Any]],
+        fixture: dict[str, Any],
+        context: dict[str, Any],
+        additional_candidates: Iterable[Any] | None = None,
+    ) -> list[dict[str, Any]]:
         by_prediction_id = {str(prediction.get("id")): prediction for prediction in predictions}
-        candidates = []
+        candidate_entries: list[tuple[Any, BankrollService, dict[str, Any]]] = []
         for prediction in predictions:
             model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"
             service = self.services.get(model_key)
@@ -538,14 +612,34 @@ class DualBankrollService:
                 continue
             candidate = service.candidate_for_prediction(prediction, fixture, context)
             if candidate is not None:
-                candidates.append(candidate)
-        selected = select_best_candidates(candidates)
-        bets: list[dict[str, Any]] = []
-        for candidate in selected:
-            prediction = by_prediction_id.get(str(getattr(candidate, "prediction_id", None)))
-            if prediction is None:
+                candidate_entries.append((candidate, service, prediction))
+        # The existing baseline is a candidate input only; it never creates a prediction row.
+        for prediction in predictions:
+            baseline_service = self.services.get(str(prediction.get("model_key") or "deepseek"))
+            if baseline_service is None:
                 continue
-            if bet := self.place_for_prediction(prediction, fixture, context):
+            poisson = baseline_service.candidate_for_poisson(prediction, fixture, context)
+            if poisson is not None:
+                candidate_entries.append((poisson, baseline_service, prediction))
+                break
+        fallback_service = next(iter(self.services.values()), None)
+        fallback_prediction = predictions[0] if predictions else {}
+        for candidate in additional_candidates or []:
+            service = self.services.get(str(_candidate_value(candidate, "model_key"))) or fallback_service
+            if service is None:
+                continue
+            prediction = by_prediction_id.get(
+                str(_candidate_value(candidate, "prediction_id")),
+                fallback_prediction,
+            )
+            candidate_entries.append((candidate, service, prediction))
+        selected = select_best_candidates([entry[0] for entry in candidate_entries])
+        selected_ids = {id(candidate) for candidate in selected}
+        bets: list[dict[str, Any]] = []
+        for candidate, service, prediction in candidate_entries:
+            if id(candidate) not in selected_ids:
+                continue
+            if bet := service.place_for_candidate(prediction, fixture, candidate):
                 bets.append(bet)
         return bets
 

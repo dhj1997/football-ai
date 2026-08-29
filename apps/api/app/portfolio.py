@@ -366,12 +366,11 @@ def score_candidate_values(
     return round(score, 6)
 
 
-def candidate_sort_key(candidate: BetCandidate | Mapping[str, Any]) -> tuple[float, float, float, str, str, str]:
+def candidate_sort_key(candidate: BetCandidate | Mapping[str, Any]) -> tuple[float, float, float, str, str]:
     return (
         -(_number(_value(candidate, "candidate_score"), 0) or 0),
         -(_number(_value(candidate, "ev"), 0) or 0),
         -(_number(_value(candidate, "edge"), 0) or 0),
-        str(_value(candidate, "fixture_id") or ""),
         str(_value(candidate, "model_key") or ""),
         str(_value(candidate, "prediction_id") or ""),
     )

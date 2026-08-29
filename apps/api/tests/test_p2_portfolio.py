@@ -13,6 +13,7 @@ from app.portfolio import (
     calculate_edge,
     calculate_ev,
     cash_balance,
+    candidate_sort_key,
     equity,
     exposure_snapshot,
     is_candidate_eligible,
@@ -110,6 +111,13 @@ def test_candidate_tie_break_is_deterministic_by_model_and_prediction_id() -> No
     assert len(selected) == 1
     assert selected[0].model_key == "chatgpt"
     assert selected[0].prediction_id == "a-prediction"
+
+
+def test_candidate_sort_key_has_no_fixture_tie_break_component() -> None:
+    first = candidate(fixture_id="fixture-z", model_key="chatgpt", prediction_id="prediction-a", score=0.8)
+    second = candidate(fixture_id="fixture-a", model_key="chatgpt", prediction_id="prediction-a", score=0.8)
+
+    assert candidate_sort_key(first) == candidate_sort_key(second)
 
 
 def test_candidate_filter_rejects_ev_below_p2_threshold() -> None:

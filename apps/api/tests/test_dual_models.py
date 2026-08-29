@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from types import MethodType
 
 from app.bankroll import BankrollService, DualBankrollService
 from app.database import PredictionRepository
@@ -124,7 +125,7 @@ def test_player_names_are_resolved_once_before_both_models() -> None:
     assert started.count("player-names") == 1
 
 
-def test_global_portfolio_selects_one_cross_model_fixture_candidate(tmp_path) -> None:
+def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "dual.db"), "dual", ("deepseek", "chatgpt"))
     repository.initialize()
     context = {
@@ -142,16 +143,29 @@ def test_global_portfolio_selects_one_cross_model_fixture_candidate(tmp_path) ->
     dual = DualBankrollService(services, "dual")
     deepseek_prediction = prediction("deepseek", "prediction-deepseek")
     chatgpt_prediction = prediction("chatgpt", "prediction-chatgpt")
-    chatgpt_prediction["probabilities"]["home"] = 0.8
+
+    def fixed_candidate(self, item, _fixture, _context):
+        score = {"deepseek": 0.80, "chatgpt": 0.90}[self.model_key]
+        return candidate(self.model_key, item["id"], score)
+
+    def forbidden_placement(self, *_args):
+        raise AssertionError("global selection must bypass per-model placement")
+
+    for service in services.values():
+        service.candidate_for_prediction = MethodType(fixed_candidate, service)
+        service.place_for_prediction = MethodType(forbidden_placement, service)
+    poisson_candidate = candidate("poisson", "prediction-poisson", 0.70)
 
     bets = dual.place_for_predictions(
         [deepseek_prediction, chatgpt_prediction],
         fixture(),
         context,
+        additional_candidates=[poisson_candidate],
     )
 
     assert len(bets) == 1
     assert bets[0]["model_key"] == "chatgpt"
+    assert bets[0]["candidate_score"] == 0.90
     assert len(repository.bet_executions(competition_id="dual")) == 1
     assert repository.current_balance("deepseek", "dual") == 1000.0
     assert repository.current_balance("chatgpt", "dual") == 990.0
