@@ -603,6 +603,65 @@ class PredictionRepository:
             for _, group in sorted(groups.items())
         ]
 
+    def current_prediction_decisions(
+        self,
+        prompt_version: str | None = None,
+        fixture_date: str | None = None,
+        league_key: str | None = None,
+        model_version: str | None = None,
+        model_key: str | None = None,
+        competition_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the newest prediction per fixture/model with its cached fixture."""
+
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        for column, value in (
+            ("p.competition_id", competition_id),
+            ("p.model_key", model_key),
+            ("p.model_version", model_version),
+            ("f.fixture_date", fixture_date),
+            ("f.league_key", league_key),
+        ):
+            if value:
+                parameter = column.split(".")[-1]
+                clauses.append(f"{column} = :{parameter}")
+                parameters[parameter] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT p.payload AS prediction_payload, f.payload AS fixture_payload "
+                    "FROM predictions p LEFT JOIN fixtures f ON f.id = p.fixture_id"
+                    f"{where} ORDER BY p.created_at DESC, p.id DESC"
+                ),
+                parameters,
+            ).mappings().all()
+        groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for row in rows:
+            prediction = json.loads(row["prediction_payload"])
+            if prompt_version and (prediction.get("ai") or {}).get("prompt_version") != prompt_version:
+                continue
+            key = (
+                str(prediction.get("fixture_id") or ""),
+                str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"),
+                str((prediction.get("experiment") or {}).get("strategy_id") or "baseline"),
+                str((prediction.get("experiment") or {}).get("strategy_version") or "v1"),
+            )
+            if key not in groups:
+                groups[key] = {
+                    "prediction": prediction,
+                    "fixture": json.loads(row["fixture_payload"]) if row.get("fixture_payload") else None,
+                }
+        return sorted(
+            groups.values(),
+            key=lambda item: (
+                str((item.get("fixture") or {}).get("fixture_date") or ""),
+                str((item.get("fixture") or {}).get("kickoff") or ""),
+                str((item.get("prediction") or {}).get("id") or ""),
+            ),
+        )
+
     def prediction_retention_preview(
         self,
         prompt_version: str,

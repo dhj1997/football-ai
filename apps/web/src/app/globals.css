@@ -238,6 +238,20 @@ main { width: min(1480px, 100%); margin: 0 auto; padding: 0 clamp(16px, 3.2vw, 5
 .positive { color: var(--green) !important; }
 .negative { color: var(--red) !important; }
 .performance-section { margin-top: 22px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.evaluation-summary { overflow: hidden; }
+.evaluation-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+.evaluation-grid > div { min-width: 0; min-height: 94px; display: grid; align-content: center; gap: 5px; padding: 13px 14px; border-right: 1px solid var(--line); }
+.evaluation-grid > div:last-child { border-right: 0; }
+.evaluation-grid small { color: var(--muted); font-size: 9px; }
+.evaluation-grid strong { overflow: hidden; font-size: 18px; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.evaluation-grid span { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 9px; line-height: 1.35; text-overflow: ellipsis; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.evaluation-gate.ready strong { color: var(--green-dark); }
+.evaluation-gate.shadow strong { color: #9a6412; }
+.decision-audit-table { min-width: 1180px; }
+.decision-audit-table tbody th { width: 220px; }
+.decision-audit-table .decision-reason { max-width: 280px; color: var(--muted); text-align: left; white-space: normal; }
+.strategy-leaderboard { min-width: 1040px; }
+.strategy-leaderboard tbody th { width: 190px; }
 .performance-table { width: 100%; min-width: 900px; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
 .settlement-ledger { min-width: 1040px; }
 .performance-table th, .performance-table td { height: 50px; padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: center; font-size: 10px; }
@@ -587,6 +601,9 @@ main { width: min(1480px, 100%); margin: 0 auto; padding: 0 clamp(16px, 3.2vw, 5
   .team-section-heading { padding-inline: 12px; }
   .team-section-heading h2 { font-size: 15px; }
   .performance-summary { grid-template-columns: repeat(2, 1fr); }
+  .evaluation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .evaluation-grid > div:nth-child(2n) { border-right: 0; }
+  .evaluation-grid > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .performance-filter button { min-width: 0; flex: 1; }
   .asian-outcome-strip { grid-template-columns: repeat(5, 1fr); }
   .asian-outcome-strip > span { grid-column: 1 / -1; min-height: 34px; border-bottom: 1px solid var(--line); }

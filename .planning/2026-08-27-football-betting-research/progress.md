@@ -13,3 +13,5 @@
 - Completed the open-source review and audited the repository's stored data, baseline model, odds evidence, and settlement metrics against the research checklist.
 - Verified the live evaluation sample is currently zero and reviewed penaltyblog's exact de-vig, forecast-metric, and betting utility coverage.
 - Completed the project-specific five-layer framework, minimal implementation order, and Barcelona draw reassessment. No application behavior was changed.
+- Reviewed DotaScope's public performance and replay surfaces plus its quality-report API: independent 10,000-point experiments, versioned policies, forecast/decision/portfolio metric separation, explicit CLV/market quality gates, shadow-only status for insufficient samples, and per-map audit trails.
+- Added a DotaScope-to-football mapping and recorded non-portable Dota-specific assumptions. No application behavior was changed.

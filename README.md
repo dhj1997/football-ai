@@ -20,7 +20,8 @@
 - 赛果预测、赔率价值和执行决定分层输出；后端计算回本概率、去水概率、预期优势、不确定性和标准原因码
 - 不可变证据快照、内容哈希、提示词版本、模型版本和预测版本持久化
 - 两个独立的 1000 初始模拟账户；后端按最高正优势市场计算 10%-25% 单注仓位，每日最多 50%，且每个模型每个联赛每天最多执行一场，不借款且不连接真实投注平台
-- 逐笔模拟下注、资金流水、已实现权益曲线、赛后盈亏、ROI、命中率、Brier、数据完整度和最大回撤
+- 逐笔模拟下注、资金流水、已实现权益曲线、赛后盈亏、ROI、命中率、Brier、Log Loss、RPS、数据完整度和最大回撤
+- DotaScope 风格策略评估：每个模型使用独立基准策略实验版本，绩效页区分预测质量、市场对照、组合表现，并展示样本门禁和逐场 `bet/no_bet` 决策审计
 - 亚洲盘全赢、半赢、走水、半输、全输分类汇总
 - 预测指标支持联赛、赛季、日期和模型版本筛选
 - TheSportsDB 免费三联赛真实赛程同步、缓存与最后同步时间
@@ -83,6 +84,8 @@ Copy-Item .env.example .env
 - `API_CHATGPT_KEY`：GPT 服务端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
 - `CHATGPT_MODEL`、`CHATGPT_BASE_URL`：默认分别为 `gpt-5.6-sol` 和 `https://api.quya.org/v1`。
 - `SIMULATION_COMPETITION_ID`：当前双模型模拟竞赛标识；更换标识可开始一轮新的独立 1000 对 1000 对比，旧记录继续保留。
+- `GET /api/decisions`：返回每个模型每场比赛的最新策略决策、赔率优势、理论仓位、执行状态和不下注原因；`GET /api/metrics/predictions` 额外返回 proper score、市场对照、组合摘要和质量门禁。
+- `GET /api/strategy-performance`：返回模型 × 策略表现榜，按 ROI 后按盈亏排序；当前策略不足样本时保持影子模式。
 - `SCHEDULE_PROVIDER`：当前为 `thesportsdb`。
 - `THESPORTSDB_API_KEY`：TheSportsDB 赛程 key，默认 `123`。
 - `SCHEDULE_LOOKBACK_DAYS`：赛程同步回看天数，默认 `1`，避免免费源的请求频率限制。

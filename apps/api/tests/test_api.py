@@ -251,6 +251,150 @@ def test_simulated_bankroll_and_empty_metrics_are_public() -> None:
     assert metrics_response.json()["sample_size"] == 0
 
 
+def test_decisions_endpoint_returns_latest_auditable_no_bet_row() -> None:
+    fixture = seed_real_fixture("api-decisions", 129)
+    fixture.update(
+        {
+            "fixture_date": "2099-08-27",
+            "kickoff": "2099-08-27T12:00:00+00:00",
+            "status": "scheduled",
+            "is_demo": False,
+        }
+    )
+    context = demo_context(fixture["id"])
+    fixture["evidence"] = context
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
+    current = predict(fixture, context)
+    current.update(
+        {
+            "id": "decision-current",
+            "created_at": "2099-08-27T01:00:00+00:00",
+            "model_key": "deepseek",
+            "competition_id": repository.competition_id,
+            "ai": {
+                "status": "completed",
+                "provider": "deepseek",
+                "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
+            },
+            "model_recommendation": {"status": "no_bet", "market": "no_bet", "selection": "none"},
+            "decision": {
+                "status": "no_bet",
+                "market": "no_bet",
+                "selection": "none",
+                "considered_market": "1x2",
+                "considered_selection": "home",
+                "price": 2.1,
+                "expected_edge": 0.01,
+                "stake_fraction": 0.0,
+                "reason_codes": ["negative_edge"],
+                "reason": "优势不足，保留观察",
+            },
+            "experiment": {
+                "model_key": "deepseek",
+                "strategy_id": "baseline",
+                "strategy_version": "v1",
+                "strategy_name": "基准",
+            },
+        }
+    )
+    repository.save(current)
+
+    response = client.get(
+        "/api/decisions",
+        params={"model": "deepseek", "fixture_date": "2099-08-27"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["items"][0]["id"] == "decision-current"
+    assert payload["items"][0]["decision_status"] == "no_bet"
+    assert payload["items"][0]["execution_status"] == "no_bet"
+    assert payload["items"][0]["strategy_name"] == "基准"
+    assert payload["items"][0]["reason_codes"] == ["negative_edge"]
+    assert payload["items"][0]["considered_selection"] == "home"
+
+
+def test_decisions_endpoint_flags_a_simulation_bet_when_current_candidate_changed() -> None:
+    fixture = seed_real_fixture("api-decision-mismatch", 130)
+    fixture.update(
+        {
+            "fixture_date": "2099-08-28",
+            "kickoff": "2099-08-28T12:00:00+00:00",
+            "status": "scheduled",
+            "is_demo": False,
+        }
+    )
+    context = demo_context(fixture["id"])
+    fixture["evidence"] = context
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
+    current = predict(fixture, context)
+    current.update(
+        {
+            "id": "decision-mismatch",
+            "created_at": "2099-08-28T01:00:00+00:00",
+            "model_key": "deepseek",
+            "competition_id": repository.competition_id,
+            "ai": {"status": "completed", "provider": "deepseek", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
+            "decision": {"status": "no_bet", "market": "no_bet", "selection": "none", "reason": "当前不下注"},
+            "experiment": {"model_key": "deepseek", "strategy_id": "baseline", "strategy_version": "v1", "strategy_name": "基准"},
+        }
+    )
+    repository.save(current)
+    repository.place_bet(
+        {
+            "id": "mismatch-bet",
+            "prediction_id": current["id"],
+            "fixture_id": fixture["id"],
+            "fixture_date": fixture["fixture_date"],
+            "placed_at": "2099-08-28T01:01:00+00:00",
+            "market": "1x2",
+            "selection": "home",
+            "handicap_line": None,
+            "odds": 2.1,
+            "stake": 10.0,
+            "league_key": fixture["league_key"],
+            "kickoff": fixture["kickoff"],
+            "home_team": fixture["home_team"]["name"],
+            "away_team": fixture["away_team"]["name"],
+            "model_version": current["model_version"],
+            "is_simulated": True,
+            "model_key": "deepseek",
+            "competition_id": repository.competition_id,
+        }
+    )
+
+    response = client.get(
+        "/api/decisions",
+        params={"model": "deepseek", "fixture_date": "2099-08-28"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["execution_status"] == "bet"
+    assert response.json()["items"][0]["execution_reason"] == "已有模拟单，但当前预测候选已变化，请核对"
+
+
+def test_strategy_performance_returns_independent_model_rows() -> None:
+    response = client.get("/api/strategy-performance")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ranking"] == "ROI_THEN_PNL"
+    assert {item["model_key"] for item in payload["items"]} == {"deepseek", "chatgpt"}
+    assert all(item["strategy_id"] == "baseline" for item in payload["items"])
+    assert all(item["gate_mode"] == "SHADOW_ONLY" for item in payload["items"])
+
+
 def test_unfinished_fixture_cannot_be_settled() -> None:
     seed_real_fixture()
     response = client.post(

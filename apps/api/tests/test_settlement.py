@@ -134,3 +134,44 @@ def test_asian_settlement_is_aggregated_in_metrics(tmp_path) -> None:
     service.settle_fixture({**fixture("finished"), "score": {"home": 1, "away": 0}})
 
     assert service.metrics()["asian_handicap_results"]["half_win"] == 1
+
+
+def test_metrics_expose_forecast_market_portfolio_layers_and_quality_gate(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "quality.db"))
+    repository.initialize()
+    item = prediction()
+    item["experiment"] = {
+        "model_key": "deepseek",
+        "strategy_id": "baseline",
+        "strategy_version": "v1",
+        "strategy_name": "基准",
+        "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
+        "decision_policy_version": "football-sim-portfolio-v1",
+        "ai_view_version": "football-ai-view-v1",
+        "execution_config_version": "deepseek:baseline:v1",
+    }
+    item["market_assessment"] = {
+        "markets": [
+            {"market": "1x2", "selection": "home", "de_vig_probability": 0.55},
+            {"market": "1x2", "selection": "draw", "de_vig_probability": 0.25},
+            {"market": "1x2", "selection": "away", "de_vig_probability": 0.20},
+        ]
+    }
+    repository.save(item)
+
+    metrics = SettlementService(repository).settle_fixture(fixture("finished"))
+    report = SettlementService(repository).metrics()
+
+    evaluation = metrics["items"][0]["prediction"]
+    assert evaluation["log_loss"] == 0.5108
+    assert evaluation["rps"] == 0.0913
+    assert evaluation["market_probabilities"] == {"home": 0.55, "draw": 0.25, "away": 0.2}
+    assert report["average_log_loss"] == 0.5108
+    assert report["average_rps"] == 0.0913
+    assert report["market_comparison"]["sample_size"] == 1
+    assert report["market_comparison"]["brier_improvement"] == 0.06
+    assert report["decision_counts"] == {"bet": 1, "no_bet": 0, "insufficient_data": 0, "unknown": 0}
+    assert report["quality_gate"]["status"] == "INSUFFICIENT_SAMPLE"
+    assert report["quality_gate"]["mode"] == "SHADOW_ONLY"
+    assert "MIN_CLV_SAMPLES" in report["quality_gate"]["failures"]
+    assert report["experiment"]["execution_config_version"] == "deepseek:baseline:v1"

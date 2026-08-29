@@ -15,6 +15,12 @@ from .market_decision import apply_market_decision
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
 
 
+STRATEGY_ID = "baseline"
+STRATEGY_VERSION = "v1"
+DECISION_POLICY_VERSION = "football-sim-portfolio-v1"
+AI_VIEW_VERSION = "football-ai-view-v1"
+
+
 class PredictionService:
     def __init__(
         self,
@@ -52,7 +58,7 @@ class PredictionService:
             "model_key": self.model_key,
             "initial_balance": 1000.0,
             "current_balance": current_balance,
-            "risk_policy": {"backend_owned": True, "max_fixture_fraction": 0.02},
+            "risk_policy": {"backend_owned": True, "max_fixture_fraction": 0.25},
             "real_money_execution": False,
         }
         baseline_summary = {
@@ -110,6 +116,7 @@ class PredictionService:
             "error": None,
             "provider_failures": response.get("provider_failures") or [],
         }
+        _attach_experiment_metadata(baseline, self.model_key)
         apply_market_decision(baseline, context)
         self._save_current(baseline)
         return baseline
@@ -154,6 +161,7 @@ class PredictionService:
             "provider_failures": [],
         }
         prediction["forecast_confidence"] = 0.0
+        _attach_experiment_metadata(prediction, self.model_key)
         apply_market_decision(prediction, context)
         prediction["model_key"] = self.model_key
         prediction["competition_id"] = self.competition_id
@@ -187,6 +195,22 @@ def _evidence_snapshot(
         "source_synced_at": context.get("synced_at"),
         "content_hash": hashlib.sha256(encoded).hexdigest(),
         "payload": payload,
+    }
+
+
+def _attach_experiment_metadata(prediction: dict[str, Any], model_key: str) -> None:
+    """Identify the model/policy combination as a reproducible experiment."""
+
+    ai = prediction.get("ai") or {}
+    prediction["experiment"] = {
+        "model_key": model_key,
+        "strategy_id": STRATEGY_ID,
+        "strategy_version": STRATEGY_VERSION,
+        "strategy_name": "基准",
+        "prompt_version": ai.get("prompt_version") or DEFAULT_PROMPT_CONTRACT.version,
+        "decision_policy_version": DECISION_POLICY_VERSION,
+        "ai_view_version": AI_VIEW_VERSION,
+        "execution_config_version": f"{model_key}:{STRATEGY_ID}:{STRATEGY_VERSION}",
     }
 
 

@@ -469,6 +469,89 @@ def simulated_bets(
     return {"items": items, "count": len(items), "is_simulated": True}
 
 
+@app.get("/api/decisions")
+def prediction_decisions(
+    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    fixture_date: str | None = None,
+    model_version: str | None = None,
+    model: Literal["all", "deepseek", "chatgpt"] = "all",
+) -> dict:
+    """Return one auditable decision row per latest fixture/model prediction."""
+
+    rows = repository.current_prediction_decisions(
+        DEFAULT_PROMPT_CONTRACT.version,
+        fixture_date,
+        None if league == "all" else league,
+        model_version,
+        None if model == "all" else model,
+        settings.simulation_competition_id,
+    )
+    items: list[dict] = []
+    for row in rows:
+        prediction = row.get("prediction") or {}
+        fixture = row.get("fixture") or {}
+        decision = prediction.get("decision") or {}
+        linked_bet = repository.bet_for_prediction(prediction["id"])
+        if linked_bet:
+            current_market = decision.get("market")
+            current_selection = decision.get("selection")
+            bet_matches = (
+                current_market == linked_bet.get("market")
+                and current_selection == linked_bet.get("selection")
+            )
+            execution = {
+                "status": "bet",
+                "reason": "已进入模拟组合" if bet_matches else "已有模拟单，但当前预测候选已变化，请核对",
+                "bet_id": linked_bet["id"],
+            }
+        elif decision.get("status") in {"bet", "no_bet", "insufficient_data"}:
+            execution = bankroll_service.execution_for_prediction(prediction, fixture) if fixture else {
+                "status": decision["status"],
+                "reason": decision.get("reason") or "暂无比赛缓存",
+                "bet_id": None,
+            }
+        else:
+            execution = {
+                "status": "unknown",
+                "reason": "历史记录未保存决策快照",
+                "bet_id": None,
+            }
+        experiment = prediction.get("experiment") or {}
+        items.append(
+            {
+                "id": prediction.get("id"),
+                "fixture_id": prediction.get("fixture_id"),
+                "fixture_date": fixture.get("fixture_date"),
+                "kickoff": fixture.get("kickoff"),
+                "league_key": fixture.get("league_key"),
+                "home_team": (fixture.get("home_team") or {}).get("name"),
+                "away_team": (fixture.get("away_team") or {}).get("name"),
+                "created_at": prediction.get("created_at"),
+                "model_key": prediction.get("model_key") or experiment.get("model_key"),
+                "model_version": prediction.get("model_version"),
+                "strategy_id": experiment.get("strategy_id") or "baseline",
+                "strategy_version": experiment.get("strategy_version") or "v1",
+                "strategy_name": experiment.get("strategy_name") or "基准",
+                "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
+                "decision_status": decision.get("status") or "unknown",
+                "market": decision.get("market") or "no_bet",
+                "selection": decision.get("selection") or "none",
+                "considered_market": decision.get("considered_market"),
+                "considered_selection": decision.get("considered_selection"),
+                "price": decision.get("price"),
+                "expected_edge": decision.get("expected_edge"),
+                "stake_fraction": decision.get("stake_fraction") or 0.0,
+                "reason_codes": decision.get("reason_codes") or [],
+                "reason": decision.get("reason") or execution["reason"],
+                "execution_status": execution["status"],
+                "execution_reason": execution["reason"],
+                "bet_id": execution.get("bet_id"),
+                "model_recommendation_status": (prediction.get("model_recommendation") or {}).get("status"),
+            }
+        )
+    return {"items": public_payload(items), "count": len(items), "is_simulated": True}
+
+
 @app.get("/api/metrics/predictions")
 def prediction_metrics(
     league: Literal["all", "epl", "laliga", "csl"] = "all",
@@ -489,6 +572,54 @@ def prediction_metrics(
         None if model == "all" else model,
         settings.simulation_competition_id,
     )
+
+
+@app.get("/api/strategy-performance")
+def strategy_performance(
+    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    season: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """Return comparable model/strategy rows for the performance leaderboard."""
+
+    rows: list[dict] = []
+    for model_key in prediction_service.model_keys:
+        report = settlement_service.metrics(
+            None if league == "all" else league,
+            season,
+            start_date,
+            end_date,
+            None,
+            model_key,
+            settings.simulation_competition_id,
+        )
+        portfolio = report.get("portfolio") or {}
+        comparison = report.get("market_comparison") or {}
+        gate = report.get("quality_gate") or {}
+        rows.append(
+            {
+                "model_key": model_key,
+                "strategy_id": (report.get("experiment") or {}).get("strategy_id") or "baseline",
+                "strategy_version": (report.get("experiment") or {}).get("strategy_version") or "v1",
+                "strategy_name": (report.get("experiment") or {}).get("strategy_name") or "基准",
+                "realized_pnl": portfolio.get("realized_pnl", 0.0),
+                "roi": portfolio.get("roi", 0.0),
+                "prediction_samples": report.get("sample_size", 0),
+                "market_comparison_samples": comparison.get("sample_size", 0),
+                "average_brier": report.get("average_brier_score"),
+                "average_log_loss": report.get("average_log_loss"),
+                "brier_improvement": comparison.get("brier_improvement"),
+                "clv_samples": portfolio.get("clv_samples", 0),
+                "max_drawdown": portfolio.get("max_drawdown", 0.0),
+                "gate_status": gate.get("status", "INSUFFICIENT_SAMPLE"),
+                "gate_mode": gate.get("mode", "SHADOW_ONLY"),
+            }
+        )
+    rows.sort(key=lambda item: (-float(item.get("roi") or 0), -float(item.get("realized_pnl") or 0), str(item["model_key"])))
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return {"items": rows, "count": len(rows), "ranking": "ROI_THEN_PNL", "is_simulated": True}
 
 
 @app.get("/api/admin/jobs", dependencies=[Depends(require_admin)])

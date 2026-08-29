@@ -4,9 +4,9 @@ import { Filter, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { DataFreshness, EmptyState, ErrorState, LoadingState, PageHeader, SectionHeader, StatCard, StatusBadge, Tabs } from "@/components/ui";
-import { fetchBankroll, fetchBets, fetchPredictionMetrics } from "@/lib/api";
+import { fetchBankroll, fetchBets, fetchDecisionAudits, fetchPredictionMetrics, fetchStrategyPerformance } from "@/lib/api";
 import { formatHandicapSide } from "@/lib/handicap";
-import type { BankrollSummary, LeagueFilter, ModelKey, PredictionMetrics, SimulatedBet } from "@/lib/types";
+import type { BankrollSummary, DecisionAudit, LeagueFilter, ModelKey, PredictionMetrics, SimulatedBet, StrategyPerformance } from "@/lib/types";
 
 const leagues: Array<{ key: LeagueFilter; label: string }> = [
   { key: "all", label: "全部" }, { key: "epl", label: "英超" }, { key: "laliga", label: "西甲" }, { key: "csl", label: "中超" },
@@ -15,6 +15,8 @@ const leagues: Array<{ key: LeagueFilter; label: string }> = [
 export function PerformanceDashboard() {
   const [bankroll, setBankroll] = useState<BankrollSummary | null>(null);
   const [bets, setBets] = useState<SimulatedBet[]>([]);
+  const [decisions, setDecisions] = useState<DecisionAudit[]>([]);
+  const [strategies, setStrategies] = useState<StrategyPerformance[]>([]);
   const [metrics, setMetrics] = useState<PredictionMetrics | null>(null);
   const [selectedModel, setSelectedModel] = useState<ModelKey>("deepseek");
   const [filters, setFilters] = useState({ league: "all" as LeagueFilter, season: "", startDate: "", endDate: "", modelVersion: "" });
@@ -27,10 +29,10 @@ export function PerformanceDashboard() {
     setError(null);
     try {
       const query = metricQuery(filters);
-      const [summary, betData, metricData] = await Promise.all([
-        fetchBankroll(), fetchBets(selectedModel), fetchPredictionMetrics(query, selectedModel),
+      const [summary, betData, decisionData, strategyData, metricData] = await Promise.all([
+        fetchBankroll(), fetchBets(selectedModel), fetchDecisionAudits(query, selectedModel), fetchStrategyPerformance(query), fetchPredictionMetrics(query, selectedModel),
       ]);
-      setBankroll(summary); setBets(betData.items); setMetrics(metricData);
+      setBankroll(summary); setBets(betData.items); setDecisions(decisionData.items); setStrategies(strategyData.items); setMetrics(metricData);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "绩效数据请求失败");
     } finally {
@@ -41,10 +43,10 @@ export function PerformanceDashboard() {
   useEffect(() => {
     let active = true;
     const query = metricQuery(filters);
-    void Promise.all([fetchBankroll(), fetchBets(selectedModel), fetchPredictionMetrics(query, selectedModel)])
-      .then(([summary, betData, metricData]) => {
+    void Promise.all([fetchBankroll(), fetchBets(selectedModel), fetchDecisionAudits(query, selectedModel), fetchStrategyPerformance(query), fetchPredictionMetrics(query, selectedModel)])
+      .then(([summary, betData, decisionData, strategyData, metricData]) => {
         if (!active) return;
-        setBankroll(summary); setBets(betData.items); setMetrics(metricData);
+        setBankroll(summary); setBets(betData.items); setDecisions(decisionData.items); setStrategies(strategyData.items); setMetrics(metricData);
       })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "绩效数据请求失败"); })
       .finally(() => { if (active) setLoading(false); });
@@ -58,6 +60,14 @@ export function PerformanceDashboard() {
     if (filters.modelVersion && bet.model_version !== filters.modelVersion) return false;
     return true;
   }), [bets, filters]);
+
+  const visibleDecisions = useMemo(() => decisions.filter((item) => {
+    if (filters.league !== "all" && item.league_key !== filters.league) return false;
+    if (filters.startDate && (item.fixture_date ?? "") < filters.startDate) return false;
+    if (filters.endDate && (item.fixture_date ?? "") > filters.endDate) return false;
+    if (filters.modelVersion && item.model_version !== filters.modelVersion) return false;
+    return true;
+  }), [decisions, filters]);
 
   function applyFilters(event: FormEvent) {
     event.preventDefault();
@@ -100,14 +110,54 @@ export function PerformanceDashboard() {
           />
           <SummaryStrip bankroll={bankroll.accounts?.[selectedModel] ?? bankroll} metrics={metrics} />
           <ModelComparisonStrip bankroll={bankroll} />
+          <StrategyLeaderboard strategies={strategies} />
+          <EvaluationSummary metrics={metrics} />
           <AsianOutcomeStrip metrics={metrics} />
           <EquityCurve points={(bankroll.accounts?.[selectedModel] ?? bankroll).equity_curve} />
+          <DecisionAuditTable decisions={visibleDecisions} />
           <BetHistory bets={visibleBets} />
           <SettlementHistory metrics={metrics} />
         </>
       ) : null}
     </main>
   );
+}
+
+function StrategyLeaderboard({ strategies }: { strategies: StrategyPerformance[] }) {
+  return <section className="performance-section"><SectionHeader className="team-section-heading" eyebrow="STRATEGY LEADERBOARD" title="模型策略表现榜" meta="ROI · 盈亏 · 样本门禁" />{strategies.length ? <div className="team-table-scroll"><table className="performance-table strategy-leaderboard"><thead><tr><th>排名</th><th>模型 / 策略</th><th>ROI</th><th>盈亏</th><th>预测样本</th><th>Brier</th><th>Log Loss</th><th>市场改善</th><th>回撤</th><th>状态</th></tr></thead><tbody>{strategies.map((item) => <tr key={`${item.model_key}-${item.strategy_id}-${item.strategy_version}`}><td><strong>#{item.rank}</strong></td><th scope="row"><b>{item.model_key === "deepseek" ? "DeepSeek" : item.model_key === "chatgpt" ? "GPT-5.6 Sol" : item.model_key}</b><small>{item.strategy_name} · {item.strategy_version}</small></th><td className={item.roi > 0 ? "positive" : item.roi < 0 ? "negative" : undefined}>{percent(item.roi)}</td><td className={item.realized_pnl > 0 ? "positive" : item.realized_pnl < 0 ? "negative" : undefined}>{signedMoney(item.realized_pnl)}</td><td>{item.prediction_samples}</td><td>{item.average_brier?.toFixed(3) ?? "-"}</td><td>{item.average_log_loss?.toFixed(3) ?? "-"}</td><td>{signedMetric(item.brier_improvement)}</td><td>{percent(item.max_drawdown)}</td><td><StatusBadge variant={item.gate_status === "READY" ? "ready" : item.gate_status === "QUALITY_FAILED" ? "danger" : "partial"}>{item.gate_status === "READY" ? "通过" : item.gate_status === "QUALITY_FAILED" ? "未通过" : "影子模式"}</StatusBadge></td></tr>)}</tbody></table></div> : <EmptyState className="performance-empty">暂无策略表现样本</EmptyState>}</section>;
+}
+
+function DecisionAuditTable({ decisions }: { decisions: DecisionAudit[] }) {
+  return <section className="performance-section"><SectionHeader className="team-section-heading" eyebrow="DECISION AUDIT" title="逐场策略决策" meta={`${decisions.length} 场`} />{decisions.length ? <div className="team-table-scroll"><table className="performance-table decision-audit-table"><thead><tr><th>比赛</th><th>策略</th><th>模型建议</th><th>候选方向</th><th>后端状态</th><th>赔率 / 优势</th><th>理论仓位</th><th>原因</th></tr></thead><tbody>{decisions.map((item) => <tr key={item.id}><th scope="row"><b>{item.home_team ?? "主队"} vs {item.away_team ?? "客队"}</b><small>{(item.league_key ?? "-").toUpperCase()} · {item.fixture_date ?? "-"}</small></th><td>{item.strategy_name} · {item.strategy_version}</td><td>{item.model_recommendation_status === "bet" ? "建议下注" : item.model_recommendation_status === "no_bet" ? "建议不下注" : "未记录"}</td><td>{(item.considered_selection ?? item.selection) === "none" ? "-" : selectionLabel(item.considered_selection ?? item.selection, null)}</td><td><StatusBadge className={`ledger-status ${item.execution_status}`} variant={item.execution_status === "bet" ? "ready" : item.execution_status === "unknown" ? "partial" : "danger"}>{executionLabel(item.execution_status)}</StatusBadge></td><td>{item.price ? `${item.price.toFixed(2)} · ${signedMetric(item.expected_edge)}` : "-"}</td><td>{percent(item.stake_fraction)}</td><td className="decision-reason">{item.execution_reason}</td></tr>)}</tbody></table></div> : <EmptyState className="performance-empty">暂无可审计的策略决策</EmptyState>}</section>;
+}
+
+function EvaluationSummary({ metrics }: { metrics: PredictionMetrics }) {
+  const gate = metrics.quality_gate;
+  const comparison = metrics.market_comparison;
+  const decisions = metrics.decision_counts;
+  const portfolio = metrics.portfolio;
+  const gateLabel = gate?.status === "READY" ? "评估通过" : gate?.status === "QUALITY_FAILED" ? "质量未通过" : "样本不足 · 影子模式";
+  const failureLabels = (gate?.failures ?? []).map((failure) => ({
+    MIN_SETTLED_FIXTURES: "已结算比赛不足",
+    MIN_PREDICTION_SAMPLES: "预测样本不足",
+    MIN_MARKET_COMPARISON_SAMPLES: "市场对照样本不足",
+    MIN_CLV_SAMPLES: "CLV 样本不足",
+    MIN_ROI: "ROI 未达到门槛",
+    MIN_AVERAGE_CLV: "平均 CLV 未达到门槛",
+    MIN_BRIER_IMPROVEMENT_VS_MARKET: "Brier 未优于市场",
+    MAX_DRAWDOWN: "最大回撤超限",
+  } as Record<string, string>)[failure] ?? failure);
+  return <section className="performance-section evaluation-summary" aria-label="策略评估摘要">
+    <SectionHeader className="team-section-heading" eyebrow="STRATEGY EVALUATION" title="策略质量门禁" meta={metrics.experiment?.strategy_name ?? "基准策略"} />
+    <div className="evaluation-grid">
+      <div className={`evaluation-gate ${gate?.status === "READY" ? "ready" : "shadow"}`}><small>当前状态</small><strong>{gateLabel}</strong><span>{failureLabels.length ? failureLabels.join(" · ") : "所有评估条件已满足"}</span></div>
+      <div><small>预测样本</small><strong>{gate?.counts.prediction_samples ?? metrics.sample_size}</strong><span>命中 {percent(metrics.accuracy)} · Brier {metrics.average_brier_score?.toFixed(3) ?? "-"}</span></div>
+      <div><small>概率质量</small><strong>{metrics.average_log_loss?.toFixed(3) ?? "-"}</strong><span>Log Loss · RPS {metrics.average_rps?.toFixed(3) ?? "-"}</span></div>
+      <div><small>市场对照</small><strong>{comparison?.sample_size ?? 0}</strong><span>Brier 改善 {signedMetric(comparison?.brier_improvement)} · CLV {portfolio?.clv_samples ?? 0} 样本</span></div>
+      <div><small>决策记录</small><strong>{(decisions?.bet ?? 0) + (decisions?.no_bet ?? 0) + (decisions?.insufficient_data ?? 0) + (decisions?.unknown ?? 0)}</strong><span>下注 {decisions?.bet ?? 0} · 不下注 {decisions?.no_bet ?? 0} · 数据不足 {decisions?.insufficient_data ?? 0} · 历史未记录 {decisions?.unknown ?? 0}</span></div>
+      <div><small>组合表现</small><strong>{portfolio ? signedMoney(portfolio.realized_pnl) : "-"}</strong><span>ROI {portfolio ? percent(portfolio.roi) : "-"} · 回撤 {portfolio ? percent(portfolio.max_drawdown) : "-"}</span></div>
+    </div>
+  </section>;
 }
 
 function ModelComparisonStrip({ bankroll }: { bankroll: BankrollSummary }) {
@@ -156,11 +206,13 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
 }
 
 function SettlementHistory({ metrics }: { metrics: PredictionMetrics }) {
-  return <section className="performance-section"><SectionHeader className="team-section-heading" eyebrow="PREDICTION EVALUATION" title="预测结算记录" meta={`${metrics.sample_size} 个样本`} />{metrics.items.length ? <div className="team-table-scroll"><table className="performance-table settlement-ledger"><thead><tr><th>日期</th><th>联赛</th><th>赛季</th><th>预测</th><th>实际</th><th>比分</th><th>正确</th><th>Brier</th><th>完整度</th><th>模型</th></tr></thead><tbody>{metrics.items.map((item) => <tr key={item.id}><td>{item.fixture_date}</td><td>{item.league_key.toUpperCase()}</td><td>{item.season}</td><td>{outcomeLabel(item.predicted_outcome)}</td><td>{outcomeLabel(item.actual_outcome)}</td><td>{item.score.home} : {item.score.away}</td><td><StatusBadge className={item.correct ? "result-correct" : "result-wrong"} variant={item.correct ? "ready" : "danger"}>{item.correct ? "命中" : "未中"}</StatusBadge></td><td>{item.brier_score.toFixed(3)}</td><td>{item.data_completeness === null ? "-" : percent(item.data_completeness)}</td><td>{item.model_version}</td></tr>)}</tbody></table></div> : <EmptyState className="performance-empty">比赛结束并完成结算后显示预测样本</EmptyState>}</section>;
+  return <section className="performance-section"><SectionHeader className="team-section-heading" eyebrow="PREDICTION EVALUATION" title="预测结算记录" meta={`${metrics.sample_size} 个样本`} />{metrics.items.length ? <div className="team-table-scroll"><table className="performance-table settlement-ledger"><thead><tr><th>日期</th><th>联赛</th><th>赛季</th><th>预测</th><th>实际</th><th>比分</th><th>正确</th><th>Brier</th><th>Log Loss</th><th>RPS</th><th>完整度</th><th>模型</th></tr></thead><tbody>{metrics.items.map((item) => <tr key={item.id}><td>{item.fixture_date}</td><td>{item.league_key.toUpperCase()}</td><td>{item.season}</td><td>{outcomeLabel(item.predicted_outcome)}</td><td>{outcomeLabel(item.actual_outcome)}</td><td>{item.score.home} : {item.score.away}</td><td><StatusBadge className={item.correct ? "result-correct" : "result-wrong"} variant={item.correct ? "ready" : "danger"}>{item.correct ? "命中" : "未中"}</StatusBadge></td><td>{item.brier_score.toFixed(3)}</td><td>{item.log_loss?.toFixed(3) ?? "-"}</td><td>{item.rps?.toFixed(3) ?? "-"}</td><td>{item.data_completeness === null ? "-" : percent(item.data_completeness)}</td><td>{item.model_version}</td></tr>)}</tbody></table></div> : <EmptyState className="performance-empty">比赛结束并完成结算后显示预测样本</EmptyState>}</section>;
 }
 
 function percent(value: number) { return `${(value * 100).toFixed(1)}%`; }
 function signedMoney(value: number) { return `${value > 0 ? "+" : ""}${value.toFixed(2)}`; }
+function signedMetric(value: number | null | undefined) { return value === null || value === undefined ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(3)}`; }
+function executionLabel(value: DecisionAudit["execution_status"]) { return value === "bet" ? "已下注" : value === "no_bet" ? "未下注" : value === "insufficient_data" ? "数据不足" : "历史未记录"; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)); }
 function outcomeLabel(value: string) { return { home: "主胜", draw: "平", away: "客胜" }[value] ?? value; }
 function settlementLabel(value: SimulatedBet["settlement_result"]) { return value ? { full_win: "全赢", half_win: "半赢", push: "走水", half_loss: "半输", full_loss: "全输" }[value] : "已结"; }

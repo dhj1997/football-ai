@@ -1,4 +1,4 @@
-import type { BankrollSummary, DateFilter, Fixture, FixtureDetail, LeagueFilter, ModelKey, PredictionMetrics, SimulatedBet, StandingsResponse, TeamDetailResponse } from "./types";
+import type { BankrollSummary, DateFilter, DecisionAudit, Fixture, FixtureDetail, LeagueFilter, ModelKey, PredictionMetrics, SimulatedBet, StandingsResponse, StrategyPerformance, TeamDetailResponse } from "./types";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/backend";
 
@@ -47,6 +47,18 @@ export async function fetchBankroll(): Promise<BankrollSummary> {
 export async function fetchBets(model?: ModelKey): Promise<{ items: SimulatedBet[]; count: number; is_simulated: true }> {
   const query = model ? `?model=${model}` : "";
   return readJson(await fetch(`${apiBase}/api/bets${query}`, { cache: "no-store" }));
+}
+
+export async function fetchDecisionAudits(parameters = "", model?: ModelKey): Promise<{ items: DecisionAudit[]; count: number; is_simulated: true }> {
+  const query = new URLSearchParams(parameters);
+  if (model) query.set("model", model);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return readJson(await fetch(`${apiBase}/api/decisions${suffix}`, { cache: "no-store" }));
+}
+
+export async function fetchStrategyPerformance(parameters = ""): Promise<{ items: StrategyPerformance[]; count: number; ranking: string; is_simulated: true }> {
+  const suffix = parameters ? `?${parameters}` : "";
+  return readJson(await fetch(`${apiBase}/api/strategy-performance${suffix}`, { cache: "no-store" }));
 }
 
 export async function fetchPredictionMetrics(parameters = "", model?: ModelKey): Promise<PredictionMetrics> {

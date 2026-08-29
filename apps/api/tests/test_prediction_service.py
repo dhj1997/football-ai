@@ -122,6 +122,16 @@ async def test_successful_ai_prediction_links_immutable_evidence() -> None:
     assert result["evidence_fields"]["standings"] is True
     assert result["ai"]["prompt_version"] == DEFAULT_PROMPT_CONTRACT.version
     assert result["ai"]["evidence_version"] == "fixture-evidence-v3"
+    assert result["experiment"] == {
+        "model_key": "deepseek",
+        "strategy_id": "baseline",
+        "strategy_version": "v1",
+        "strategy_name": "基准",
+        "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
+        "decision_policy_version": "football-sim-portfolio-v1",
+        "ai_view_version": "football-ai-view-v1",
+        "execution_config_version": "deepseek:baseline:v1",
+    }
     assert result["model_recommendation"]["status"] == "no_bet"
     assert result["recommendation"]["is_deterministic"] is True
     assert "Unknown Prospect" not in str(provider.model_input)
@@ -145,5 +155,6 @@ async def test_unconfigured_ai_saves_explicit_degraded_prediction() -> None:
     assert result["ai"]["status"] == "unconfigured"
     assert result["ai"]["prompt_version"] == DEFAULT_PROMPT_CONTRACT.version
     assert result["recommendation"]["market"] == "no_bet"
+    assert result["experiment"]["strategy_id"] == "baseline"
     assert len(repository.snapshots) == 1
     assert len(repository.predictions) == 1

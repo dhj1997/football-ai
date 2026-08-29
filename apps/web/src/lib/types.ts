@@ -403,6 +403,56 @@ export interface SimulatedBet {
   balance_after_settlement: number | null;
 }
 
+export interface DecisionAudit {
+  id: string;
+  fixture_id: string;
+  fixture_date: string | null;
+  kickoff: string | null;
+  league_key: Exclude<LeagueFilter, "all"> | null;
+  home_team: string | null;
+  away_team: string | null;
+  created_at: string | null;
+  model_key: ModelKey | string | null;
+  model_version: string | null;
+  strategy_id: string;
+  strategy_version: string;
+  strategy_name: string;
+  evidence_snapshot_id: string | null;
+  decision_status: "bet" | "no_bet" | "insufficient_data" | "unknown";
+  market: "1x2" | "asian_handicap" | "no_bet";
+  selection: string;
+  considered_market: "1x2" | "asian_handicap" | "no_bet" | null;
+  considered_selection: string | null;
+  price: number | null;
+  expected_edge: number | null;
+  stake_fraction: number;
+  reason_codes: string[];
+  reason: string;
+  execution_status: "bet" | "no_bet" | "insufficient_data" | "unknown";
+  execution_reason: string;
+  bet_id: string | null;
+  model_recommendation_status: "bet" | "no_bet" | null;
+}
+
+export interface StrategyPerformance {
+  rank: number;
+  model_key: ModelKey | string;
+  strategy_id: string;
+  strategy_version: string;
+  strategy_name: string;
+  realized_pnl: number;
+  roi: number;
+  prediction_samples: number;
+  market_comparison_samples: number;
+  average_brier: number | null;
+  average_log_loss: number | null;
+  brier_improvement: number | null;
+  clv_samples: number;
+  max_drawdown: number;
+  gate_status: "READY" | "INSUFFICIENT_SAMPLE" | "QUALITY_FAILED";
+  gate_mode: "SHADOW_ONLY" | "EXECUTABLE";
+}
+
 export interface FixtureDetail {
   fixture: Fixture;
   context: EvidenceContext;
@@ -452,6 +502,29 @@ export interface PredictionSettlement {
   predicted_outcome: "home" | "draw" | "away";
   correct: boolean;
   brier_score: number;
+  log_loss?: number | null;
+  rps?: number | null;
+  market_probabilities?: { home: number; draw: number; away: number } | null;
+  decision?: {
+    status?: "bet" | "no_bet" | "insufficient_data";
+    market?: string;
+    selection?: string;
+    price?: number | null;
+    expected_edge?: number | null;
+    stake_fraction?: number;
+    reason_codes?: string[];
+    reason?: string;
+  } | null;
+  experiment?: {
+    model_key?: ModelKey | string | null;
+    strategy_id?: string | null;
+    strategy_version?: string | null;
+    strategy_name?: string | null;
+    prompt_version?: string | null;
+    decision_policy_version?: string | null;
+    ai_view_version?: string | null;
+    execution_config_version?: string | null;
+  } | null;
   data_completeness: number | null;
   score: { home: number; away: number };
 }
@@ -461,7 +534,41 @@ export interface PredictionMetrics {
   correct_count: number;
   accuracy: number;
   average_brier_score: number | null;
+  average_log_loss?: number | null;
+  average_rps?: number | null;
   average_data_completeness: number | null;
+  market_comparison?: {
+    sample_size: number;
+    market_brier_score: number | null;
+    market_log_loss: number | null;
+    brier_improvement: number | null;
+    log_loss_improvement: number | null;
+  };
+  decision_counts?: { bet: number; no_bet: number; insufficient_data: number; unknown: number };
+  portfolio?: {
+    settled_position_count: number;
+    wins: number;
+    losses: number;
+    settled_staked: number;
+    realized_pnl: number;
+    roi: number;
+    max_drawdown: number;
+    clv_samples: number;
+    average_clv: number | null;
+  };
+  quality_gate?: {
+    mode: "SHADOW_ONLY" | "EXECUTABLE";
+    status: "READY" | "INSUFFICIENT_SAMPLE" | "QUALITY_FAILED";
+    failures: string[];
+    counts: {
+      settled_fixtures: number;
+      prediction_samples: number;
+      market_comparison_samples: number;
+      clv_samples: number;
+    };
+    policy: Record<string, number>;
+  };
+  experiment?: PredictionSettlement["experiment"];
   asian_handicap_results: Record<"full_win" | "half_win" | "push" | "half_loss" | "full_loss", number>;
   filters: Record<string, string | null>;
   items: PredictionSettlement[];
