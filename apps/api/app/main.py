@@ -616,8 +616,10 @@ def strategy_performance(
                 "average_log_loss": report.get("average_log_loss"),
                 "brier_improvement": comparison.get("brier_improvement"),
                 "clv_samples": portfolio.get("clv_samples", 0),
+                "average_clv": portfolio.get("average_clv"),
                 "max_drawdown": portfolio.get("max_drawdown", 0.0),
                 "gate_status": gate.get("status", "INSUFFICIENT_SAMPLE"),
+                "quality_state": gate.get("quality_state", "SHADOW"),
                 "gate_mode": gate.get("mode", "SHADOW_ONLY"),
             }
         )

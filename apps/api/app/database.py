@@ -109,6 +109,7 @@ class PredictionRepository:
                         bookmaker VARCHAR(255) NULL,
                         source VARCHAR(255) NULL,
                         captured_at VARCHAR(64) NOT NULL,
+                        source_updated_at VARCHAR(64) NULL,
                         payload TEXT NOT NULL
                     )
                     """
@@ -201,6 +202,14 @@ class PredictionRepository:
                         status VARCHAR(32) NOT NULL,
                         model_key VARCHAR(64) NULL,
                         competition_id VARCHAR(128) NULL,
+                        bet_odds DECIMAL(14, 6) NULL,
+                        closing_odds DECIMAL(14, 6) NULL,
+                        clv DECIMAL(14, 8) NULL,
+                        closing_odds_captured_at VARCHAR(64) NULL,
+                        line_at_bet VARCHAR(64) NULL,
+                        line_at_close VARCHAR(64) NULL,
+                        line_changed BOOLEAN NULL,
+                        odds_snapshot_id VARCHAR(255) NULL,
                         payload TEXT NOT NULL
                     )
                     """
@@ -252,8 +261,17 @@ class PredictionRepository:
             self._ensure_column(connection, "evidence_snapshots", "captured_at", "VARCHAR(64) NULL")
             self._ensure_column(connection, "evidence_snapshots", "evidence_version", "VARCHAR(128) NULL")
             self._ensure_column(connection, "evidence_snapshots", "hash_algorithm", "VARCHAR(32) NULL")
+            self._ensure_column(connection, "odds_snapshots", "source_updated_at", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bets", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bets", "competition_id", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "bets", "bet_odds", "DECIMAL(14, 6) NULL")
+            self._ensure_column(connection, "bets", "closing_odds", "DECIMAL(14, 6) NULL")
+            self._ensure_column(connection, "bets", "clv", "DECIMAL(14, 8) NULL")
+            self._ensure_column(connection, "bets", "closing_odds_captured_at", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "bets", "line_at_bet", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "bets", "line_at_close", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "bets", "line_changed", "BOOLEAN NULL")
+            self._ensure_column(connection, "bets", "odds_snapshot_id", "VARCHAR(255) NULL")
             self._ensure_column(connection, "bankroll_transactions", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bankroll_transactions", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "fixture_settlements", "model_key", "VARCHAR(64) NULL")
@@ -350,6 +368,7 @@ class PredictionRepository:
             )
             self._backfill_model_columns(connection)
             self._backfill_prediction_integrity_columns(connection)
+            self._backfill_bet_evaluation_columns(connection)
             self._ensure_simulation_accounts(connection)
             if self.is_sqlite:
                 self._migrate_provider_id_constraint(connection)
@@ -450,6 +469,41 @@ class PredictionRepository:
                     "captured_at": payload.get("captured_at") or payload.get("created_at"),
                     "evidence_version": payload.get("evidence_version"),
                     "hash_algorithm": payload.get("hash_algorithm"),
+                },
+            )
+
+    @staticmethod
+    def _backfill_bet_evaluation_columns(connection: Connection) -> None:
+        """Populate additive CLV columns from existing bet JSON payloads."""
+
+        rows = connection.execute(
+            text(
+                "SELECT id, payload FROM bets WHERE bet_odds IS NULL AND closing_odds IS NULL "
+                "AND clv IS NULL AND odds_snapshot_id IS NULL"
+            )
+        ).mappings().all()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            connection.execute(
+                text(
+                    "UPDATE bets SET bet_odds = :bet_odds, closing_odds = :closing_odds, clv = :clv, "
+                    "closing_odds_captured_at = :closing_odds_captured_at, line_at_bet = :line_at_bet, "
+                    "line_at_close = :line_at_close, line_changed = :line_changed, odds_snapshot_id = :odds_snapshot_id "
+                    "WHERE id = :id"
+                ),
+                {
+                    "id": row["id"],
+                    "bet_odds": payload.get("bet_odds") or payload.get("odds"),
+                    "closing_odds": payload.get("closing_odds"),
+                    "clv": payload.get("clv"),
+                    "closing_odds_captured_at": payload.get("closing_odds_captured_at"),
+                    "line_at_bet": str(payload["line_at_bet"]) if payload.get("line_at_bet") is not None else None,
+                    "line_at_close": str(payload["line_at_close"]) if payload.get("line_at_close") is not None else None,
+                    "line_changed": payload.get("line_changed"),
+                    "odds_snapshot_id": payload.get("odds_snapshot_id"),
                 },
             )
 
@@ -677,7 +731,7 @@ class PredictionRepository:
         with self.engine.begin() as connection:
             existing = connection.execute(
                 text(
-                    "SELECT fixture_id, captured_at, bookmaker, source, payload "
+                    "SELECT fixture_id, captured_at, source_updated_at, bookmaker, source, payload "
                     "FROM odds_snapshots WHERE snapshot_id = :snapshot_id ORDER BY id"
                 ),
                 {"snapshot_id": snapshot["id"]},
@@ -688,6 +742,7 @@ class PredictionRepository:
                     existing_quotes != quotes
                     or existing[0]["fixture_id"] != snapshot["fixture_id"]
                     or existing[0]["captured_at"] != snapshot["captured_at"]
+                    or existing[0]["source_updated_at"] != snapshot.get("source_updated_at")
                     or existing[0]["bookmaker"] != snapshot.get("bookmaker")
                     or existing[0]["source"] != snapshot.get("source")
                 ):
@@ -700,10 +755,10 @@ class PredictionRepository:
                         """
                         INSERT INTO odds_snapshots (
                             id, snapshot_id, fixture_id, market, selection, line, price,
-                            bookmaker, source, captured_at, payload
+                            bookmaker, source, captured_at, source_updated_at, payload
                         ) VALUES (
                             :id, :snapshot_id, :fixture_id, :market, :selection, :line, :price,
-                            :bookmaker, :source, :captured_at, :payload
+                            :bookmaker, :source, :captured_at, :source_updated_at, :payload
                         )
                         """
                     ),
@@ -718,6 +773,7 @@ class PredictionRepository:
                         "bookmaker": quote.get("bookmaker"),
                         "source": quote.get("source"),
                         "captured_at": quote.get("captured_at") or snapshot["captured_at"],
+                        "source_updated_at": quote.get("source_updated_at") or snapshot.get("source_updated_at"),
                         "payload": json.dumps(quote, ensure_ascii=False),
                     },
                 )
@@ -734,7 +790,7 @@ class PredictionRepository:
         with self.engine.connect() as connection:
             rows = connection.execute(
                 text(
-                    "SELECT snapshot_id, fixture_id, captured_at, bookmaker, source, payload "
+                    "SELECT snapshot_id, fixture_id, captured_at, source_updated_at, bookmaker, source, payload "
                     "FROM odds_snapshots WHERE snapshot_id = :snapshot_id ORDER BY id"
                 ),
                 {"snapshot_id": snapshot_id},
@@ -746,6 +802,7 @@ class PredictionRepository:
             "id": snapshot_id,
             "fixture_id": rows[0]["fixture_id"],
             "captured_at": rows[0]["captured_at"],
+            "source_updated_at": rows[0]["source_updated_at"],
             "bookmaker": rows[0]["bookmaker"],
             "source": rows[0]["source"],
             "quotes": quotes,
@@ -770,6 +827,44 @@ class PredictionRepository:
                 parameters,
             ).mappings().all()
         return [item for row in ids if (item := self.odds_snapshot(row["snapshot_id"] or ""))]
+
+    def closing_odds_for_bet(
+        self,
+        fixture_id: str,
+        kickoff: str,
+        bet: dict[str, Any],
+        allow_line_change: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return the latest matching odds capture strictly before kickoff."""
+
+        kickoff_at = _parse_datetime(kickoff)
+        if kickoff_at is None:
+            return None
+        market = str(bet.get("market") or "")
+        selection = str(bet.get("selection") or "")
+        target_line = bet.get("line_at_bet")
+        if target_line is None:
+            target_line = bet.get("handicap_line")
+        target_bookmaker = bet.get("bookmaker")
+        best: tuple[datetime, dict[str, Any]] | None = None
+        fallback_line_best: tuple[datetime, dict[str, Any]] | None = None
+        for snapshot in self.odds_snapshots(fixture_id):
+            for quote in snapshot.get("quotes") or []:
+                if quote.get("market") != market or quote.get("selection") != selection:
+                    continue
+                if target_bookmaker and quote.get("bookmaker") != target_bookmaker:
+                    continue
+                captured_at = _parse_datetime(quote.get("captured_at"))
+                if captured_at is None or captured_at >= kickoff_at:
+                    continue
+                candidate = (captured_at, {**quote, "snapshot_id": snapshot.get("id")})
+                if _same_line(quote.get("line"), target_line):
+                    if best is None or captured_at > best[0]:
+                        best = candidate
+                elif allow_line_change and market == "asian_handicap":
+                    if fallback_line_best is None or captured_at > fallback_line_best[0]:
+                        fallback_line_best = candidate
+        return (best or fallback_line_best)[1] if (best or fallback_line_best) else None
 
     def update_prediction(
         self,
@@ -1704,13 +1799,24 @@ class PredictionRepository:
                 "net_profit": None,
                 "balance_after_settlement": None,
             }
+            if payload.get("line_at_bet") is None and payload.get("handicap_line") is not None:
+                payload["line_at_bet"] = payload["handicap_line"]
             connection.execute(
                 text(
                     "INSERT INTO bets "
-                    "(id, prediction_id, fixture_id, fixture_date, placed_at, status, model_key, competition_id, payload) "
-                    "VALUES (:id, :prediction_id, :fixture_id, :fixture_date, :placed_at, 'placed', :model_key, :competition_id, :payload)"
+                    "(id, prediction_id, fixture_id, fixture_date, placed_at, status, model_key, competition_id, "
+                    "bet_odds, closing_odds, clv, closing_odds_captured_at, line_at_bet, line_at_close, "
+                    "line_changed, odds_snapshot_id, payload) "
+                    "VALUES (:id, :prediction_id, :fixture_id, :fixture_date, :placed_at, 'placed', :model_key, :competition_id, "
+                    ":bet_odds, NULL, NULL, NULL, :line_at_bet, NULL, NULL, :odds_snapshot_id, :payload)"
                 ),
-                {**payload, "payload": json.dumps(payload, ensure_ascii=False)},
+                {
+                    **payload,
+                    "bet_odds": payload.get("bet_odds") or payload.get("odds"),
+                    "line_at_bet": str(payload["line_at_bet"]) if payload.get("line_at_bet") is not None else None,
+                    "odds_snapshot_id": payload.get("odds_snapshot_id"),
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                },
             )
             transaction = {
                 "id": f"stake:{payload['id']}",
@@ -1813,6 +1919,7 @@ class PredictionRepository:
         settled_at: str,
         settlement_result: str,
         return_amount: float,
+        settlement_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Atomically mark a bet settled and append its return transaction once."""
 
@@ -1839,11 +1946,31 @@ class PredictionRepository:
                     "return_amount": amount,
                     "net_profit": round(amount - float(payload["stake"]), 2),
                     "balance_after_settlement": balance_after,
+                    **(settlement_metadata or {}),
                 }
             )
             connection.execute(
                 text("UPDATE bets SET status = 'settled', payload = :payload WHERE id = :bet_id"),
                 {"payload": json.dumps(payload, ensure_ascii=False), "bet_id": bet_id},
+            )
+            connection.execute(
+                text(
+                    "UPDATE bets SET bet_odds = :bet_odds, closing_odds = :closing_odds, clv = :clv, "
+                    "closing_odds_captured_at = :closing_odds_captured_at, line_at_bet = :line_at_bet, "
+                    "line_at_close = :line_at_close, line_changed = :line_changed, odds_snapshot_id = :odds_snapshot_id "
+                    "WHERE id = :bet_id"
+                ),
+                {
+                    "bet_id": bet_id,
+                    "bet_odds": payload.get("bet_odds") or payload.get("odds"),
+                    "closing_odds": payload.get("closing_odds"),
+                    "clv": payload.get("clv"),
+                    "closing_odds_captured_at": payload.get("closing_odds_captured_at"),
+                    "line_at_bet": str(payload["line_at_bet"]) if payload.get("line_at_bet") is not None else None,
+                    "line_at_close": str(payload["line_at_close"]) if payload.get("line_at_close") is not None else None,
+                    "line_changed": payload.get("line_changed"),
+                    "odds_snapshot_id": payload.get("odds_snapshot_id"),
+                },
             )
             transaction = {
                 "id": f"return:{bet_id}",
@@ -2044,7 +2171,7 @@ def _odds_payload_from_quotes(quotes: list[dict[str, Any]]) -> dict[str, Any]:
             payload[key] = quote.get("price")
         payload["bookmaker"] = quote.get("bookmaker")
         payload["source"] = quote.get("source")
-        payload["updated_at"] = quote.get("captured_at")
+        payload["updated_at"] = quote.get("source_updated_at") or quote.get("captured_at")
     return payload
 
 
@@ -2054,7 +2181,8 @@ def _odds_snapshot_document(fixture_id: str, context: dict[str, Any]) -> dict[st
     odds = context.get("odds")
     if not isinstance(odds, dict):
         return None
-    captured_at = str(odds.get("updated_at") or datetime.now(UTC).isoformat())
+    captured_at = datetime.now(UTC).isoformat()
+    source_updated_at = str(odds.get("updated_at")) if odds.get("updated_at") else None
     source = odds.get("source") or context.get("source") or "unknown"
     bookmaker = odds.get("bookmaker")
     quotes: list[dict[str, Any]] = []
@@ -2069,6 +2197,7 @@ def _odds_snapshot_document(fixture_id: str, context: dict[str, Any]) -> dict[st
                     "bookmaker": bookmaker,
                     "source": source,
                     "captured_at": captured_at,
+                    "source_updated_at": source_updated_at,
                 }
             )
     line = odds.get("asian_handicap")
@@ -2083,6 +2212,7 @@ def _odds_snapshot_document(fixture_id: str, context: dict[str, Any]) -> dict[st
                     "bookmaker": bookmaker,
                     "source": source,
                     "captured_at": captured_at,
+                    "source_updated_at": source_updated_at,
                 }
             )
     if not quotes:
@@ -2092,8 +2222,28 @@ def _odds_snapshot_document(fixture_id: str, context: dict[str, Any]) -> dict[st
         "id": f"odds:{fixture_id}:{hashlib.sha256(encoded).hexdigest()[:32]}",
         "fixture_id": fixture_id,
         "captured_at": captured_at,
+        "source_updated_at": source_updated_at,
         "source": source,
         "bookmaker": bookmaker,
         "quotes": quotes,
         "payload": odds,
     }
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def _same_line(left: Any, right: Any) -> bool:
+    if left is None and right is None:
+        return True
+    try:
+        return abs(float(left) - float(right)) <= 1e-8
+    except (TypeError, ValueError):
+        return str(left) == str(right)
