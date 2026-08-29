@@ -413,7 +413,15 @@ def build_performance_profiles(
     """Build global/league/market profiles from P1 evaluation rows only."""
 
     grouped: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    as_of_at = parse_timestamp(as_of)
     for row in rows:
+        if as_of_at:
+            row_times = [
+                parse_timestamp(row.get("prediction_created_at")),
+                parse_timestamp(row.get("settled_at")),
+            ]
+            if any(row_at and row_at > as_of_at for row_at in row_times):
+                continue
         model = str(row.get("model_key") or "")
         probabilities = normalize_probabilities(row.get("model_probabilities") or row.get("probabilities"))
         actual = row.get("actual_outcome")
@@ -566,8 +574,22 @@ def fit_temperature(
     *,
     probability_reader: Callable[[Mapping[str, Any]], Mapping[str, Any] | None] | None = None,
     trained_at: Any | None = None,
+    as_of: Any | None = None,
 ) -> dict[str, Any]:
     rows = list(rows)
+    as_of_at = parse_timestamp(as_of)
+    if as_of_at:
+        rows = [
+            row
+            for row in rows
+            if all(
+                not row_at or row_at <= as_of_at
+                for row_at in (
+                    parse_timestamp(row.get("prediction_created_at")),
+                    parse_timestamp(row.get("settled_at")),
+                )
+            )
+        ]
     if len(rows) < MIN_CALIBRATION_SAMPLES:
         return {
             "status": "calibration_unavailable",
@@ -679,8 +701,14 @@ def build_backtest_rows(settlements: Iterable[Mapping[str, Any]]) -> list[dict[s
             result.append(
                 {
                     "fixture_id": fixture_id,
+                    "prediction_id": primary.get("prediction_id"),
                     "league_key": primary.get("league_key"),
                     "prediction_created_at": primary.get("prediction_created_at"),
+                    "evaluation_timestamp": primary.get("settled_at"),
+                    "model_version": primary.get("model_version"),
+                    "feature_version": primary.get("feature_version"),
+                    "ensemble_version": primary.get("ensemble_version"),
+                    "calibration_version": primary.get("calibration_version"),
                     "actual_outcome": primary.get("actual_outcome"),
                     "base_predictions": base,
                     "existing_probabilities": primary.get("model_probabilities") or primary.get("probabilities"),

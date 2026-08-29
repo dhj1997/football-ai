@@ -68,6 +68,10 @@ def test_p3_intelligence_endpoints_return_read_only_contracts() -> None:
     assert client.get("/api/calibration").status_code == 200
     assert client.get("/api/backtest").status_code == 200
     assert client.get("/api/ensemble/missing-fixture").status_code == 404
+    assert client.get("/api/data-quality").status_code == 200
+    assert client.get("/api/historical-snapshots").status_code == 200
+    assert client.get("/api/backtest/runs").status_code == 200
+    assert client.get("/api/backtest/runs/missing-run").status_code == 404
 
 
 def test_public_fixture_payload_removes_supplier_player_names() -> None:

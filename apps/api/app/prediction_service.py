@@ -14,7 +14,8 @@ from .player_impact import apply_player_impact
 from .player_identity import public_payload
 from .market_decision import apply_market_decision
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT, EVIDENCE_CONTRACT_VERSION
-from .prediction_intelligence import build_feature_snapshot
+from .prediction_intelligence import build_feature_snapshot, parse_timestamp
+from .historical_validation import build_raw_data_record
 
 
 STRATEGY_ID = "baseline"
@@ -44,10 +45,14 @@ class PredictionService:
         context: dict[str, Any],
         snapshot_bundle: dict[str, Any] | None = None,
         prepared_context: bool = False,
+        prediction_timestamp: Any | None = None,
     ) -> dict[str, Any]:
         if not prepared_context:
             await self.prepare_context(fixture, context)
         baseline = predict(fixture, context)
+        historical_at = parse_timestamp(prediction_timestamp)
+        if historical_at:
+            baseline["created_at"] = historical_at.isoformat()
         bundle = snapshot_bundle or self.prepare_snapshot(fixture, context)
         snapshot = bundle["evidence"]
         odds_snapshot = bundle.get("odds")
@@ -217,6 +222,40 @@ class PredictionService:
         saver = getattr(self.repository, "save_odds_snapshot", None)
         if odds and callable(saver):
             saver(odds)
+        raw_saver = getattr(self.repository, "save_raw_data_record", None)
+        if not callable(raw_saver):
+            return
+        for entity_type, source, source_id, payload, captured_at in (
+            (
+                "evidence",
+                (bundle["evidence"].get("payload") or {}).get("context", {}).get("source") or "evidence",
+                bundle["evidence"].get("id"),
+                bundle["evidence"].get("payload") or {},
+                bundle["evidence"].get("captured_at") or bundle["evidence"].get("created_at"),
+            ),
+            (
+                "odds",
+                odds.get("source") or "odds",
+                odds.get("snapshot_id") or odds.get("id"),
+                odds,
+                odds.get("captured_at"),
+            ) if odds else (None, None, None, None, None),
+        ):
+            if not entity_type or not source_id or not captured_at:
+                continue
+            try:
+                raw_saver(
+                    build_raw_data_record(
+                        entity_type,
+                        str(source),
+                        source_id,
+                        payload if isinstance(payload, dict) else {},
+                        captured_at,
+                    )
+                )
+            except Exception:
+                # Raw provenance is additive; preserve the existing prediction path on failure.
+                continue
 
     def _save_current(self, prediction: dict[str, Any]) -> None:
         self.repository.save(prediction)

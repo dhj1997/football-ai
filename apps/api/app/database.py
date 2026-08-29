@@ -279,6 +279,61 @@ class PredictionRepository:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS historical_snapshots (
+                        snapshot_id VARCHAR(255) PRIMARY KEY,
+                        canonical_fixture_id VARCHAR(255) NOT NULL,
+                        fixture_id VARCHAR(255) NOT NULL,
+                        as_of VARCHAR(64) NOT NULL,
+                        snapshot_version VARCHAR(128) NOT NULL,
+                        dataset_version VARCHAR(128) NULL,
+                        evidence_snapshot_id VARCHAR(255) NULL,
+                        odds_snapshot_id VARCHAR(255) NULL,
+                        data_quality_score DECIMAL(8, 6) NULL,
+                        created_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS raw_data_records (
+                        record_id VARCHAR(255) PRIMARY KEY,
+                        entity_type VARCHAR(64) NOT NULL,
+                        source VARCHAR(255) NOT NULL,
+                        source_record_id VARCHAR(255) NOT NULL,
+                        captured_at VARCHAR(64) NOT NULL,
+                        ingested_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS backtest_runs (
+                        run_id VARCHAR(255) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        started_at VARCHAR(64) NOT NULL,
+                        finished_at VARCHAR(64) NULL,
+                        dataset_version VARCHAR(128) NULL,
+                        run_config TEXT NOT NULL,
+                        code_version VARCHAR(128) NULL,
+                        model_version VARCHAR(128) NULL,
+                        feature_version VARCHAR(128) NULL,
+                        ensemble_version VARCHAR(128) NULL,
+                        calibration_version VARCHAR(128) NULL,
+                        status VARCHAR(32) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
             self._ensure_column(connection, "predictions", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "predictions", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "predictions", "prompt_version", "VARCHAR(128) NULL")
@@ -345,6 +400,9 @@ class PredictionRepository:
                     "bet_executions",
                     "bankroll_transactions",
                     "fixture_settlements",
+                    "historical_snapshots",
+                    "raw_data_records",
+                    "backtest_runs",
                     "job_runs",
                     "simulation_competitions",
                     "simulation_accounts",
@@ -408,6 +466,24 @@ class PredictionRepository:
                 "idx_job_runs_name_started",
                 "job_runs",
                 "CREATE INDEX idx_job_runs_name_started ON job_runs (job_name, started_at)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_historical_snapshots_fixture_as_of",
+                "historical_snapshots",
+                "CREATE INDEX idx_historical_snapshots_fixture_as_of ON historical_snapshots (fixture_id, as_of)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_raw_data_entity_captured",
+                "raw_data_records",
+                "CREATE INDEX idx_raw_data_entity_captured ON raw_data_records (entity_type, captured_at)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_backtest_runs_started",
+                "backtest_runs",
+                "CREATE INDEX idx_backtest_runs_started ON backtest_runs (started_at, run_id)",
             )
             self._backfill_model_columns(connection)
             self._backfill_prediction_integrity_columns(connection)
@@ -749,6 +825,25 @@ class PredictionRepository:
             ).mappings().first()
         return json.loads(row["payload"]) if row else None
 
+    def evidence_snapshots(self, fixture_id: str | None = None) -> list[dict[str, Any]]:
+        """List immutable evidence snapshots in capture order."""
+
+        clauses = []
+        parameters: dict[str, Any] = {}
+        if fixture_id:
+            clauses.append("fixture_id = :fixture_id")
+            parameters["fixture_id"] = fixture_id
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM evidence_snapshots"
+                    f"{where} ORDER BY captured_at, created_at, id"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
     def save_odds_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Persist one append-only odds capture, represented by quote rows."""
 
@@ -870,6 +965,142 @@ class PredictionRepository:
                 parameters,
             ).mappings().all()
         return [item for row in ids if (item := self.odds_snapshot(row["snapshot_id"] or ""))]
+
+    def save_historical_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Insert one immutable historical reconstruction."""
+
+        required = ("snapshot_id", "canonical_fixture_id", "fixture_id", "as_of", "snapshot_version")
+        if any(not snapshot.get(key) for key in required):
+            raise ValueError("Historical snapshot identity fields are required")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM historical_snapshots WHERE snapshot_id = :snapshot_id"),
+                {"snapshot_id": snapshot["snapshot_id"]},
+            ).mappings().first()
+            if existing:
+                if json.loads(existing["payload"]) != snapshot:
+                    raise ValueError("Historical snapshot is immutable")
+                return
+            connection.execute(
+                text(
+                    "INSERT INTO historical_snapshots ("
+                    "snapshot_id, canonical_fixture_id, fixture_id, as_of, snapshot_version, "
+                    "dataset_version, evidence_snapshot_id, odds_snapshot_id, data_quality_score, "
+                    "created_at, payload) VALUES ("
+                    ":snapshot_id, :canonical_fixture_id, :fixture_id, :as_of, :snapshot_version, "
+                    ":dataset_version, :evidence_snapshot_id, :odds_snapshot_id, :data_quality_score, "
+                    ":created_at, :payload)"
+                ),
+                {
+                    "snapshot_id": snapshot["snapshot_id"],
+                    "canonical_fixture_id": snapshot["canonical_fixture_id"],
+                    "fixture_id": snapshot["fixture_id"],
+                    "as_of": snapshot["as_of"],
+                    "snapshot_version": snapshot["snapshot_version"],
+                    "dataset_version": snapshot.get("dataset_version"),
+                    "evidence_snapshot_id": snapshot.get("evidence_snapshot_id"),
+                    "odds_snapshot_id": snapshot.get("odds_snapshot_id"),
+                    "data_quality_score": snapshot.get("data_quality_score"),
+                    "created_at": snapshot.get("created_at") or datetime.now(UTC).isoformat(),
+                    "payload": json.dumps(snapshot, ensure_ascii=False),
+                },
+            )
+
+    def historical_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        """Return one immutable historical snapshot."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM historical_snapshots WHERE snapshot_id = :snapshot_id"),
+                {"snapshot_id": snapshot_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def historical_snapshots(
+        self,
+        fixture_id: str | None = None,
+        as_of: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """List immutable historical snapshots with bounded read-only paging."""
+
+        clauses = []
+        parameters: dict[str, Any] = {}
+        if fixture_id:
+            clauses.append("fixture_id = :fixture_id")
+            parameters["fixture_id"] = fixture_id
+        if as_of:
+            clauses.append("as_of <= :as_of")
+            parameters["as_of"] = as_of
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM historical_snapshots"
+                    f"{where} ORDER BY as_of, snapshot_id"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 500))]]
+
+    def save_raw_data_record(self, record: dict[str, Any]) -> None:
+        """Insert one append-only raw source record."""
+
+        required = ("record_id", "entity_type", "source", "source_record_id", "captured_at", "ingested_at")
+        if any(not record.get(key) for key in required):
+            raise ValueError("Raw data provenance fields are required")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM raw_data_records WHERE record_id = :record_id"),
+                {"record_id": record["record_id"]},
+            ).mappings().first()
+            if existing:
+                if json.loads(existing["payload"]) != record:
+                    raise ValueError("Raw data record is immutable")
+                return
+            connection.execute(
+                text(
+                    "INSERT INTO raw_data_records (record_id, entity_type, source, source_record_id, "
+                    "captured_at, ingested_at, payload) VALUES ("
+                    ":record_id, :entity_type, :source, :source_record_id, :captured_at, :ingested_at, :payload)"
+                ),
+                {
+                    "record_id": record["record_id"],
+                    "entity_type": record["entity_type"],
+                    "source": record["source"],
+                    "source_record_id": record["source_record_id"],
+                    "captured_at": record["captured_at"],
+                    "ingested_at": record["ingested_at"],
+                    "payload": json.dumps(record, ensure_ascii=False),
+                },
+            )
+
+    def raw_data_records(
+        self,
+        entity_type: str | None = None,
+        source: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """List raw source records without normalization or overwrite."""
+
+        clauses = []
+        parameters: dict[str, Any] = {}
+        if entity_type:
+            clauses.append("entity_type = :entity_type")
+            parameters["entity_type"] = entity_type
+        if source:
+            clauses.append("source = :source")
+            parameters["source"] = source
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM raw_data_records"
+                    f"{where} ORDER BY captured_at, record_id"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
 
     def closing_odds_for_bet(
         self,
@@ -2306,6 +2537,73 @@ class PredictionRepository:
                 parameters,
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows]
+
+    def save_backtest_run(self, run: dict[str, Any]) -> None:
+        """Persist one reproducible backtest run record."""
+
+        required = ("run_id", "name", "started_at", "status")
+        if any(not run.get(key) for key in required):
+            raise ValueError("Backtest run identity fields are required")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM backtest_runs WHERE run_id = :run_id"),
+                {"run_id": run["run_id"]},
+            ).mappings().first()
+            if existing:
+                if json.loads(existing["payload"]) != run:
+                    raise ValueError("Backtest run is immutable")
+                return
+            connection.execute(
+                text(
+                    "INSERT INTO backtest_runs ("
+                    "run_id, name, started_at, finished_at, dataset_version, run_config, "
+                    "code_version, model_version, feature_version, ensemble_version, "
+                    "calibration_version, status, payload) VALUES ("
+                    ":run_id, :name, :started_at, :finished_at, :dataset_version, :run_config, "
+                    ":code_version, :model_version, :feature_version, :ensemble_version, "
+                    ":calibration_version, :status, :payload)"
+                ),
+                {
+                    "run_id": run["run_id"],
+                    "name": run["name"],
+                    "started_at": run["started_at"],
+                    "finished_at": run.get("finished_at"),
+                    "dataset_version": run.get("dataset_version"),
+                    "run_config": json.dumps(run.get("config") or {}, ensure_ascii=False),
+                    "code_version": run.get("code_version"),
+                    "model_version": run.get("model_version"),
+                    "feature_version": run.get("feature_version"),
+                    "ensemble_version": run.get("ensemble_version"),
+                    "calibration_version": run.get("calibration_version"),
+                    "status": run["status"],
+                    "payload": json.dumps(run, ensure_ascii=False),
+                },
+            )
+
+    def backtest_run(self, run_id: str) -> dict[str, Any] | None:
+        """Return one persisted backtest run."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM backtest_runs WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def backtest_runs(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        """List persisted backtest runs newest first."""
+
+        where = " WHERE status = :status" if status else ""
+        parameters = {"status": status} if status else {}
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM backtest_runs"
+                    f"{where} ORDER BY started_at DESC, run_id DESC"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 200))]]
 
     def start_job_run(self, job_name: str, started_at: str) -> dict[str, Any]:
         """Persist a durable running marker before external work starts."""

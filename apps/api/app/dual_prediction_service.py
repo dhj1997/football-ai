@@ -23,36 +23,43 @@ class DualPredictionService:
         fixture: dict[str, Any],
         context: dict[str, Any],
         model_keys: list[str] | tuple[str, ...] | None = None,
+        *,
+        snapshot_bundle: dict[str, Any] | None = None,
+        prepared_context: bool = False,
+        historical_snapshot: dict[str, Any] | None = None,
+        prediction_timestamp: Any | None = None,
     ) -> list[dict[str, Any]]:
         selected = [self.services[key] for key in (model_keys or self.model_keys) if key in self.services]
         if not selected:
             return []
         if self.player_name_service is not None:
             await self.player_name_service.enrich(context, resolve_missing=True)
-        snapshot_bundle = None
-        prepared_context = False
+        snapshot_bundle = snapshot_bundle or (
+            historical_snapshot or {}
+        ).get("prediction_bundle")
         primary = selected[0]
         prepare_context = getattr(primary, "prepare_context", None)
         prepare_snapshot = getattr(primary, "prepare_snapshot", None)
         persist_snapshot_bundle = getattr(primary, "persist_snapshot_bundle", None)
-        if callable(prepare_context) and callable(prepare_snapshot):
+        if snapshot_bundle is None and callable(prepare_context) and callable(prepare_snapshot):
             await prepare_context(fixture, context)
             snapshot_bundle = prepare_snapshot(fixture, context)
             if callable(persist_snapshot_bundle):
                 persist_snapshot_bundle(snapshot_bundle)
             prepared_context = True
+        async def create_one(service: Any) -> Any:
+            parameters = inspect.signature(service.create).parameters
+            kwargs: dict[str, Any] = {}
+            if snapshot_bundle is not None and "snapshot_bundle" in parameters:
+                kwargs["snapshot_bundle"] = snapshot_bundle
+            if "prepared_context" in parameters:
+                kwargs["prepared_context"] = prepared_context or snapshot_bundle is not None
+            if prediction_timestamp is not None and "prediction_timestamp" in parameters:
+                kwargs["prediction_timestamp"] = prediction_timestamp
+            return await service.create(fixture, context, **kwargs)
+
         results = await asyncio.gather(
-            *(
-                service.create(
-                    fixture,
-                    context,
-                    snapshot_bundle=snapshot_bundle,
-                    prepared_context=prepared_context,
-                )
-                if snapshot_bundle is not None and "snapshot_bundle" in inspect.signature(service.create).parameters
-                else service.create(fixture, context)
-                for service in selected
-            ),
+            *(create_one(service) for service in selected),
             return_exceptions=True,
         )
         predictions: list[dict[str, Any]] = []

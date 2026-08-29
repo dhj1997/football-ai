@@ -7,23 +7,23 @@ Build traceable, timestamp-consistent historical snapshots, backfill/rolling val
 ## Phases
 
 ### Phase 1: Persistence and identity
-- Status: in_progress
+- Status: complete
 - Add idempotent append-only historical snapshot/backtest run persistence and canonical fixture/team/league identity helpers.
 
 ### Phase 2: Historical reconstruction and quality
-- Status: pending
+- Status: complete
 - Implement as-of evidence/odds reconstruction, closing odds selection, source conflicts, freshness rules, and quality exclusions.
 
 ### Phase 3: Backfill and rolling validation
-- Status: pending
+- Status: complete
 - Add reusable formal-pipeline backfill and configurable train/test/step rolling backtest with as-of weights/calibration.
 
 ### Phase 4: Read-only APIs and tests
-- Status: pending
+- Status: complete
 - Expose P4 reports and add focused leakage, immutability, identity, quality, rolling, and reproducibility tests.
 
 ### Phase 5: Verification and delivery
-- Status: pending
+- Status: in_progress
 - Run required regression checks, update records, commit, and push directly to `main`.
 
 ## Constraints

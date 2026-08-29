@@ -24,6 +24,7 @@ from .evidence_chain import (
     merge_evidence,
     should_use_secondary,
 )
+from .historical_validation import assess_data_quality, serialize_public
 from .espn_evidence_provider import EspnEvidenceProvider
 from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
@@ -792,6 +793,67 @@ def prediction_backtest() -> dict:
 
     rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
     return public_payload(run_backtest(rows))
+
+
+@app.get("/api/backtest/runs")
+def historical_backtest_runs(status: str | None = None, limit: int = 100) -> dict:
+    """List persisted P4 backtest runs; this endpoint never starts a run."""
+
+    reader = getattr(repository, "backtest_runs", None)
+    items = reader(status, limit) if callable(reader) else []
+    return serialize_public({"items": items, "count": len(items), "is_simulated": True})
+
+
+@app.get("/api/backtest/runs/{run_id}")
+def historical_backtest_run(run_id: str) -> dict:
+    """Return one persisted P4 backtest run."""
+
+    reader = getattr(repository, "backtest_run", None)
+    item = reader(run_id) if callable(reader) else None
+    if item is None:
+        raise HTTPException(status_code=404, detail="Backtest run was not found")
+    return serialize_public({"item": item, "is_simulated": True})
+
+
+@app.get("/api/historical-snapshots")
+def historical_snapshots(
+    fixture_id: str | None = None,
+    as_of: str | None = None,
+    limit: int = 200,
+) -> dict:
+    """List immutable historical snapshots at or before an optional timestamp."""
+
+    reader = getattr(repository, "historical_snapshots", None)
+    items = reader(fixture_id, as_of, limit) if callable(reader) else []
+    return serialize_public({"items": items, "count": len(items), "is_simulated": True})
+
+
+@app.get("/api/data-quality")
+def historical_data_quality(fixture_id: str | None = None, as_of: str | None = None) -> dict:
+    """Return explicit quality checks for cached fixtures without altering forecasts."""
+
+    fixture_reader = getattr(repository, "fixture", None)
+    if fixture_id and callable(fixture_reader):
+        fixtures = [fixture_reader(fixture_id)]
+    else:
+        fixtures = repository.list_fixtures()
+    fixtures = [fixture for fixture in fixtures if fixture]
+    items = []
+    for fixture in fixtures:
+        current_id = str(fixture.get("id") or "")
+        odds_reader = getattr(repository, "odds_snapshots", None)
+        odds = odds_reader(current_id) if callable(odds_reader) else []
+        quality = assess_data_quality(
+            fixture,
+            evidence=fixture.get("evidence"),
+            odds_snapshots=odds,
+            result=fixture.get("score"),
+            as_of=as_of,
+            require_result=False,
+            require_odds=False,
+        )
+        items.append({"fixture_id": current_id, **quality})
+    return serialize_public({"items": items, "count": len(items), "is_simulated": True})
 
 
 @app.get("/api/admin/jobs", dependencies=[Depends(require_admin)])
