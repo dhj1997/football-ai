@@ -246,7 +246,8 @@ def _odds_snapshot(fixture: dict[str, Any], context: dict[str, Any]) -> dict[str
     odds = context.get("odds")
     if not isinstance(odds, dict):
         return None
-    captured_at = str(odds.get("updated_at") or datetime.now(UTC).isoformat())
+    captured_at = datetime.now(UTC).isoformat()
+    source_updated_at = str(odds.get("updated_at")) if odds.get("updated_at") else None
     source = odds.get("source") or context.get("source") or "unknown"
     bookmaker = odds.get("bookmaker")
     quotes: list[dict[str, Any]] = []
@@ -261,6 +262,7 @@ def _odds_snapshot(fixture: dict[str, Any], context: dict[str, Any]) -> dict[str
                     "bookmaker": bookmaker,
                     "source": source,
                     "captured_at": captured_at,
+                    "source_updated_at": source_updated_at,
                 }
             )
     line = odds.get("asian_handicap")
@@ -275,12 +277,14 @@ def _odds_snapshot(fixture: dict[str, Any], context: dict[str, Any]) -> dict[str
                     "bookmaker": bookmaker,
                     "source": source,
                     "captured_at": captured_at,
+                    "source_updated_at": source_updated_at,
                 }
             )
     return {
         "id": str(uuid.uuid4()),
         "fixture_id": fixture["id"],
         "captured_at": captured_at,
+        "source_updated_at": source_updated_at,
         "source": source,
         "bookmaker": bookmaker,
         "quotes": quotes,

@@ -222,6 +222,7 @@ class BankrollService:
                     else (prediction.get("asian_handicap") or {}).get("line")
                 ) if market == "asian_handicap" else None,
                 "odds": round(price, 3),
+                "bet_odds": round(price, 3),
                 "stake": stake,
                 "league_key": fixture["league_key"],
                 "kickoff": fixture["kickoff"],
@@ -230,6 +231,13 @@ class BankrollService:
                 "model_version": prediction["model_version"],
                 "model_confidence": decision.get("model_confidence"),
                 "expected_edge": round(edge, 4),
+                "bookmaker": market_row.get("bookmaker"),
+                "line_at_bet": (
+                    market_row.get("line")
+                    if market_row.get("line") is not None
+                    else (prediction.get("asian_handicap") or {}).get("line")
+                ) if market == "asian_handicap" else None,
+                "odds_snapshot_id": prediction.get("odds_snapshot_id"),
                 "reason": decision.get("reason"),
                 "reason_codes": decision.get("reason_codes") or [],
                 "prediction_phase": prediction.get("phase") or "preliminary",
