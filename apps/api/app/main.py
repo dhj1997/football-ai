@@ -570,7 +570,15 @@ async def team_detail(
     state = await team_sync.ensure_fresh(league_key, team_id, season_year)
     if state["item"] is None:
         raise HTTPException(status_code=503, detail="Current team data is unavailable")
-    return public_payload({"item": state["item"], "sync_status": state["status"]})
+    item = state["item"]
+    roster_context = {
+        "squads": {"home": item.get("roster") or [], "away": []},
+        "lineup": {"home_players": [], "away_players": []},
+        "availability": {"players": []},
+    }
+    await player_name_service.enrich(roster_context, resolve_missing=True)
+    item["roster"] = roster_context["squads"]["home"]
+    return public_payload({"item": item, "sync_status": state["status"]})
 
 
 @app.get("/api/fixtures/{fixture_id}")
