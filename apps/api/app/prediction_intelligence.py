@@ -110,7 +110,9 @@ def _recent_form_features(
     side: str,
 ) -> dict[str, Any]:
     usable: list[tuple[Mapping[str, Any], float, int]] = []
-    for raw_row in rows[:10]:
+    # P7 supplies an as-of, bounded fifteen-match snapshot. Keep P3's
+    # existing decay calculation and only widen the consumed window.
+    for raw_row in rows[:15]:
         row = raw_row if isinstance(raw_row, Mapping) else {"result": str(raw_row)}
         occurred = parse_timestamp(row.get("date"))
         if occurred is None:

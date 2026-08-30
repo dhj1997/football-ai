@@ -90,6 +90,58 @@ def test_p5_data_registry_and_history_endpoints_are_read_only() -> None:
     assert client.get("/api/fixtures/history", params={"league": "Bundesliga"}).status_code == 400
 
 
+def test_p7_team_form_endpoint_honors_as_of_and_window() -> None:
+    cutoff = datetime(2026, 8, 30, 12, tzinfo=UTC)
+    for index in range(1, 18):
+        kickoff = cutoff - timedelta(days=index)
+        repository.upsert_fixture(
+            {
+                "id": f"p7-form-{index}",
+                "canonical_fixture_id": f"p7-canonical-{index}",
+                "provider_id": 9000 + index,
+                "league_key": "epl",
+                "canonical_league": "EPL",
+                "season": "2025",
+                "fixture_date": kickoff.date().isoformat(),
+                "kickoff": kickoff.isoformat(),
+                "status": "finished",
+                "home_team": {"provider_id": 5001, "name": "Home FC"},
+                "away_team": {"provider_id": 5002, "name": "Away FC"},
+                "score": {"home": 1, "away": 0},
+                "is_demo": False,
+            }
+        )
+    repository.upsert_fixture(
+        {
+            "id": "p7-form-future",
+            "canonical_fixture_id": "p7-canonical-future",
+            "provider_id": 9999,
+            "league_key": "epl",
+            "canonical_league": "EPL",
+            "season": "2025",
+            "fixture_date": (cutoff + timedelta(days=1)).date().isoformat(),
+            "kickoff": (cutoff + timedelta(days=1)).isoformat(),
+            "status": "finished",
+            "home_team": {"provider_id": 5001, "name": "Home FC"},
+            "away_team": {"provider_id": 5002, "name": "Away FC"},
+            "score": {"home": 9, "away": 0},
+            "is_demo": False,
+        }
+    )
+
+    response = client.get(
+        "/api/team-form/5001",
+        params={"league": "EPL", "as_of": cutoff.isoformat()},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["matches_used"] == 15
+    assert payload["sample_status"] == "ok"
+    assert all(item["date"] <= cutoff.isoformat() for item in payload["matches"])
+    assert payload["form"]["wins"] == 15
+
+
 def test_p6_evaluation_endpoints_return_frozen_insufficient_report() -> None:
     evaluation = client.get("/api/model-evaluation")
     assert evaluation.status_code == 200

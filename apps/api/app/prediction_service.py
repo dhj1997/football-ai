@@ -16,6 +16,7 @@ from .market_decision import apply_market_decision
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT, EVIDENCE_CONTRACT_VERSION
 from .prediction_intelligence import build_feature_snapshot, parse_timestamp
 from .historical_validation import build_raw_data_record
+from .recent_form import RecentFormService
 
 
 STRATEGY_ID = "baseline"
@@ -48,7 +49,11 @@ class PredictionService:
         prediction_timestamp: Any | None = None,
     ) -> dict[str, Any]:
         if not prepared_context:
-            await self.prepare_context(fixture, context)
+            await self.prepare_context(
+                fixture,
+                context,
+                prediction_timestamp=prediction_timestamp,
+            )
         baseline = predict(fixture, context)
         historical_at = parse_timestamp(prediction_timestamp)
         if historical_at:
@@ -198,10 +203,22 @@ class PredictionService:
         self._save_current(prediction)
         return prediction
 
-    async def prepare_context(self, fixture: dict[str, Any], context: dict[str, Any]) -> None:
+    async def prepare_context(
+        self,
+        fixture: dict[str, Any],
+        context: dict[str, Any],
+        *,
+        prediction_timestamp: Any | None = None,
+    ) -> None:
         """Normalize shared evidence before creating any immutable snapshots."""
 
         localize_evidence_players(context)
+        recent_form = RecentFormService(self.repository).context_for_fixture(
+            fixture,
+            as_of=prediction_timestamp,
+        )
+        if recent_form is not None:
+            context["recent_form"] = recent_form
         if self.player_value_service is not None:
             await self.player_value_service.enrich(context, str(fixture.get("league_key") or ""))
         apply_player_impact(context)

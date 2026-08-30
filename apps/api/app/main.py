@@ -59,6 +59,7 @@ from .prediction_intelligence import (
 from .schedule_provider import TheSportsDbProvider
 from .schedule_sync import ScheduleSyncService
 from .settlement import SettlementService
+from .recent_form import RecentFormService
 from .team_provider import EspnTeamProvider
 from .team_sync import TeamSyncService
 
@@ -177,6 +178,7 @@ settlement_service = SettlementService(repository, settings.simulation_competiti
 league_provider = EspnLeagueProvider(settings.espn_base_url)
 p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
+recent_form_service = RecentFormService(repository)
 model_evaluation_service = ModelEvaluationService(repository)
 for _provider in p5_provider_registry.descriptors():
     repository.save_provider_registry({**_provider.as_dict(), "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat()})
@@ -407,6 +409,24 @@ def leagues() -> dict:
         for code, config in SUPPORTED_LEAGUES.items()
     ]
     return {"items": items, "count": len(items), "total_fixture_count": coverage["total"], "limits": coverage["limits"]}
+
+
+@app.get("/api/team-form/{team_id}")
+def team_form(
+    team_id: str,
+    as_of: str | None = None,
+    league: str | None = None,
+) -> dict:
+    """Return deterministic overall/home/away form for one team as-of a cutoff."""
+
+    code = normalize_league_code(league) if league else None
+    if league and code is None:
+        raise HTTPException(status_code=400, detail="仅支持 CSL、EPL、LAL")
+    try:
+        result = recent_form_service.team_form(team_id, as_of=as_of, league=code)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return serialize_public({**result, "is_simulated": False})
 
 
 @app.get("/api/fixtures/history")

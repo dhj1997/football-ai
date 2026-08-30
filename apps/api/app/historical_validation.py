@@ -623,9 +623,15 @@ def _call_runner(
 class HistoricalBackfillService:
     """Use a formal prediction runner against a reconstructed historical snapshot."""
 
-    def __init__(self, repository: Any, prediction_runner: Callable[..., Any] | None = None) -> None:
+    def __init__(
+        self,
+        repository: Any,
+        prediction_runner: Callable[..., Any] | None = None,
+        recent_form_service: Any | None = None,
+    ) -> None:
         self.repository = repository
         self.prediction_runner = prediction_runner
+        self.recent_form_service = recent_form_service
 
     async def backfill(
         self,
@@ -649,6 +655,26 @@ class HistoricalBackfillService:
             evidence_snapshots=evidence,
             odds_snapshots=odds,
         )
+        existing_snapshot_reader = getattr(self.repository, "historical_snapshot", None)
+        existing_snapshot = (
+            existing_snapshot_reader(snapshot["snapshot_id"])
+            if callable(existing_snapshot_reader)
+            else None
+        )
+        if existing_snapshot:
+            snapshot = existing_snapshot
+        elif self.recent_form_service is not None:
+            recent_form = self.recent_form_service.context_for_fixture(
+                fixture,
+                as_of=snapshot["as_of"],
+            )
+            if recent_form is not None:
+                payload = dict(snapshot.get("payload") or {})
+                context = dict(payload.get("context") or {})
+                context["recent_form"] = recent_form
+                payload["context"] = context
+                payload["recent_form_snapshot"] = recent_form.get("snapshot")
+                snapshot["payload"] = payload
         context = snapshot["payload"].get("context") or {}
         snapshot["prediction_bundle"] = {
             "evidence": snapshot["payload"].get("evidence"),

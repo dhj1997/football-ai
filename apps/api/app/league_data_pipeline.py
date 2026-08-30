@@ -893,7 +893,18 @@ class HistoricalLeagueDataService:
         odds_reader = getattr(self.repository, "odds_snapshots", None)
         saver = getattr(self.repository, "save_historical_snapshot", None)
         backfill_results: list[dict[str, Any]] = []
-        backfill_service = HistoricalBackfillService(self.repository, prediction_runner) if prediction_runner else None
+        from .recent_form import RecentFormService
+
+        recent_form_service = RecentFormService(self.repository)
+        backfill_service = (
+            HistoricalBackfillService(
+                self.repository,
+                prediction_runner,
+                recent_form_service=recent_form_service,
+            )
+            if prediction_runner
+            else None
+        )
         for fixture in fixture_rows[: self.max_per_league]:
             kickoff = parse_timestamp(fixture.get("kickoff"))
             if kickoff is None:
@@ -906,6 +917,14 @@ class HistoricalLeagueDataService:
                 odds_snapshots=odds_reader(fixture["id"]) if callable(odds_reader) else [],
                 source_versions={"fixture": provider_name, "result": fixture.get("result_source"), "odds": provider_name if odds["status"] == "completed" else None},
             )
+            recent_form = recent_form_service.context_for_fixture(fixture, as_of=as_of)
+            if recent_form is not None:
+                payload = dict(snapshot.get("payload") or {})
+                context = dict(payload.get("context") or {})
+                context["recent_form"] = recent_form
+                payload["context"] = context
+                payload["recent_form_snapshot"] = recent_form.get("snapshot")
+                snapshot["payload"] = payload
             if callable(saver):
                 saver(snapshot)
             snapshots.append(snapshot)

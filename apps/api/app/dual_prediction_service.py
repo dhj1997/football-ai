@@ -42,7 +42,11 @@ class DualPredictionService:
         prepare_snapshot = getattr(primary, "prepare_snapshot", None)
         persist_snapshot_bundle = getattr(primary, "persist_snapshot_bundle", None)
         if snapshot_bundle is None and callable(prepare_context) and callable(prepare_snapshot):
-            await prepare_context(fixture, context)
+            context_parameters = inspect.signature(prepare_context).parameters
+            context_kwargs = {
+                "prediction_timestamp": prediction_timestamp,
+            } if prediction_timestamp is not None and "prediction_timestamp" in context_parameters else {}
+            await prepare_context(fixture, context, **context_kwargs)
             snapshot_bundle = prepare_snapshot(fixture, context)
             if callable(persist_snapshot_bundle):
                 persist_snapshot_bundle(snapshot_bundle)

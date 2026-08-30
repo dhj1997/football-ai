@@ -82,9 +82,13 @@ class ApiFootballProvider:
         params = {
             "league": league_id,
             "season": season,
-            "page": max(1, int(page)),
             "timezone": "UTC",
         }
+        # Some API-Football plans expose a complete season as one page and
+        # reject the otherwise documented `page` parameter. The response's
+        # paging metadata still lets the ingestion service enforce its cap.
+        if int(page) > 1:
+            params["page"] = int(page)
         if start_date:
             params["from"] = start_date.isoformat()
         if end_date:
@@ -100,13 +104,19 @@ class ApiFootballProvider:
         if payload.get("errors"):
             raise RuntimeError(f"API-Football error for {league}: {payload['errors']}")
         captured_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        paging = payload.get("paging") or {}
+        response_items = payload.get("response", [])
+        # The current account returns the complete season as a single page;
+        # let P5 apply its league/global cap instead of discarding the rest
+        # before the ingestion service sees it.
+        if (paging.get("total") or 1) > 1:
+            response_items = response_items[: max(1, int(limit))]
         items = []
-        for item in payload.get("response", [])[: max(1, int(limit))]:
+        for item in response_items:
             mapped = self._map_fixture(item, str(league).casefold())
             mapped["source"] = "api-football"
             mapped["captured_at"] = captured_at
             items.append(mapped)
-        paging = payload.get("paging") or {}
         return {
             "items": items,
             "page": paging.get("current") or page,
