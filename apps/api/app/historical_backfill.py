@@ -96,6 +96,11 @@ class HistoricalPredictionBackfillService:
             saver(report)
         return report
 
+    async def backfill_fixture(self, fixture: Mapping[str, Any]) -> dict[str, Any]:
+        """Backfill one canonical fixture using the same P7.2 path as a full run."""
+
+        return await self._backfill_fixture(dict(fixture))
+
     def evaluation_rows(self) -> list[dict[str, Any]]:
         """Adapt isolated historical predictions to the existing P6 input contract."""
 

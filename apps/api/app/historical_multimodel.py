@@ -7,7 +7,7 @@ import hashlib
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from .historical_backfill import HISTORICAL_COMPETITION_ID, P7_2_VERSION
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
@@ -62,9 +62,18 @@ class HistoricalMultiModelBackfillService:
         self.max_total = max(1, min(int(max_total), 300))
         self.concurrency = max(1, min(int(concurrency), 8))
 
-    async def run(self) -> dict[str, Any]:
+    async def run(
+        self,
+        source_predictions: Iterable[Mapping[str, Any]] | None = None,
+        *,
+        persist_run: bool = True,
+    ) -> dict[str, Any]:
         started_at = datetime.now(UTC).replace(microsecond=0).isoformat()
-        source_predictions = self._eligible_predictions()
+        source_predictions = (
+            [dict(row) for row in source_predictions]
+            if source_predictions is not None
+            else self._eligible_predictions()
+        )
         models = ("poisson", "chatgpt", "deepseek")
         report: dict[str, Any] = {
             "run_id": f"{P7_3_VERSION}:{uuid.uuid4()}",
@@ -104,7 +113,7 @@ class HistoricalMultiModelBackfillService:
                 report["ensemble_ready_fixtures"] += 1
         report["finished_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
         saver = getattr(self.repository, "save_historical_backfill_run", None)
-        if callable(saver):
+        if persist_run and callable(saver):
             saver(report)
         return report
 

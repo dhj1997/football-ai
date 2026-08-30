@@ -21,6 +21,7 @@ class AutomationRunner:
         prediction_service: Any,
         bankroll_service: Any,
         settlement_service: Any,
+        historical_accumulation_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -30,6 +31,7 @@ class AutomationRunner:
         self.prediction_service = prediction_service
         self.bankroll_service = bankroll_service
         self.settlement_service = settlement_service
+        self.historical_accumulation_service = historical_accumulation_service
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._jobs: dict[str, tuple[int, Callable[[], Awaitable[dict[str, Any]]]]] = {
@@ -38,6 +40,11 @@ class AutomationRunner:
             "analysis": (settings.automation_analysis_interval_minutes, self._analyze_upcoming),
             "settlement": (settings.automation_settlement_interval_minutes, self._settle_finished),
         }
+        if historical_accumulation_service is not None:
+            self._jobs["historical_accumulation"] = (
+                max(1, int(getattr(settings, "automation_historical_accumulation_interval_minutes", 1440))),
+                self._accumulate_historical,
+            )
 
     async def run_loop(self) -> None:
         """Run immediately on startup, then wake on the configured short tick."""
@@ -134,6 +141,13 @@ class AutomationRunner:
     async def _sync_standings(self) -> dict[str, Any]:
         result = await self.league_sync.force_refresh()
         return {**result, "item_count": int(result.get("item_count", 0))}
+
+    async def _accumulate_historical(self) -> dict[str, Any]:
+        result = await self.historical_accumulation_service.run()
+        return {
+            **result,
+            "item_count": int(result.get("newly_generated_predictions", 0)),
+        }
 
     async def _analyze_upcoming(self) -> dict[str, Any]:
         now = datetime.now(UTC)

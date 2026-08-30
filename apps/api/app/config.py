@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     automation_standings_interval_minutes: int = 360
     automation_analysis_interval_minutes: int = 5
     automation_settlement_interval_minutes: int = 15
+    automation_historical_accumulation_interval_minutes: int = 1440
     automation_failure_backoff_minutes: int = 15
     prediction_lead_hours: int = 36
     evidence_refresh_minutes: int = 180

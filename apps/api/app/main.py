@@ -25,6 +25,7 @@ from .evidence_chain import (
     should_use_secondary,
 )
 from .historical_validation import assess_data_quality, serialize_public
+from .historical_accumulation import HistoricalOOSAccumulationService
 from .league_data_pipeline import (
     SUPPORTED_LEAGUES,
     HistoricalLeagueDataService,
@@ -180,6 +181,10 @@ p5_provider_registry = build_default_provider_registry(provider, schedule_provid
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
 recent_form_service = RecentFormService(repository)
 model_evaluation_service = ModelEvaluationService(repository)
+historical_accumulation_service = HistoricalOOSAccumulationService(
+    repository,
+    {"chatgpt": chatgpt_provider, "deepseek": deepseek_provider},
+)
 for _provider in p5_provider_registry.descriptors():
     repository.save_provider_registry({**_provider.as_dict(), "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat()})
 league_sync = LeagueSyncService(
@@ -198,6 +203,7 @@ automation_runner = AutomationRunner(
     prediction_service,
     bankroll_service,
     settlement_service,
+    historical_accumulation_service,
 )
 
 app.add_middleware(
@@ -1083,6 +1089,20 @@ async def run_automation_job(job_name: str) -> dict:
         return await automation_runner.run_job(job_name)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/admin/historical-accumulation", dependencies=[Depends(require_admin)])
+async def run_historical_accumulation() -> dict:
+    """Append missing historical OOS predictions without touching production tables."""
+
+    return await historical_accumulation_service.run()
+
+
+@app.post("/api/admin/historical-evaluation", dependencies=[Depends(require_admin)])
+def run_historical_evaluation() -> dict:
+    """Run P6 explicitly against the isolated historical prediction view."""
+
+    return historical_accumulation_service.run_p6_evaluation()
 
 
 @app.get("/api/fixtures/{fixture_id}/predictions/latest")
