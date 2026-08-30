@@ -81,3 +81,29 @@ def test_espn_standings_reject_empty_current_table() -> None:
     else:
         raise AssertionError("empty standings should fail")
 
+
+def test_espn_scoreboard_maps_final_score() -> None:
+    result = EspnLeagueProvider._map_scoreboard_event(
+        {
+            "id": "401879317",
+            "date": "2026-08-30T13:00Z",
+            "status": {"type": {"state": "post", "completed": True, "shortDetail": "FT"}},
+            "competitions": [
+                {
+                    "competitors": [
+                        {"homeAway": "home", "score": "4", "team": {"id": "363", "displayName": "Chelsea"}},
+                        {"homeAway": "away", "score": "3", "team": {"id": "331", "displayName": "Brighton & Hove Albion"}},
+                    ],
+                    "venue": {"fullName": "Stamford Bridge"},
+                }
+            ],
+        },
+        "epl",
+        "2026-08-30T15:00:00+00:00",
+    )
+
+    assert result["status"] == "finished"
+    assert result["provider_status"] == "FT"
+    assert result["score"] == {"home": 4, "away": 3}
+    assert result["home_team"]["name"] == "切尔西"
+    assert result["away_team"]["name"] == "布莱顿"

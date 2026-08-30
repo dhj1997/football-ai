@@ -104,11 +104,13 @@ evidence_provider = EvidenceProviderChain(
     api_football_evidence_provider,
 )
 schedule_provider = TheSportsDbProvider(settings.thesportsdb_api_key, settings.thesportsdb_base_url)
+league_provider = EspnLeagueProvider(settings.espn_base_url)
 schedule_sync = ScheduleSyncService(
     schedule_provider,
     repository,
     settings.schedule_lookback_days,
     settings.schedule_cache_ttl_minutes,
+    league_provider,
 )
 deepseek_provider = DeepSeekProvider(
     settings.api_deepseek_key,
@@ -176,7 +178,6 @@ bankroll_service = DualBankrollService(
     settings.simulation_competition_id,
 )
 settlement_service = SettlementService(repository, settings.simulation_competition_id)
-league_provider = EspnLeagueProvider(settings.espn_base_url)
 p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
 recent_form_service = RecentFormService(repository)

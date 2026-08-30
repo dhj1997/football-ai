@@ -26,6 +26,11 @@ function formatKickoff(value: string) {
   }).format(new Date(value));
 }
 
+function kickoffHasStarted(detail: FixtureDetail) {
+  const kickoff = new Date(detail.fixture.kickoff).getTime();
+  return Number.isFinite(kickoff) && kickoff <= Date.now();
+}
+
 function fixtureState(detail: FixtureDetail) {
   const { fixture } = detail;
   if (fixture.status === "finished") return "完场";
@@ -90,7 +95,9 @@ function ManualPredictionEmpty({ detail, onManualPredict, predicting }: { detail
     postponed: ["比赛已延期，等待新赛程后再预测", "新开球时间同步后，系统会重新开放赛前预测。"],
     cancelled: ["比赛已取消，不能生成预测", "已取消比赛不会进入预测和模拟下注流程。"],
   } as const;
-  const blocked = messages[detail.fixture.status as keyof typeof messages];
+  const blocked = kickoffHasStarted(detail)
+    ? ["比赛已开球，不能生成赛前预测", "系统只生成赛前预测，避免赛果和赛后数据影响模型判断。"]
+    : messages[detail.fixture.status as keyof typeof messages];
   return <section className="match-empty manual-prediction-empty">
     <Clock3 size={20} aria-hidden="true" />
     <div>

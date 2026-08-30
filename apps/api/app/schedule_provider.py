@@ -208,15 +208,19 @@ class TheSportsDbProvider:
                 f"{item['dateEvent']}T{item.get('strTime') or '00:00:00'}+00:00"
             )
             fixture_date = item["dateEvent"]
-        status_text = (item.get("strStatus") or "").lower()
+        status_text = str(item.get("strStatus") or "").strip().casefold()
+        home_score = _score(item.get("intHomeScore"))
+        away_score = _score(item.get("intAwayScore"))
         if item.get("strPostponed") == "yes" or "postpon" in status_text:
             status = "postponed"
-        elif "finished" in status_text or item.get("intHomeScore") is not None:
+        elif status_text in {"ft", "aet", "pen", "match finished", "finished"} or "finished" in status_text:
+            status = "finished"
+        elif status_text in {"1h", "ht", "2h", "et", "bt", "p", "live", "in progress"}:
+            status = "live"
+        elif not status_text and home_score is not None and away_score is not None:
             status = "finished"
         else:
             status = "scheduled"
-        home_score = _score(item.get("intHomeScore"))
-        away_score = _score(item.get("intAwayScore"))
         return {
             "id": f"sportsdb-{item['idEvent']}",
             "provider_id": int(item["idEvent"]),

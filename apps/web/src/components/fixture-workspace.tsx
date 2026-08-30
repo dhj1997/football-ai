@@ -128,6 +128,11 @@ function TeamMark({ team, tone }: { team: Fixture["home_team"]; tone: "home" | "
   return <span className={`team-mark ${tone}`} aria-hidden="true">{team.code.slice(0, 3)}</span>;
 }
 
+function canCreatePreMatchPrediction(fixture: Fixture) {
+  const kickoff = new Date(fixture.kickoff).getTime();
+  return fixture.status === "scheduled" && Number.isFinite(kickoff) && kickoff > Date.now();
+}
+
 function FixtureRow({ fixture, selected = false, onSelect, href }: { fixture: Fixture; selected?: boolean; onSelect?: () => void; href?: string }) {
   const [renderedAt] = useState(() => Date.now());
   const kickoffHasPassed = new Date(fixture.kickoff).getTime() <= renderedAt;
@@ -518,7 +523,7 @@ export function ProbabilityPanel({ prediction, fixture, bet, onManualPredict, pr
           <h3 id={headingId}>{prediction.phase === "confirmed_lineup" ? "确认首发版" : "初步预测"} · 胜平负概率</h3>
         </div>
         <div className="prediction-actions">
-          {prediction.phase === "preliminary" && fixture.status === "scheduled" && onManualPredict && <button className="manual-predict-button" type="button" title="基于当前已同步赛前数据重新生成初步预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "重新生成"}</button>}
+          {prediction.phase === "preliminary" && canCreatePreMatchPrediction(fixture) && onManualPredict && <button className="manual-predict-button" type="button" title="基于当前已同步赛前数据重新生成初步预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "重新生成"}</button>}
           <span className="model-tag">{prediction.model_version}</span>
         </div>
       </div>
@@ -599,7 +604,7 @@ function DetailPanel({ detail, operatorMode, running, syncingEvidence, success, 
         <p><CalendarDays size={15} /> {new Date(fixture.kickoff).toLocaleDateString("zh-CN")} · {fixture.venue}</p>
       </div>
 
-      {operatorMode && fixture.status !== "finished" && (
+      {operatorMode && canCreatePreMatchPrediction(fixture) && (
         <div className="operator-actions">
           <div><strong>{realEvidencePending ? canSyncEvidence ? "真实赛前证据尚未同步" : "赛前证据源未配置" : prediction ? "生成新预测版本" : "这场比赛尚未预测"}</strong><small>{realEvidencePending ? canSyncEvidence ? "赛程与双方身份已就绪，等待拉取近期状态、伤停和赔率" : "赛程与双方身份已就绪；近期状态、伤停和赔率暂不可用" : context.lineup.confirmed ? "确认首发已纳入，可以生成最终赛前版" : "首发未确认，将生成初步预测"}</small></div>
           <button className="icon-button secondary" title={canSyncEvidence ? "同步这场比赛的赛前数据" : "请先配置 API-Football"} aria-label="同步赛前数据" onClick={onSyncEvidence} disabled={syncingEvidence || !canSyncEvidence}>{syncingEvidence ? <LoaderCircle className="spin" size={18} /> : <RefreshCw size={18} />}</button>
@@ -697,7 +702,7 @@ export function DualProbabilityPanels({ detail, onManualPredict, predicting = fa
         <div><span>MODEL ANALYSIS</span><h3>比赛的初步预测</h3></div>
         <div className="dual-prediction-actions">
           <small>共享同一证据，各自给出观点并使用独立模拟账户</small>
-          {detail.fixture.status === "scheduled" && onManualPredict && <button className="manual-predict-button" type="button" title="使用当前赛前数据并行重新生成两个模型的预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "重新生成"}</button>}
+          {canCreatePreMatchPrediction(detail.fixture) && onManualPredict && <button className="manual-predict-button" type="button" title="使用当前赛前数据并行重新生成两个模型的预测" onClick={onManualPredict} disabled={predicting}>{predicting ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Play size={13} fill="currentColor" aria-hidden="true" />}{predicting ? "计算中" : "重新生成"}</button>}
         </div>
       </div>
       <div className="dual-prediction-shell">

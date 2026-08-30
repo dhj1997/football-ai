@@ -57,6 +57,24 @@ def test_schedule_provider_maps_postponed_event_without_score() -> None:
     assert result["score"] is None
 
 
+def test_schedule_provider_maps_second_half_score_as_live() -> None:
+    result = TheSportsDbProvider._map_fixture(
+        {
+            "idEvent": "793",
+            "strTimestamp": "2026-08-30T13:00:00+00:00",
+            "strStatus": "2H",
+            "strHomeTeam": "Chelsea",
+            "strAwayTeam": "Brighton",
+            "intHomeScore": "3",
+            "intAwayScore": "1",
+        },
+        "epl",
+    )
+
+    assert result["status"] == "live"
+    assert result["score"] == {"home": 3, "away": 1}
+
+
 def test_schedule_provider_groups_late_utc_kickoff_by_beijing_date() -> None:
     result = TheSportsDbProvider._map_fixture(
         {

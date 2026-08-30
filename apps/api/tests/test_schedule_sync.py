@@ -35,6 +35,31 @@ class FakeProvider:
         return [{"id": "fixture-1"}]
 
 
+def fixture_row(*, status="live", score=None, away="布莱顿"):
+    return {
+        "id": "sportsdb-1",
+        "league_key": "epl",
+        "kickoff": "2026-08-30T13:00:00+00:00",
+        "status": status,
+        "provider_status": "2H",
+        "score": score or {"home": 3, "away": 1},
+        "home_team": {"name": "切尔西"},
+        "away_team": {"name": away},
+    }
+
+
+class FixtureProvider(FakeProvider):
+    def __init__(self, rows, *, error=False) -> None:
+        super().__init__(error=error)
+        self.rows = rows
+
+    async def fixtures(self, start_date, end_date):
+        self.calls += 1
+        if self.error:
+            raise RuntimeError("upstream unavailable")
+        return self.rows
+
+
 @pytest.mark.asyncio
 async def test_missing_cache_is_refreshed_once() -> None:
     repository = FakeRepository()
@@ -84,3 +109,49 @@ async def test_refresh_failure_preserves_stale_cache() -> None:
     assert result["item_count"] == 2
     assert provider.calls == 1
     assert repository.replacements == []
+
+
+@pytest.mark.asyncio
+async def test_result_provider_overlays_exact_match_only() -> None:
+    repository = FakeRepository()
+    primary = FixtureProvider([fixture_row()])
+    result_provider = FixtureProvider(
+        [
+            {
+                **fixture_row(status="finished", score={"home": 4, "away": 3}),
+                "id": "espn-1",
+                "provider_status": "FT",
+                "captured_at": "2026-08-30T15:00:00+00:00",
+            },
+            fixture_row(status="finished", away="其他球队"),
+        ]
+    )
+    service = ScheduleSyncService(primary, repository, 1, 60, result_provider)
+
+    result = await service.force_refresh()
+    stored = repository.replacements[0][2][0]
+
+    assert result["result_sync_status"] == "updated"
+    assert stored["id"] == "sportsdb-1"
+    assert stored["status"] == "finished"
+    assert stored["provider_status"] == "FT"
+    assert stored["score"] == {"home": 4, "away": 3}
+    assert stored["result_source"] == "espn"
+
+
+@pytest.mark.asyncio
+async def test_result_provider_failure_preserves_primary_rows() -> None:
+    repository = FakeRepository()
+    primary_row = fixture_row()
+    service = ScheduleSyncService(
+        FixtureProvider([primary_row]),
+        repository,
+        1,
+        60,
+        FixtureProvider([], error=True),
+    )
+
+    result = await service.force_refresh()
+
+    assert result["result_sync_status"] == "failed"
+    assert repository.replacements[0][2] == [primary_row]
