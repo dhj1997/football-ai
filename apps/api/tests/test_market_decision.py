@@ -223,6 +223,77 @@ def test_asian_handicap_falls_back_to_poisson_settlement_without_model_forecast(
     assert result["forecast"]["asian_handicap"]["home_cover_probability"] == 0.6
 
 
+def test_late_asian_handicap_uses_frozen_expected_goals() -> None:
+    item = prediction({"home": 0.18, "draw": 0.23, "away": 0.59})
+    item["expected_goals"] = {"home": 0.45, "away": 2.28}
+    odds = {
+        **fresh_odds(6.0, 4.4, 1.513),
+        "asian_handicap": 1.5,
+        "asian_handicap_home_odd": 1.541,
+        "asian_handicap_away_odd": 2.35,
+    }
+
+    result = apply_market_decision(item, context(odds))
+    handicap = {
+        row["selection"]: row
+        for row in result["market_assessment"]["markets"]
+        if row["market"] == "asian_handicap"
+    }
+
+    assert result["asian_handicap"]["line"] == 1.5
+    assert result["asian_handicap"]["source"] == "poisson_late_handicap"
+    assert result["asian_handicap_forecast"]["available"] is True
+    assert result["asian_handicap_forecast"]["source"] == "poisson_late_handicap"
+    assert handicap["away_handicap"]["model_probability"] == pytest.approx(0.5505, abs=0.0001)
+    assert handicap["away_handicap"]["probability_source"] == "poisson_late_handicap"
+    assert handicap["away_handicap"]["expected_edge"] > 0.05
+    assert result["decision"]["market"] == "asian_handicap"
+    assert result["decision"]["selection"] == "away_handicap"
+
+
+def test_late_asian_handicap_does_not_reuse_a_previous_line() -> None:
+    item = prediction({"home": 0.18, "draw": 0.23, "away": 0.59})
+    item["expected_goals"] = {"home": 0.45, "away": 2.28}
+    item["asian_handicap"] = {
+        "line": -1.5,
+        "home_settlement": {
+            "full_win": 0.2,
+            "half_win": 0.0,
+            "push": 0.0,
+            "half_loss": 0.0,
+            "full_loss": 0.8,
+        },
+    }
+    odds = {
+        **fresh_odds(6.0, 4.4, 1.513),
+        "asian_handicap": 1.5,
+        "asian_handicap_home_odd": 1.541,
+        "asian_handicap_away_odd": 2.35,
+    }
+
+    result = apply_market_decision(item, context(odds))
+    rows = [row for row in result["market_assessment"]["markets"] if row["market"] == "asian_handicap"]
+
+    assert rows
+    assert {row["line"] for row in rows} == {1.5}
+    assert all(row["probability_source"] == "poisson_late_handicap" for row in rows)
+
+
+def test_invalid_late_asian_handicap_line_keeps_one_x_two_markets() -> None:
+    item = prediction()
+    item["expected_goals"] = {"home": 1.2, "away": 0.8}
+    odds = {
+        **fresh_odds(),
+        "asian_handicap": "invalid",
+        "asian_handicap_home_odd": 1.9,
+        "asian_handicap_away_odd": 1.9,
+    }
+
+    result = apply_market_decision(item, context(odds))
+
+    assert all(row["market"] == "1x2" for row in result["market_assessment"]["markets"])
+
+
 def test_barcelona_handicap_uses_gpt_cover_probability_instead_of_poisson_direction() -> None:
     item = prediction({"home": 0.78, "draw": 0.14, "away": 0.08})
     item["asian_handicap"] = {

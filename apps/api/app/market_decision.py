@@ -1,10 +1,12 @@
 """Deterministic market math, no-bet reasons, and bounded risk sizing."""
 
+import math
 from datetime import UTC, datetime, timedelta
 from copy import deepcopy
 from typing import Any
 
 from .prompt_contract import EVIDENCE_CONTRACT_VERSION
+from .prediction import asian_handicap_from_expected_goals
 
 
 MIN_EXPECTED_EDGE = 0.03
@@ -167,6 +169,7 @@ def assess_markets(prediction: dict[str, Any], odds: Any) -> dict[str, Any]:
 
     if not isinstance(odds, dict):
         return {"odds_status": "missing", "odds_updated_at": None, "markets": []}
+    _ensure_handicap_settlement(prediction, odds)
     rows: list[dict[str, Any]] = []
     probabilities = prediction.get("model_probabilities") or prediction.get("probabilities") or {}
     one_x_two_prices = {key: _positive_price(odds.get(key)) for key in ("home", "draw", "away")}
@@ -192,12 +195,12 @@ def assess_markets(prediction: dict[str, Any], odds: Any) -> dict[str, Any]:
     settlement = handicap.get("home_settlement") or {}
     home_price = _positive_price(odds.get("asian_handicap_home_odd"))
     away_price = _positive_price(odds.get("asian_handicap_away_odd"))
-    line = odds.get("asian_handicap")
-    forecast_line = handicap.get("line")
+    line = _handicap_line(odds.get("asian_handicap"))
+    forecast_line = _handicap_line(handicap.get("line"))
     matching_line = (
         forecast_line is not None
         and line is not None
-        and abs(float(forecast_line) - float(line)) <= 1e-8
+        and _same_handicap_line(forecast_line, line)
     )
     if settlement and matching_line and home_price and away_price:
         home_weights, cover_probabilities, probability_source = _handicap_market_weights(
@@ -279,17 +282,26 @@ def _handicap_market_weights(
 ) -> tuple[dict[str, float], dict[str, float], str]:
     baseline_weights = _settlement_weights(baseline, "home_handicap")
     forecast = prediction.get("asian_handicap_forecast") or {}
-    forecast_line = forecast.get("line")
+    forecast_line = _handicap_line(forecast.get("line"))
     home_cover = _probability(forecast.get("home_cover_probability"))
     away_cover = _probability(forecast.get("away_cover_probability"))
     forecast_matches = (
         bool(forecast.get("available"))
         and forecast_line is not None
-        and abs(float(forecast_line) - line) <= 1e-8
+        and _same_handicap_line(forecast_line, line)
         and home_cover is not None
         and away_cover is not None
         and home_cover + away_cover > 0
     )
+    if forecast_matches and forecast.get("source") == "poisson_late_handicap":
+        return (
+            baseline_weights,
+            {
+                "home_handicap": baseline_weights["full_win"] + baseline_weights["half_win"],
+                "away_handicap": baseline_weights["full_loss"] + baseline_weights["half_loss"],
+            },
+            "poisson_late_handicap",
+        )
     if not forecast_matches:
         return (
             baseline_weights,
@@ -297,7 +309,7 @@ def _handicap_market_weights(
                 "home_handicap": baseline_weights["full_win"] + baseline_weights["half_win"],
                 "away_handicap": baseline_weights["full_loss"] + baseline_weights["half_loss"],
             },
-            "poisson_baseline",
+            str((prediction.get("asian_handicap") or {}).get("source") or "poisson_baseline"),
         )
 
     total = home_cover + away_cover
@@ -341,6 +353,66 @@ def _reweight_settlement_direction(
         "half_loss": negative[0],
         "full_loss": negative[1],
     }
+
+
+def _ensure_handicap_settlement(prediction: dict[str, Any], odds: dict[str, Any]) -> None:
+    """Fill a missing or stale handicap distribution from the prediction's frozen xG."""
+
+    line = _handicap_line(odds.get("asian_handicap"))
+    home_price = _positive_price(odds.get("asian_handicap_home_odd"))
+    away_price = _positive_price(odds.get("asian_handicap_away_odd"))
+    if line is None or home_price is None or away_price is None:
+        return
+    existing = prediction.get("asian_handicap") or {}
+    existing_line = existing.get("line")
+    existing_settlement = existing.get("home_settlement")
+    if (
+        existing_line is not None
+        and existing_settlement
+        and _same_handicap_line(existing_line, line)
+    ):
+        return
+    expected_goals = prediction.get("expected_goals") or {}
+    settlement = asian_handicap_from_expected_goals(
+        expected_goals.get("home"),
+        expected_goals.get("away"),
+        line,
+    )
+    if settlement is None:
+        return
+    home_cover = settlement["full_win"] + settlement["half_win"]
+    away_cover = settlement["full_loss"] + settlement["half_loss"]
+    prediction["asian_handicap"] = {
+        "line": float(line),
+        "home_settlement": settlement,
+        "source": "poisson_late_handicap",
+    }
+    prediction["asian_handicap_forecast"] = {
+        "available": True,
+        "line": float(line),
+        "home_cover_probability": home_cover,
+        "away_cover_probability": away_cover,
+        "confidence": 0.0,
+        "reason": "盘口晚于预测同步，使用已保存预期进球重算让球覆盖率。",
+        "source": "poisson_late_handicap",
+    }
+
+
+def _same_handicap_line(left: Any, right: Any) -> bool:
+    left_line = _handicap_line(left)
+    right_line = _handicap_line(right)
+    return left_line is not None and right_line is not None and abs(left_line - right_line) <= 1e-8
+
+
+def _handicap_line(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    quarter = round(parsed * 4)
+    return parsed if math.isclose(parsed * 4, quarter, abs_tol=1e-8) else None
 
 
 def _split_mass(target: float, first: float, second: float) -> tuple[float, float]:

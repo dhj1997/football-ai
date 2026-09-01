@@ -57,6 +57,44 @@ def settle_asian_handicap(goal_difference: int, handicap: float) -> dict[str, fl
     return outcomes
 
 
+def asian_handicap_from_expected_goals(
+    home_xg: object,
+    away_xg: object,
+    handicap: object,
+) -> dict[str, float] | None:
+    """Derive a home-team Asian handicap settlement distribution from frozen xG."""
+
+    try:
+        home_rate = float(home_xg)
+        away_rate = float(away_xg)
+        line = float(handicap)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) and value > 0 for value in (home_rate, away_rate)):
+        return None
+    try:
+        quarter = round(line * 4)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(line) or not math.isclose(line * 4, quarter, abs_tol=1e-8):
+        return None
+
+    score_matrix = [
+        (home_goals, away_goals, _poisson(home_rate, home_goals) * _poisson(away_rate, away_goals))
+        for home_goals in range(MAX_GOALS)
+        for away_goals in range(MAX_GOALS)
+    ]
+    matrix_total = sum(item[2] for item in score_matrix)
+    if not math.isfinite(matrix_total) or matrix_total <= 0:
+        return None
+    result = {key: 0.0 for key in ("full_win", "half_win", "push", "half_loss", "full_loss")}
+    for home_goals, away_goals, probability in score_matrix:
+        settlement = settle_asian_handicap(home_goals - away_goals, line)
+        for key, weight in settlement.items():
+            result[key] += probability / matrix_total * weight
+    return {key: round(value, 4) for key, value in result.items()}
+
+
 def predict(fixture: dict, context: dict) -> dict:
     """Generate a timestamped 1X2 and Asian handicap analysis."""
 
