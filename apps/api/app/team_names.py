@@ -358,7 +358,18 @@ def to_chinese_team_name(name: str) -> str:
     """Return a standard Chinese club name or the provider name when unknown."""
 
     value = str(name or "").strip()
+    # 中文来源名同样归一到规范译名（如"曼城"->"曼彻斯特城"），保证跨源行可合并。
+    normalized = CHINESE_TEAM_ALIASES.get(value)
+    if normalized:
+        return normalized
     return TEAM_NAMES_ZH_EXACT.get(value) or TEAM_NAMES_ZH.get(_normalize(value), name)
+
+
+CHINESE_TEAM_ALIASES = {
+    "曼城": "曼彻斯特城",
+    "曼联": "曼彻斯特联",
+    "热刺": "托特纳姆热刺",
+}
 
 
 def to_chinese_player_name(name: str) -> str:
