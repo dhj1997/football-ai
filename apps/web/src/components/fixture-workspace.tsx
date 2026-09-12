@@ -2548,6 +2548,17 @@ function modelTabInvestmentLabel(
   return "数据不足";
 }
 
+function defaultFixtureId(items: Fixture[]): string | null {
+  const upcoming = items.filter((item) => item.status === "scheduled");
+  const live = items.filter((item) => item.status === "live");
+  const pool = upcoming.length ? upcoming : live.length ? live : items;
+  const withPrediction = pool.filter((item) => item.has_prediction);
+  const preferred = (withPrediction.length ? withPrediction : pool)
+    .slice()
+    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  return preferred[0]?.id ?? null;
+}
+
 export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
   const leagueFilter = "all" as const;
@@ -2589,7 +2600,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         setSelectedId((current) =>
           cached.items.some((item) => item.id === current)
             ? current
-            : (cached.items[0]?.id ?? null),
+            : defaultFixtureId(cached.items),
         );
         if (!cached.items.length) setDetail(null);
         setLoading(false);
@@ -2607,7 +2618,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         setSelectedId((current) =>
           response.items.some((item) => item.id === current)
             ? current
-            : (response.items[0]?.id ?? null),
+            : defaultFixtureId(response.items),
         );
         if (!response.items.length) setDetail(null);
       })
