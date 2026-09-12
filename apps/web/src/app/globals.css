@@ -1256,7 +1256,7 @@ main {
   overflow: visible;
 }
 .equity-chart line {
-  stroke: var(--color-success-surface);
+  stroke: var(--color-border);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
@@ -1267,8 +1267,8 @@ main {
   vector-effect: non-scaling-stroke;
 }
 .equity-chart circle {
-  fill: var(--yellow);
-  stroke: var(--green-dark);
+  fill: var(--color-warning);
+  stroke: var(--color-success);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
@@ -2515,8 +2515,8 @@ main {
 }
 .data-source-note {
   margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 8px;
+  color: var(--color-text-secondary);
+  font-size: 9px;
   line-height: 1.5;
 }
 
@@ -2555,6 +2555,8 @@ main {
   gap: 6px;
 }
 .bookmaker-odds-row {
+  font-variant-numeric: tabular-nums;
+
   display: grid;
   grid-template-columns: 72px 1fr 1fr;
   gap: 10px;
@@ -4199,11 +4201,11 @@ main {
   background: var(--color-surface);
 }
 .equity-chart polyline {
-  stroke: var(--blue);
+  stroke: var(--color-success);
 }
 .equity-chart circle {
-  fill: var(--color-danger-surface);
-  stroke: var(--blue);
+  fill: var(--color-warning);
+  stroke: var(--color-success);
 }
 
 @media (max-width: 820px) {
