@@ -37,6 +37,8 @@ class DongqiudiProvider:
         "nations_league": "欧国联",
     }
     _SOURCE_BY_AREA = {"36": "bet365", "皇": "crown"}
+    # 展示与模型输入一律使用中性名称，不落供应商明文品牌名。
+    _BOOKMAKER_LABELS = {"bet365": "市场参考A", "crown": "市场参考B"}
 
     def __init__(
         self,
@@ -126,7 +128,7 @@ class DongqiudiProvider:
         }
 
     async def odds(self, match_id: str | int) -> dict[str, Any]:
-        """Return only Bet365 and Crown European/Asian/over-under odds."""
+        """Return only the two primary market sources' European/Asian/over-under odds."""
 
         match_id = str(match_id)
         payload = await self._get_json(
@@ -140,7 +142,7 @@ class DongqiudiProvider:
                 bookmaker_key = self._SOURCE_BY_AREA.get(str(item.get("area") or "").strip())
                 if not bookmaker_key:
                     continue
-                bookmakers.setdefault(bookmaker_key, {"name": "Bet365" if bookmaker_key == "bet365" else "皇冠", "source": "dongqiudi", "match_id": match_id})
+                bookmakers.setdefault(bookmaker_key, {"name": self._BOOKMAKER_LABELS.get(bookmaker_key, bookmaker_key), "source": "dongqiudi", "match_id": match_id})
                 bookmakers[bookmaker_key][market_name] = {
                     "initial": self._map_odds_state(item.get("begin") or {}, market_name),
                     "current": self._map_odds_state(item.get("now") or {}, market_name),
@@ -329,7 +331,9 @@ class DongqiudiProvider:
             return {"over_odd": _hongkong_water_to_decimal(state.get("homeWin")), "under_odd": _hongkong_water_to_decimal(state.get("awayWin")), "line": _over_under_line(state), "updated_at": _epoch_iso(state.get("ts"))}
         # Asian prices arrive as Hong Kong water (e.g. 0.93 = win pays 0.93 per
         # unit). The pipeline prices handicap rows in decimal odds, so convert.
-        return {"home_odd": _hongkong_water_to_decimal(state.get("homeWin")), "away_odd": _hongkong_water_to_decimal(state.get("awayWin")), "label": state.get("draw"), "line": _number(state.get("draw_value")), "updated_at": _epoch_iso(state.get("ts"))}
+        # draw_value is signed from the home side's perspective ("受平/半" = -0.25),
+        # so zero and negative lines must pass through instead of being filtered.
+        return {"home_odd": _hongkong_water_to_decimal(state.get("homeWin")), "away_odd": _hongkong_water_to_decimal(state.get("awayWin")), "label": state.get("draw"), "line": _signed_number(state.get("draw_value")), "updated_at": _epoch_iso(state.get("ts"))}
 
     async def _get_json(self, url: str, *, params: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=self.timeout_seconds, headers={"User-Agent": self.USER_AGENT, "Accept": "application/json"}) as client:
@@ -373,6 +377,13 @@ def _number(value: Any) -> float | None:
     try:
         number = float(value)
         return number if number > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _signed_number(value: Any) -> float | None:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 

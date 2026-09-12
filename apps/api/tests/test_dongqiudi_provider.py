@@ -141,6 +141,14 @@ def test_dongqiudi_odds_state_normalizes_european_and_asian_fields() -> None:
     assert asian["away_odd"] == 1.88
 
 
+def test_dongqiudi_asian_state_keeps_receiving_and_level_lines() -> None:
+    receiving = DongqiudiProvider._map_odds_state({"homeWin": "0.80", "awayWin": "1.00", "draw": "受平/半", "draw_value": "-0.25"}, "asian_handicap")
+    level = DongqiudiProvider._map_odds_state({"homeWin": "0.97", "awayWin": "0.73", "draw": "平手", "draw_value": "0.00"}, "asian_handicap")
+
+    assert receiving["line"] == -0.25
+    assert level["line"] == 0.0
+
+
 @pytest.mark.asyncio
 async def test_dongqiudi_odds_uses_capture_time_when_quote_timestamp_is_missing() -> None:
     class Provider(DongqiudiProvider):
@@ -156,7 +164,7 @@ async def test_dongqiudi_odds_uses_capture_time_when_quote_timestamp_is_missing(
     assert current["updated_at"] == result["captured_at"]
 
 
-def test_dongqiudi_sync_keeps_both_bookmakers_and_prefers_bet365() -> None:
+def test_dongqiudi_sync_keeps_both_bookmakers_and_prefers_primary_source() -> None:
     class Repository:
         def __init__(self) -> None:
             self.snapshots = []
@@ -179,15 +187,15 @@ def test_dongqiudi_sync_keeps_both_bookmakers_and_prefers_bet365() -> None:
             "match_id": "1",
             "captured_at": "2026-09-02T12:00:00+00:00",
             "bookmakers": {
-                "crown": {"name": "皇冠", "1x2": {"current": {"home": 1.8, "draw": 3.6, "away": 4.2}, "initial": {}}, "asian_handicap": {"current": {"line": 0.5, "label": "半球", "home_odd": 0.9, "away_odd": 0.9}, "initial": {}}},
-                "bet365": {"name": "Bet365", "1x2": {"current": {"home": 1.7, "draw": 3.8, "away": 4.5}, "initial": {}}, "asian_handicap": {"current": {"line": 0.5, "label": "半球", "home_odd": 0.95, "away_odd": 0.85}, "initial": {}}},
+                "crown": {"name": "市场参考B", "1x2": {"current": {"home": 1.8, "draw": 3.6, "away": 4.2}, "initial": {}}, "asian_handicap": {"current": {"line": 0.5, "label": "半球", "home_odd": 0.9, "away_odd": 0.9}, "initial": {}}},
+                "bet365": {"name": "市场参考A", "1x2": {"current": {"home": 1.7, "draw": 3.8, "away": 4.5}, "initial": {}}, "asian_handicap": {"current": {"line": 0.5, "label": "半球", "home_odd": 0.95, "away_odd": 0.85}, "initial": {}}},
             },
         },
         "dongqiudi_analysis": {"match_id": "1"},
     }
 
     updated = service._apply_match_data(fixture, enriched, "initial")
-    assert updated["evidence"]["odds"]["bookmaker"] == "Bet365"
+    assert updated["evidence"]["odds"]["bookmaker"] == "市场参考A"
     assert updated["evidence"]["odds"]["asian_handicap"] == -0.5
     assert set(updated["evidence"]["odds_by_bookmaker"]) == {"bet365", "crown"}
     assert updated["dongqiudi_sync"]["initial_synced_at"]
@@ -474,7 +482,7 @@ def test_dongqiudi_sync_persists_over_under_odds() -> None:
             "captured_at": "2026-09-02T12:00:00+00:00",
             "bookmakers": {
                 "bet365": {
-                    "name": "Bet365",
+                    "name": "市场参考A",
                     "1x2": {"current": {"home": 1.7, "draw": 3.8, "away": 4.5}, "initial": {}},
                     "asian_handicap": {"current": {"line": 0.5, "label": "半球", "home_odd": 1.9, "away_odd": 1.9}, "initial": {}},
                     "over_under": {"current": {"line": 2.5, "over_odd": 1.85, "under_odd": 1.95}, "initial": {}},

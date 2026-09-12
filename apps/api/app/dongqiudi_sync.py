@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .data import CHINA_TZ, unavailable_context
+from .dongqiudi_provider import DongqiudiProvider
 from .team_names import to_chinese_player_name, to_chinese_team_name
 
 
@@ -317,7 +318,7 @@ def _preferred_odds(bookmakers: dict[str, Any], *, captured_at: str | None = Non
         asia = (item.get("asian_handicap") or {}).get("current") or {}
         if euro.get("home") and euro.get("draw") and euro.get("away"):
             candidate = {
-                "bookmaker": item.get("name") or ("Bet365" if key == "bet365" else "皇冠"),
+                "bookmaker": item.get("name") or DongqiudiProvider._BOOKMAKER_LABELS.get(key, key),
                 "home": euro["home"], "draw": euro["draw"], "away": euro["away"],
                 "asian_handicap": _canonical_line(asia.get("line"), euro),
                 "asian_handicap_label": asia.get("label"),
@@ -549,7 +550,7 @@ def _save_odds_snapshots(repository: Any, fixture_id: str, odds: dict[str, Any])
         initial_euro = euro.get("initial") or {}
         for selection in ("home", "draw", "away"):
             if current_euro.get(selection) is not None:
-                quotes.append({"market": "1x2", "selection": selection, "line": None, "price": current_euro[selection], "initial_price": initial_euro.get(selection), "bookmaker": item.get("name") or bookmaker_key, "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_euro.get("updated_at") or captured_at})
+                quotes.append({"market": "1x2", "selection": selection, "line": None, "price": current_euro[selection], "initial_price": initial_euro.get(selection), "bookmaker": item.get("name") or DongqiudiProvider._BOOKMAKER_LABELS.get(bookmaker_key, bookmaker_key), "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_euro.get("updated_at") or captured_at})
         asia = item.get("asian_handicap") or {}
         current_asia = asia.get("current") or {}
         initial_asia = asia.get("initial") or {}
@@ -557,18 +558,18 @@ def _save_odds_snapshots(repository: Any, fixture_id: str, odds: dict[str, Any])
         if line is not None:
             for selection, key in (("home_handicap", "home_odd"), ("away_handicap", "away_odd")):
                 if current_asia.get(key) is not None:
-                    quotes.append({"market": "asian_handicap", "selection": selection, "line": line, "line_label": current_asia.get("label"), "price": current_asia[key], "initial_price": initial_asia.get(key), "initial_line": _canonical_line(initial_asia.get("line"), initial_euro), "bookmaker": item.get("name") or bookmaker_key, "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_asia.get("updated_at") or captured_at})
+                    quotes.append({"market": "asian_handicap", "selection": selection, "line": line, "line_label": current_asia.get("label"), "price": current_asia[key], "initial_price": initial_asia.get(key), "initial_line": _canonical_line(initial_asia.get("line"), initial_euro), "bookmaker": item.get("name") or DongqiudiProvider._BOOKMAKER_LABELS.get(bookmaker_key, bookmaker_key), "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_asia.get("updated_at") or captured_at})
         ou = item.get("over_under") or {}
         current_ou = ou.get("current") or {}
         ou_line = _number(current_ou.get("line"))
         if ou_line is not None:
             for selection, key in (("over", "over_odd"), ("under", "under_odd")):
                 if current_ou.get(key) is not None:
-                    quotes.append({"market": "over_under", "selection": selection, "line": ou_line, "price": current_ou[key], "initial_price": (ou.get("initial") or {}).get(key), "bookmaker": item.get("name") or bookmaker_key, "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_ou.get("updated_at") or captured_at})
+                    quotes.append({"market": "over_under", "selection": selection, "line": ou_line, "price": current_ou[key], "initial_price": (ou.get("initial") or {}).get(key), "bookmaker": item.get("name") or DongqiudiProvider._BOOKMAKER_LABELS.get(bookmaker_key, bookmaker_key), "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_ou.get("updated_at") or captured_at})
         if not quotes:
             continue
         encoded = json.dumps({"fixture_id": fixture_id, "bookmaker": bookmaker_key, "quotes": quotes}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        repository.save_odds_snapshot({"id": f"odds:dongqiudi:{fixture_id}:{hashlib.sha256(encoded).hexdigest()[:32]}", "fixture_id": fixture_id, "captured_at": captured_at, "source_updated_at": captured_at, "source": "dongqiudi", "bookmaker": item.get("name") or bookmaker_key, "quotes": quotes})
+        repository.save_odds_snapshot({"id": f"odds:dongqiudi:{fixture_id}:{hashlib.sha256(encoded).hexdigest()[:32]}", "fixture_id": fixture_id, "captured_at": captured_at, "source_updated_at": captured_at, "source": "dongqiudi", "bookmaker": item.get("name") or DongqiudiProvider._BOOKMAKER_LABELS.get(bookmaker_key, bookmaker_key), "quotes": quotes})
 
 
 def _same_fixture(left: dict[str, Any], right: dict[str, Any]) -> bool:
