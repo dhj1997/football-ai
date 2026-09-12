@@ -227,11 +227,13 @@ class AutomationRunner:
                 counts["skipped_count"] += 1
                 continue
             markers = context.get("automation_refresh") or {}
+            # 追补式窗口：进入开球前 value 分钟内且未抓过即触发。窄定时窗会因
+            # 慢任务（模型预测）拉长任务节拍而被整窗跳过，错过唯一抓取机会。
             offset = next(
                 (
                     value
                     for value in offsets
-                    if value - window_minutes < delta_minutes <= value
+                    if 0 < delta_minutes <= value + window_minutes
                     and not markers.get(f"lineup_{value}_at")
                 ),
                 None,
