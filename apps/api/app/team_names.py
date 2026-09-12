@@ -28,6 +28,7 @@ _RAW_TEAM_NAMES = {
     "Leeds United": "利兹联",
     "Liverpool": "利物浦",
     "Manchester City": "曼彻斯特城",
+    "Man City": "曼彻斯特城",
     "Manchester United": "曼联",
     "Newcastle United": "纽卡斯尔联",
     "Nottingham Forest": "诺丁汉森林",
