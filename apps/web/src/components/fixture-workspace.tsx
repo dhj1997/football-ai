@@ -294,6 +294,11 @@ function FixtureRow({
               ? "ready"
               : "waiting"
           }
+          title={`证据 ${
+            fixture.evidence_summary
+              ? `${fixture.evidence_summary.ready_count}/${fixture.evidence_summary.total_count}`
+              : "0/4"
+          }`}
         >
           <Database size={13} aria-hidden="true" />
           证据{" "}
@@ -301,7 +306,10 @@ function FixtureRow({
             ? `${fixture.evidence_summary.ready_count}/${fixture.evidence_summary.total_count}`
             : "0/4"}
         </span>
-        <span className={fixture.lineup_confirmed ? "ready" : "waiting"}>
+        <span
+          className={fixture.lineup_confirmed ? "ready" : "waiting"}
+          title={fixture.lineup_confirmed ? "首发已确认" : "首发待定"}
+        >
           <Shirt size={13} aria-hidden="true" />
           {fixture.lineup_confirmed ? "首发已确认" : "首发待定"}
         </span>
@@ -309,6 +317,13 @@ function FixtureRow({
           className={`${
             fixture.has_prediction ? "ready signal-predicted" : "waiting"
           }`}
+          title={
+            fixture.has_prediction
+              ? "已有预测"
+              : canCreatePrediction(fixture)
+                ? "可预测"
+                : "未预测"
+          }
         >
           <Gauge size={13} aria-hidden="true" />
           {fixture.has_prediction

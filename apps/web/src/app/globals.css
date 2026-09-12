@@ -8062,3 +8062,11 @@ main {
   font-size: 10px;
   font-weight: 700;
 }
+
+/* 列表信号徽章：默认图标态，悬停展开文字 */
+.fixture-research-signals > span {
+  font-size: 0;
+}
+.fixture-research-signals:hover > span {
+  font-size: 9px;
+}
