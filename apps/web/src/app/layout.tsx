@@ -8,10 +8,18 @@ export const metadata: Metadata = {
   description: "可追溯的足球竞猜研究终端",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
       <body>
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='dark';}})();",
+          }}
+        />
         <span
           hidden
           dangerouslySetInnerHTML={{
@@ -21,7 +29,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
         <header className="app-header">
           <Link className="brand" href="/" aria-label="返回赛程首页">
-            <span className="brand-mark" aria-hidden="true">E/F</span>
+            <span className="brand-mark" aria-hidden="true">
+              E/F
+            </span>
             <span>
               <strong>EDGE / FOOTBALL</strong>
               <small>足球竞猜研究终端</small>
