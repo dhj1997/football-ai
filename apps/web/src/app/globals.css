@@ -8075,3 +8075,58 @@ main {
 .fixture-research-signals:hover > span {
   font-size: 10px;
 }
+
+/* 回测面板与表格导出按钮 */
+.backtest-league-tabs {
+  margin: 10px 14px 0;
+}
+.backtest-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 14px;
+}
+.backtest-stats > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+.backtest-stats small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.backtest-stats strong {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.backtest-chart {
+  margin: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+.backtest-chart .ensemble-line {
+  stroke: var(--info-text);
+}
+.table-export {
+  margin: 10px 14px 0;
+  padding: 5px 12px;
+  color: var(--info-text);
+  background: var(--color-info-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.table-export:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+@media (max-width: 900px) {
+  .backtest-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
