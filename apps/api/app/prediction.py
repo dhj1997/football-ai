@@ -124,6 +124,16 @@ def predict(fixture: dict, context: dict) -> dict:
     away_retention = _attack_retention(impact.get("away"), lineup.get("away_strength"))
     home_xg = min(2.8, max(0.45, 1.38 * home_form * home_retention + 0.22))
     away_xg = min(2.5, max(0.35, 1.08 * away_form * away_retention + 0.12))
+    # Elo 先验：历史交锋演化出的实力差微调预期进球（数据缺失时不生效）。
+    elo = context.get("elo") or {}
+    home_elo = elo.get(str((fixture.get("home_team") or {}).get("name") or ""))
+    away_elo = elo.get(str((fixture.get("away_team") or {}).get("name") or ""))
+    if isinstance(home_elo, (int, float)) and isinstance(away_elo, (int, float)):
+        from .elo import expected_goal_shift
+
+        home_shift, away_shift = expected_goal_shift(float(home_elo), float(away_elo))
+        home_xg = min(3.2, max(0.35, home_xg + home_shift))
+        away_xg = min(2.8, max(0.3, away_xg + away_shift))
 
     score_matrix: list[tuple[int, int, float]] = []
     for home_goals in range(MAX_GOALS):

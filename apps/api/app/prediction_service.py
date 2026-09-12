@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .prediction import predict
+from .elo import compute_elo
 from .evidence_chain import localize_evidence_players
 from .player_impact import apply_player_impact
 from .player_identity import public_payload
@@ -42,6 +43,18 @@ class PredictionService:
         self.player_value_service = player_value_service
         self.initial_bankroll = max(0.0, float(initial_bankroll))
 
+    def _elo_ratings(self) -> dict[str, float]:
+        """Elo ratings from finished fixtures in the local repository, if available."""
+
+        try:
+            fixtures = self.repository.list_fixtures()  # type: ignore[attr-defined]
+        except AttributeError:
+            return {}
+        try:
+            return compute_elo(fixtures)
+        except Exception:
+            return {}
+
     async def create(
         self,
         fixture: dict[str, Any],
@@ -56,6 +69,7 @@ class PredictionService:
                 context,
                 prediction_timestamp=prediction_timestamp,
             )
+        context.setdefault("elo", self._elo_ratings())
         baseline = predict(fixture, context)
         historical_at = parse_timestamp(prediction_timestamp)
         if historical_at:
