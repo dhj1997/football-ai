@@ -220,6 +220,43 @@ function DecisionReport({
         aggregate.indexOf(Math.max(...aggregate))
       ]
     : null;
+  const outcomeOf = (probabilities: {
+    home: number;
+    draw: number;
+    away: number;
+  }) =>
+    (["home", "draw", "away"] as const)[
+      (
+        [probabilities.home, probabilities.draw, probabilities.away] as const
+      ).indexOf(
+        Math.max(probabilities.home, probabilities.draw, probabilities.away),
+      )
+    ];
+  const baselineProbabilities =
+    detail.prediction?.baseline?.probabilities ?? null;
+  const baselineKey = baselineProbabilities
+    ? outcomeOf(baselineProbabilities)
+    : null;
+  const modelOutcomes = report.models.map((model) => model.outcome);
+  const agreementTag = !modelOutcomes.length
+    ? null
+    : modelOutcomes.every((key) => key === modelOutcomes[0])
+      ? baselineKey && baselineKey !== modelOutcomes[0]
+        ? { label: "模型一致 · 基线分歧", tone: "info" }
+        : { label: "三方一致", tone: "success" }
+      : { label: "存在分歧", tone: "warning" };
+  const marketOdds = detail.context.odds;
+  const implied = marketOdds
+    ? (() => {
+        const raw = [
+          1 / marketOdds.home,
+          1 / marketOdds.draw,
+          1 / marketOdds.away,
+        ];
+        const total = raw[0] + raw[1] + raw[2];
+        return raw.map((value) => value / total) as [number, number, number];
+      })()
+    : null;
   const eligible = canCreatePrediction(detail.fixture);
   const hasEvidence = Boolean(detail.context.synced_at);
   const predictionExists = report.models.length > 0;
@@ -560,6 +597,50 @@ function DecisionReport({
                           ? "平局"
                           : "客胜"}
                     </mark>
+                    {agreementTag ? (
+                      <em className={`agreement-tag ${agreementTag.tone}`}>
+                        {agreementTag.label}
+                      </em>
+                    ) : null}
+                  </div>
+                ) : null}
+                {implied ? (
+                  <div className="consensus-row consensus-market">
+                    <strong>市场隐含</strong>
+                    {(["home", "draw", "away"] as const).map((key, index) => (
+                      <span key={key}>
+                        <b>{percent(implied[index])}</b>
+                        {aggregate ? (
+                          <small
+                            className={
+                              aggregate[index] - implied[index] > 0
+                                ? "edge-positive"
+                                : aggregate[index] - implied[index] < 0
+                                  ? "edge-negative"
+                                  : undefined
+                            }
+                          >
+                            {aggregate[index] - implied[index] > 0 ? "+" : ""}
+                            {(
+                              (aggregate[index] - implied[index]) *
+                              100
+                            ).toFixed(1)}
+                            %
+                          </small>
+                        ) : null}
+                        <i>
+                          <em
+                            className="market-bar"
+                            style={
+                              {
+                                "--report-probability": percent(implied[index]),
+                              } as CSSProperties
+                            }
+                          />
+                        </i>
+                      </span>
+                    ))}
+                    <mark className="market-mark">去水基准</mark>
                   </div>
                 ) : null}
                 {report.models.map((model) => (

@@ -8010,3 +8010,55 @@ main {
   background: var(--color-primary);
   font-weight: 800;
 }
+
+/* 一致性标签与市场隐含行 */
+.agreement-tag {
+  justify-self: end;
+  padding: 3px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.agreement-tag.success {
+  color: var(--color-success);
+  background: var(--color-success-surface);
+}
+.agreement-tag.info {
+  color: var(--info-text);
+  background: var(--color-info-surface);
+}
+.agreement-tag.warning {
+  color: var(--color-warning);
+  background: var(--color-warning-surface);
+}
+.consensus-row.consensus-market {
+  border-bottom: 1px solid var(--color-border);
+}
+.consensus-row.consensus-market strong {
+  color: var(--color-text-secondary);
+}
+.consensus-row.consensus-market .market-bar {
+  background: var(--color-text-muted);
+  opacity: 0.55;
+}
+.consensus-row.consensus-market small {
+  font-size: 10px;
+  font-weight: 700;
+}
+.consensus-row.consensus-market small.edge-positive {
+  color: var(--color-success);
+}
+.consensus-row.consensus-market small.edge-negative {
+  color: var(--color-danger);
+}
+.consensus-row.consensus-market mark.market-mark {
+  justify-self: end;
+  padding: 3px 6px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-subtle);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+}
