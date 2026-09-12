@@ -2,8 +2,8 @@
 :root {
   /* Semantic UI tokens. Keep these values as the source of truth. */
   /* Match-night dark theme: layered blue-black surfaces + pitch-green accent. */
-  --color-primary: #2bd97c;
-  --color-primary-hover: #4ae692;
+  --color-primary: #f0b23e;
+  --color-primary-hover: #f6c465;
   --color-background: #0b1016;
   --color-surface: #131a23;
   --color-surface-subtle: #1a2430;
@@ -12,12 +12,13 @@
   --color-text-primary: #e8eef5;
   --color-text-secondary: #9aa8b6;
   --color-text-muted: #64748b;
-  --color-success: #35d07f;
-  --color-success-surface: rgba(53, 208, 127, 0.12);
+  /* 国内习惯：红涨绿跌 */
+  --color-success: #ff7a76;
+  --color-success-surface: rgba(255, 122, 118, 0.12);
   --color-warning: #f4b64a;
   --color-warning-surface: rgba(244, 182, 74, 0.13);
-  --color-danger: #ff7a76;
-  --color-danger-surface: rgba(255, 122, 118, 0.12);
+  --color-danger: #4fd6a2;
+  --color-danger-surface: rgba(79, 214, 162, 0.12);
   --color-info-surface: rgba(96, 165, 250, 0.12);
 
   --font-family-display:
@@ -50,7 +51,7 @@
   --radius-lg: 8px;
   --radius-pill: 999px;
   --border-width: 1px;
-  --focus-ring: 0 0 0 3px rgba(43, 217, 124, 0.26);
+  --focus-ring: 0 0 0 3px rgba(240, 178, 62, 0.26);
   --elevation-1: 0 14px 34px rgba(0, 0, 0, 0.42);
 
   /* Legacy aliases retained while existing page selectors migrate. */
@@ -74,7 +75,7 @@
   --shadow-strong: 0 10px 30px rgba(0, 0, 0, 0.32);
   --scrollbar-thumb: #2c3d50;
   --scrollbar-thumb-hover: #3a5069;
-  --selection-bg: rgba(43, 217, 124, 0.28);
+  --selection-bg: rgba(240, 178, 62, 0.26);
   --selection-text: #ffffff;
   --sticky-bar: rgba(19, 26, 35, 0.95);
   --sticky-bar-strong: rgba(11, 16, 22, 0.96);
@@ -84,8 +85,8 @@
 }
 
 [data-theme="light"] {
-  --color-primary: #0f9d5e;
-  --color-primary-hover: #0b8a51;
+  --color-primary: #c8860d;
+  --color-primary-hover: #a97300;
   --color-background: #f2f5f7;
   --color-surface: #ffffff;
   --color-surface-subtle: #e9eef2;
@@ -94,20 +95,20 @@
   --color-text-primary: #182430;
   --color-text-secondary: #4d5f6f;
   --color-text-muted: #76879a;
-  --color-success: #0e8f56;
-  --color-success-surface: rgba(14, 143, 86, 0.1);
+  --color-success: #c0392b;
+  --color-success-surface: rgba(192, 57, 43, 0.09);
   --color-warning: #a96a10;
   --color-warning-surface: rgba(196, 124, 20, 0.12);
-  --color-danger: #cc4437;
-  --color-danger-surface: rgba(204, 68, 55, 0.09);
+  --color-danger: #1e7f52;
+  --color-danger-surface: rgba(30, 127, 82, 0.09);
   --color-info-surface: rgba(29, 111, 209, 0.09);
-  --focus-ring: 0 0 0 3px rgba(15, 157, 94, 0.25);
+  --focus-ring: 0 0 0 3px rgba(200, 134, 13, 0.25);
   --elevation-1: 0 12px 28px rgba(23, 34, 46, 0.1);
   --shadow-strong: 0 10px 28px rgba(23, 34, 46, 0.12);
   --scrollbar-thumb: #c3ccd6;
   --scrollbar-thumb-hover: #a9b6c2;
-  --selection-bg: rgba(15, 157, 94, 0.22);
-  --selection-text: #10331f;
+  --selection-bg: rgba(200, 134, 13, 0.2);
+  --selection-text: #4a3205;
   --sticky-bar: rgba(242, 245, 247, 0.95);
   --sticky-bar-strong: rgba(255, 255, 255, 0.96);
   --wash: rgba(13, 27, 42, 0.06);
