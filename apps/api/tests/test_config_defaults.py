@@ -25,3 +25,9 @@ def test_league_exposure_cap_allows_two_league_day_bets() -> None:
     assert settings.portfolio_max_daily_exposure == 0.10
     assert settings.portfolio_priority_league_key == "csl"
     assert settings.portfolio_priority_team_name == "武汉三镇"
+
+
+def test_baseline_shrinks_toward_market_by_default() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.portfolio_baseline_market_shrinkage == 0.35

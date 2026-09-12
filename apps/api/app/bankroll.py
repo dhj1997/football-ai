@@ -30,6 +30,29 @@ def _candidate_value(candidate: Any, key: str) -> Any:
     return candidate.get(key) if isinstance(candidate, Mapping) else getattr(candidate, key, None)
 
 
+def _shrink_toward_market(probabilities: dict[str, Any], odds: Any, shrinkage: float) -> dict[str, Any]:
+    """Blend baseline probabilities with the de-vig market prior."""
+
+    if not isinstance(odds, Mapping) or shrinkage <= 0:
+        return probabilities
+    try:
+        implied = {key: 1.0 / float(odds.get(key)) for key in ("home", "draw", "away")}
+    except (TypeError, ValueError, ZeroDivisionError):
+        return probabilities
+    overround = sum(implied.values())
+    if overround <= 0:
+        return probabilities
+    blended: dict[str, Any] = {}
+    for key in ("home", "draw", "away"):
+        market_probability = implied[key] / overround
+        model_probability = float(probabilities.get(key) or 0)
+        blended[key] = round((1.0 - shrinkage) * model_probability + shrinkage * market_probability, 4)
+    total = sum(float(value) for value in blended.values())
+    if total <= 0:
+        return probabilities
+    return {key: round(float(value) / total, 4) for key, value in blended.items()}
+
+
 def _candidate_side(candidate: Any) -> str | None:
     market = str(_candidate_value(candidate, "market") or "")
     selection = str(_candidate_value(candidate, "selection") or "")
@@ -173,11 +196,16 @@ class BankrollService:
         probabilities = baseline.get("probabilities") or {}
         if not probabilities:
             return None
+        shrunk = _shrink_toward_market(
+            probabilities,
+            (context.get("odds") or {}),
+            self.portfolio_config.baseline_market_shrinkage,
+        )
         working_prediction = deepcopy(prediction)
         working_prediction["model_key"] = "poisson"
         working_prediction["model_version"] = baseline.get("model_version") or "poisson-baseline"
-        working_prediction["probabilities"] = deepcopy(probabilities)
-        working_prediction["model_probabilities"] = deepcopy(probabilities)
+        working_prediction["probabilities"] = deepcopy(shrunk)
+        working_prediction["model_probabilities"] = deepcopy(shrunk)
         working_prediction["ai"] = {"status": "completed", "provider": "poisson"}
         working_prediction["forecast_confidence"] = 0.0
         working_prediction["decision"] = {

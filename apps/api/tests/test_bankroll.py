@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import pytest
 
 from app.bankroll import BankrollService
 from app.database import PredictionRepository
@@ -366,3 +367,22 @@ def test_fixed_stake_placement_still_respects_league_cap(tmp_path) -> None:
     assert second is not None
     # League cap = 4% x 3000 equity = 120; first bet used 100 -> only 20 left.
     assert second["stake"] == 20.0
+
+
+def test_poisson_fallback_probabilities_shrink_toward_market_prior(tmp_path) -> None:
+    """Thin xG data must not contradict the market without a shrinkage haircut."""
+
+    repository = PredictionRepository(str(tmp_path / "shrink.db"))
+    repository.initialize()
+    service = BankrollService(repository).configure("deepseek", "legacy")
+    poisson_view = prediction("poisson-view")
+    poisson_view["baseline"] = {"probabilities": {"home": 0.25, "draw": 0.25, "away": 0.5}}
+    poisson_view["decision"]["selection"] = "away"
+    market = {**context()["odds"], "home": 2.0, "draw": 3.4, "away": 3.6}
+
+    candidate = service.candidate_for_poisson(poisson_view, fixture(), {"odds": market})
+
+    assert candidate is not None
+    assert candidate.selection == "away"
+    # 0.65 x 0.5 + 0.35 x 0.2592 (de-vig away) = 0.4157
+    assert candidate.model_probability == pytest.approx(0.4157, abs=0.001)

@@ -10,6 +10,21 @@ from typing import Iterable
 
 MODEL_VERSION = "poisson-pure-v0.2"
 MAX_GOALS = 8
+# Dixon-Coles low-score correlation. Negative rho shifts probability mass
+# from 1-0/0-1 into 0-0/1-1 (independent Poisson underestimates draws).
+POISSON_DC_RHO = -0.10
+
+
+def _dixon_coles_tau(home_goals: int, away_goals: int, home_xg: float, away_xg: float) -> float:
+    if home_goals == 0 and away_goals == 0:
+        return 1.0 - home_xg * away_xg * POISSON_DC_RHO
+    if home_goals == 0 and away_goals == 1:
+        return 1.0 + home_xg * POISSON_DC_RHO
+    if home_goals == 1 and away_goals == 0:
+        return 1.0 + away_xg * POISSON_DC_RHO
+    if home_goals == 1 and away_goals == 1:
+        return 1.0 - POISSON_DC_RHO
+    return 1.0
 
 
 def _poisson(lam: float, goals: int) -> float:
@@ -118,6 +133,14 @@ def predict(fixture: dict, context: dict) -> dict:
             )
     matrix_total = sum(item[2] for item in score_matrix)
     score_matrix = [(home, away, probability / matrix_total) for home, away, probability in score_matrix]
+
+    # Dixon-Coles low-score correction: independent Poisson underestimates
+    # 0-0/1-1 and overstates 1-0/0-1. Negative rho moves mass accordingly.
+    matrix_total = sum(probability * max(0.0, _dixon_coles_tau(home, away, home_xg, away_xg)) for home, away, probability in score_matrix)
+    score_matrix = [
+        (home, away, probability * max(0.0, _dixon_coles_tau(home, away, home_xg, away_xg)) / matrix_total)
+        for home, away, probability in score_matrix
+    ]
 
     model_1x2 = [
         sum(probability for home, away, probability in score_matrix if home > away),

@@ -148,6 +148,7 @@ class PortfolioConfig:
     max_drawdown: float = 0.30
     min_data_completeness: float = 0.70
     max_league_candidates: int | None = 2
+    baseline_market_shrinkage: float = 0.35
     ev_weight: float = 1.0
     edge_weight: float = 1.0
     confidence_weight: float = 0.25

@@ -56,3 +56,21 @@ def test_predict_exposes_over_under_totals_forecast() -> None:
     assert totals["line"] == 2.5
     assert totals["over"] + totals["under"] == pytest.approx(1.0, abs=0.001)
     assert 0.05 <= totals["over"] <= 0.95
+
+
+def test_dixon_coles_negative_rho_shifts_mass_into_draws_and_unders(monkeypatch) -> None:
+    import app.prediction as prediction_module
+
+    fixture = {"id": "fixture-1", "status": "scheduled", "is_demo": False}
+    context = demo_context(fixture["id"])
+
+    monkeypatch.setattr(prediction_module, "POISSON_DC_RHO", 0.0)
+    plain = predict(fixture, context)
+    monkeypatch.setattr(prediction_module, "POISSON_DC_RHO", -0.12)
+    adjusted = predict(fixture, context)
+
+    assert adjusted["probabilities"]["draw"] > plain["probabilities"]["draw"]
+    # The four adjusted cells are all under 2.5 goals, so totals barely move;
+    # the correction redistributes inside the low-score region.
+    assert abs(adjusted["totals_forecast"]["over"] - plain["totals_forecast"]["over"]) < 0.01
+    assert adjusted["probabilities"]["home"] + adjusted["probabilities"]["draw"] + adjusted["probabilities"]["away"] == pytest.approx(1.0, abs=0.001)

@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     portfolio_max_drawdown: float = 0.30
     portfolio_min_data_completeness: float = 0.70
     portfolio_max_league_candidates: int | None = 2
+    # Thin xG baselines get shrunk toward the de-vig market prior (weight on
+    # the market) before they may enter candidate selection.
+    portfolio_baseline_market_shrinkage: float = 0.35
     # Selection priority: CSL matches rank first, and the priority team above them.
     portfolio_priority_league_key: str = "csl"
     portfolio_priority_team_name: str = "武汉三镇"
