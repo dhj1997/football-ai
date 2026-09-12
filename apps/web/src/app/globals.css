@@ -8130,3 +8130,57 @@ main {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* 执行决定头部的预测方向 */
+.execution-verdict {
+  padding: 3px 9px;
+  color: var(--color-text-primary);
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+/* 比赛页首屏结论条 */
+.verdict-strip {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.verdict-strip > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.verdict-strip small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.verdict-strip strong {
+  font-size: 14px;
+}
+.verdict-strip .verdict-pick {
+  color: var(--color-primary);
+  font-size: 16px;
+  font-weight: 800;
+}
+.verdict-strip .verdict-bet {
+  color: var(--color-success);
+}
+.verdict-strip .verdict-no-bet {
+  color: var(--color-text-secondary);
+}
+@media (max-width: 800px) {
+  .verdict-strip {
+    grid-template-columns: 1fr;
+  }
+}

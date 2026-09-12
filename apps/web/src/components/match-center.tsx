@@ -32,6 +32,7 @@ import { Tabs } from "@/components/ui";
 import {
   fetchFixtureDetail,
   fetchPredictionMetrics,
+  fetchStandings,
   readJson,
 } from "@/lib/api";
 import { formatHandicapSide } from "@/lib/handicap";
@@ -922,6 +923,106 @@ function MatchOdds({ detail }: { detail: FixtureDetail }) {
   );
 }
 
+function VerdictStrip({ detail }: { detail: FixtureDetail }) {
+  const [ranks, setRanks] = useState<{ home: string; away: string } | null>(
+    null,
+  );
+  const prediction = detail.prediction;
+  const report = deriveMatchReport(detail);
+  const probabilities: Record<"home" | "draw" | "away", number | undefined> =
+    prediction?.probabilities ?? { home: undefined, draw: undefined, away: undefined };
+  const pick = (prediction?.forecast?.predicted_outcome ??
+    prediction?.predicted_outcome ??
+    null) as "home" | "draw" | "away" | null;
+  const pickLabel = pick
+    ? { home: "主胜", draw: "平局", away: "客胜" }[pick]
+    : null;
+  const execution = prediction?.execution ?? prediction?.decision;
+  const executionText =
+    execution?.status === "bet"
+      ? "执行模拟下注"
+      : execution?.reason
+        ? "暂不下注"
+        : "待预测";
+  useEffect(() => {
+    let active = true;
+    void fetchStandings()
+      .then((response) => {
+        if (!active) return;
+        const snapshot = (response.items ?? []).find(
+          (item) =>
+            detail.fixture.league_key &&
+            item.league_key === detail.fixture.league_key,
+        );
+        const rows = snapshot?.standings ?? [];
+        const find = (name?: string) => {
+          const row = rows.find(
+            (item) =>
+              name &&
+              (item.team.name === name ||
+                item.team.name.includes(name) ||
+                (name ?? "").includes(item.team.name)),
+          );
+          return row ? `第 ${row.rank} 位 · ${row.points} 分` : "暂无";
+        };
+        setRanks({
+          home: find(detail.fixture.home_team.name),
+          away: find(detail.fixture.away_team.name),
+        });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [
+    detail.fixture.league_key,
+    detail.fixture.home_team.name,
+    detail.fixture.away_team.name,
+  ]);
+  return (
+    <div className="verdict-strip" aria-label="AI 结论速览">
+      <div>
+        <small>AI 综合预测</small>
+        <strong>
+          {pick && probabilities[pick] != null ? (
+            <>
+              <span className="verdict-pick">{pickLabel}</span> ·{" "}
+              {Math.round(probabilities[pick] * 100)}%
+              <small style={{ marginLeft: 8 }}>
+                主 {Math.round((probabilities.home ?? 0) * 100)}% / 平{" "}
+                {Math.round((probabilities.draw ?? 0) * 100)}% / 客{" "}
+                {Math.round((probabilities.away ?? 0) * 100)}%
+              </small>
+            </>
+          ) : report.models.length ? (
+            "生成中，暂无结论"
+          ) : (
+            "暂无预测"
+          )}
+        </strong>
+      </div>
+      <div>
+        <small>执行决定</small>
+        <strong
+          className={
+            execution?.status === "bet" ? "verdict-bet" : "verdict-no-bet"
+          }
+        >
+          {executionText}
+        </strong>
+      </div>
+      <div>
+        <small>联赛排名</small>
+        <strong>
+          {ranks
+            ? `${detail.fixture.home_team.name} ${ranks.home} · ${detail.fixture.away_team.name} ${ranks.away}`
+            : "读取中"}
+        </strong>
+      </div>
+    </div>
+  );
+}
+
 export function MatchCenter({ fixtureId }: { fixtureId: string }) {
   const [detail, setDetail] = useState<FixtureDetail | null>(null);
   const [activeTab, setActiveTab] = useState<MatchTab>("decision");
@@ -1014,6 +1115,7 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
   return (
     <main className="match-center-page research-match-page">
       <MatchHeader detail={detail} />
+      <VerdictStrip detail={detail} />
       <Tabs
         className="match-tabs"
         ariaLabel="比赛研究页签"

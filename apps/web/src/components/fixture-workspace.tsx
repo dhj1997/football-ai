@@ -1818,6 +1818,24 @@ export function ProbabilityPanel({
         <header>
           <span>03 · 执行决定</span>
           <strong>{executionLabel}</strong>
+          <em className="execution-verdict">
+            预测：
+            {outcomeText(
+              prediction.forecast?.predicted_outcome ??
+                prediction.predicted_outcome,
+            )}
+            （
+            {percent(
+              prediction.probabilities?.[
+                (
+                  prediction.forecast?.predicted_outcome ??
+                    prediction.predicted_outcome ??
+                    "home"
+                ) as "home" | "draw" | "away"
+              ] ?? 0,
+            )}
+            ）
+          </em>
           <small>单注 10%–25% · 每日 10% · 单联赛 4%</small>
         </header>
         <div>
