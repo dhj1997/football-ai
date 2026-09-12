@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.dongqiudi_provider import DongqiudiProvider
+from app.data import CHINA_TZ
 from app.dongqiudi_sync import DongqiudiSyncService, _dongqiudi_recent_matches
 
 
@@ -71,6 +72,10 @@ async def test_dongqiudi_match_result_maps_detail_sample() -> None:
 
 @pytest.mark.asyncio
 async def test_dongqiudi_score_sync_updates_existing_fixture_only() -> None:
+    # The score sync only touches fixtures inside the rolling window
+    # (Beijing yesterday -> +36h), so the fixture must be dated in-window.
+    in_window_date = datetime.now(CHINA_TZ).date().isoformat()
+
     class Provider:
         configured = True
 
@@ -91,7 +96,7 @@ async def test_dongqiudi_score_sync_updates_existing_fixture_only() -> None:
                 "id": "sportsdb-2506206",
                 "external_ids": {"dongqiudi": "54493217"},
                 "league_key": "laliga",
-                "fixture_date": "2026-09-08",
+                "fixture_date": in_window_date,
                 "kickoff": "2026-09-07T17:00:00+00:00",
                 "status": "scheduled",
                 "provider_status": "Fixture",
