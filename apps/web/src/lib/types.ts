@@ -829,3 +829,36 @@ export interface TeamDetailResponse {
   item: TeamSnapshot;
   sync_status: "fresh" | "updated" | "stale" | "failed" | "unconfigured";
 }
+
+export interface BacktestWindow {
+  window_id: string;
+  test_start: string;
+  test_end: string;
+  train_samples: number;
+  eligible_samples: number;
+  forecast_metrics: {
+    baseline?: {
+      samples?: number;
+      brier?: number | null;
+      log_loss?: number | null;
+      rps?: number | null;
+    };
+    p3_ensemble?: { samples?: number; brier?: number | null };
+  };
+  betting_metrics: { bets?: number; roi?: number | null; pnl?: number };
+}
+export interface BacktestLeagueReport {
+  status: string;
+  windows: BacktestWindow[];
+  runs: number;
+  total_fixtures: number;
+  eligible_fixtures: number;
+  sample_size_warning?: string;
+  leakage_check: { passed: boolean };
+}
+export interface BacktestResponse {
+  global: BacktestLeagueReport;
+  CSL?: BacktestLeagueReport;
+  EPL?: BacktestLeagueReport;
+  LAL?: BacktestLeagueReport;
+}

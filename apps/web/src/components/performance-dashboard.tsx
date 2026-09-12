@@ -15,6 +15,7 @@ import {
   Tabs,
 } from "@/components/ui";
 import {
+  fetchBacktestReport,
   fetchBankroll,
   fetchBets,
   fetchDecisionAudits,
@@ -24,6 +25,7 @@ import {
 } from "@/lib/api";
 import { formatHandicapSide } from "@/lib/handicap";
 import type {
+  BacktestResponse,
   BankrollSummary,
   DecisionAudit,
   LeagueFilter,
@@ -278,6 +280,7 @@ export function PerformanceDashboard() {
           />
           <StrategyLeaderboard strategies={strategies} />
           <EvaluationSummary metrics={metrics} />
+          <BacktestPanel />
           <ModelEvaluationPanel />
           <AsianOutcomeStrip metrics={metrics} />
           <EquityCurve
@@ -291,6 +294,208 @@ export function PerformanceDashboard() {
         </>
       ) : null}
     </main>
+  );
+}
+
+function BacktestPanel() {
+  const [report, setReport] = useState<BacktestResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [league, setLeague] = useState<"global" | "CSL" | "EPL" | "LAL">(
+    "global",
+  );
+  useEffect(() => {
+    let active = true;
+    void fetchBacktestReport()
+      .then((result) => {
+        if (active) setReport(result);
+      })
+      .catch((reason: unknown) => {
+        if (active)
+          setError(
+            reason instanceof Error ? reason.message : "回测数据请求失败",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const leagueKeys = ["global", "CSL", "EPL", "LAL"] as const;
+  const leagueLabels: Record<(typeof leagueKeys)[number], string> = {
+    global: "全联赛",
+    CSL: "中超",
+    EPL: "英超",
+    LAL: "西甲",
+  };
+  const current = report?.[league];
+  const windows = (current?.windows ?? []).filter(
+    (w) => (w.eligible_samples ?? 0) > 0,
+  );
+  const width = 880;
+  const height = 150;
+  const pad = 16;
+  const brierValues = windows
+    .map(
+      (w) =>
+        w.forecast_metrics?.baseline?.brier ??
+        w.forecast_metrics?.p3_ensemble?.brier,
+    )
+    .filter((v): v is number => v != null);
+  const ensembleValues = windows
+    .map((w) => w.forecast_metrics?.p3_ensemble?.brier)
+    .filter((v): v is number => v != null);
+  const all = [...brierValues, ...ensembleValues];
+  const min = all.length ? Math.min(...all) * 0.9 : 0;
+  const max = all.length ? Math.max(...all) * 1.1 : 1;
+  const points = (values: number[]) =>
+    values
+      .map((v, i) => {
+        const x =
+          pad +
+          (values.length === 1
+            ? (width - pad * 2) / 2
+            : (i * (width - pad * 2)) / (values.length - 1));
+        const y =
+          height - pad - ((v - min) / (max - min || 1)) * (height - pad * 2);
+        return `${x},${y}`;
+      })
+      .join(" ");
+  const avg = (values: number[]) =>
+    values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  return (
+    <section className="performance-section" aria-label="历史回测">
+      <SectionHeader
+        className="team-section-heading"
+        eyebrow="ROLLING BACKTEST"
+        title="历史滚动回测"
+        meta={
+          current
+            ? `${windows.length} 个有效窗口 · 泄漏检查${current.leakage_check?.passed ? "通过" : "未通过"}`
+            : "P4"
+        }
+      />
+      {error ? (
+        <ErrorState>{error}</ErrorState>
+      ) : !report ? (
+        <LoadingState>正在计算滚动回测</LoadingState>
+      ) : (
+        <>
+          <Tabs
+            className="league-filter backtest-league-tabs"
+            ariaLabel="回测联赛"
+            value={league}
+            onChange={(key) => setLeague(key)}
+            items={leagueKeys.map((key) => ({
+              value: key,
+              label: leagueLabels[key],
+            }))}
+          />
+          {windows.length ? (
+            <>
+              <div className="backtest-stats">
+                <div>
+                  <small>平均 Brier（基线）</small>
+                  <strong>{avg(brierValues)?.toFixed(3) ?? "-"}</strong>
+                </div>
+                <div>
+                  <small>平均 Brier（集成）</small>
+                  <strong>{avg(ensembleValues)?.toFixed(3) ?? "-"}</strong>
+                </div>
+                <div>
+                  <small>有效样本窗口</small>
+                  <strong>
+                    {windows.length} / {current?.runs ?? 0}
+                  </strong>
+                </div>
+                <div>
+                  <small>泄漏检查</small>
+                  <strong>
+                    {current?.leakage_check?.passed ? "通过" : "未通过"}
+                  </strong>
+                </div>
+              </div>
+              <div className="equity-chart backtest-chart">
+                <svg
+                  viewBox={`0 0 ${width} ${height}`}
+                  role="img"
+                  aria-label="滚动回测 Brier 曲线"
+                  preserveAspectRatio="none"
+                >
+                  <line
+                    x1={pad}
+                    y1={height - pad}
+                    x2={width - pad}
+                    y2={height - pad}
+                  />
+                  {brierValues.length > 1 && (
+                    <polyline points={points(brierValues)} />
+                  )}
+                  {ensembleValues.length > 1 && (
+                    <polyline
+                      className="ensemble-line"
+                      points={points(ensembleValues)}
+                    />
+                  )}
+                </svg>
+                <span>基线 · 集成 双线对比，越低越好</span>
+              </div>
+            </>
+          ) : (
+            <EmptyState className="performance-empty">
+              结算样本不足，暂无可回测窗口
+            </EmptyState>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function exportCsv(filename: string, rows: Array<Record<string, unknown>>) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const newline = String.fromCharCode(10);
+  const esc = (value: unknown) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    return text.includes(",") ||
+      text.includes(String.fromCharCode(34)) ||
+      text.includes(newline)
+      ? String.fromCharCode(34) +
+          text.replace(/"/g, String.fromCharCode(34, 34)) +
+          String.fromCharCode(34)
+      : text;
+  };
+  const csv = [
+    headers.join(","),
+    ...rows.map((row) => headers.map((h) => esc(row[h])).join(",")),
+  ].join(newline);
+  const bom = String.fromCharCode(65279);
+  const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function ExportButton({
+  filename,
+  rows,
+  label,
+}: {
+  filename: string;
+  rows: Array<Record<string, unknown>>;
+  label: string;
+}) {
+  return (
+    <button
+      className="table-export"
+      type="button"
+      onClick={() => exportCsv(filename, rows)}
+      disabled={!rows.length}
+    >
+      导出{label}
+    </button>
   );
 }
 
@@ -478,6 +683,24 @@ function DecisionAuditTable({ decisions }: { decisions: DecisionAudit[] }) {
         eyebrow="DECISION AUDIT"
         title="逐场策略决策"
         meta={`${decisions.length} 场`}
+      />
+      <ExportButton
+        filename="策略决策.csv"
+        label="决策"
+        rows={decisions.map((item) => ({
+          比赛: `${item.home_team ?? ""} vs ${item.away_team ?? ""}`,
+          日期: item.fixture_date ?? "",
+          联赛: item.league_key ?? "",
+          模型: item.model_version ?? "",
+          策略: `${item.strategy_name} ${item.strategy_version}`,
+          建议: item.model_recommendation_status ?? "",
+          执行: item.execution_status,
+          市场方向: item.considered_selection ?? item.selection ?? "",
+          赔率: item.price ?? "",
+          优势: item.expected_edge ?? "",
+          仓位: item.stake_fraction ?? "",
+          原因: item.execution_reason ?? "",
+        }))}
       />
       {decisions.length ? (
         <>
@@ -929,6 +1152,24 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
         title="模拟下注明细"
         meta={`${bets.length} 笔`}
       />
+      <ExportButton
+        filename="模拟下注.csv"
+        label="下注"
+        rows={bets.map((bet) => ({
+          比赛: `${bet.home_team} vs ${bet.away_team}`,
+          日期: bet.fixture_date,
+          联赛: bet.league_key,
+          市场: bet.market,
+          选择: bet.selection,
+          让球线: bet.handicap_line ?? "",
+          赔率: bet.odds,
+          金额: bet.stake,
+          状态: bet.status,
+          结果: bet.settlement_result ?? "",
+          净盈亏: bet.net_profit ?? "",
+          下注时间: bet.placed_at,
+        }))}
+      />
       {bets.length ? (
         <div className="team-table-scroll">
           <table className="performance-table bet-ledger">
@@ -1014,6 +1255,23 @@ function SettlementHistory({ metrics }: { metrics: PredictionMetrics }) {
         eyebrow="PREDICTION EVALUATION"
         title="预测结算记录"
         meta={`${metrics.sample_size} 个样本`}
+      />
+      <ExportButton
+        filename="预测结算.csv"
+        label="结算"
+        rows={metrics.items.map((item) => ({
+          比赛: `${item.home_team ?? ""} vs ${item.away_team ?? ""}`,
+          日期: item.fixture_date,
+          联赛: item.league_key,
+          预测: item.predicted_outcome,
+          实际: item.actual_outcome,
+          比分: `${item.score.home}:${item.score.away}`,
+          命中: item.correct,
+          Brier: item.brier_score,
+          LogLoss: item.log_loss ?? "",
+          RPS: item.rps ?? "",
+          模型版本: item.model_version,
+        }))}
       />
       {metrics.items.length ? (
         <>
