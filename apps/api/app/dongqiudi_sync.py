@@ -32,6 +32,7 @@ class DongqiudiSyncService:
         self._semaphore = asyncio.Semaphore(max(1, int(concurrency)))
         self._lock = asyncio.Lock()
         self._team_locks: dict[str, asyncio.Lock] = {}
+        self._expected_team_names: dict[str, str] = {}
 
     @property
     def configured(self) -> bool:
@@ -244,6 +245,10 @@ class DongqiudiSyncService:
         league_key = str(fixture.get("league_key") or "unknown")
         free_data = dict(fixture.get("free_team_data") or {})
         context = fixture.get("evidence") or unavailable_context()
+        self._expected_team_names = {
+            side: str(((fixture.get(f"{side}_team") or {}).get("name")) or "")
+            for side in ("home", "away")
+        }
         results = await asyncio.gather(
             *(self._sync_one_team(league_key, side, (fixture.get(f"{side}_team") or {}).get("provider_id")) for side in ("home", "away")),
         )
@@ -256,7 +261,9 @@ class DongqiudiSyncService:
                 continue
             free_data[side] = {"profile": cached.get("team") or {}, "squad": cached.get("roster") or [], "source": "dongqiudi"}
             context.setdefault("teams", {})[side] = cached.get("team") or {}
-            context.setdefault("squads", {})[side] = cached.get("roster") or []
+            roster = cached.get("roster") or []
+            if roster:
+                context.setdefault("squads", {})[side] = roster
         fixture["free_team_data"] = free_data
         fixture["free_team_data_synced_at"] = fixture.get("dongqiudi_sync", {}).get("last_synced_at")
         if errors:
@@ -274,6 +281,11 @@ class DongqiudiSyncService:
                 return side, cached, None
             try:
                 cached = await self.provider.team(team_id)
+                fetched = str((cached.get("team") or {}).get("name") or "")
+                if side == "home" or side == "away":
+                    expected = str((self._expected_team_names.get(side) or ""))
+                    if fetched and expected and fetched not in expected and expected not in fetched:
+                        return side, None, f"球队名不匹配，疑似串号: 期望 {expected}, 拉到 {fetched}"
                 cached["league_key"] = league_key
                 self.repository.save_team_snapshot(cached)
                 return side, cached, None
