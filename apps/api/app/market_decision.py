@@ -240,6 +240,25 @@ def assess_markets(prediction: dict[str, Any], odds: Any) -> dict[str, Any]:
                     "probability_source": probability_source,
                 }
             )
+    totals = prediction.get("totals_forecast") or {}
+    market_ou_line = odds.get("over_under")
+    over_price = _positive_price(odds.get("over_odd"))
+    under_price = _positive_price(odds.get("under_odd"))
+    if (
+        totals.get("line") is not None
+        and market_ou_line is not None
+        and over_price
+        and under_price
+        and math.isclose(float(market_ou_line), float(totals["line"]), abs_tol=1e-9)
+    ):
+        over_probability = _probability(totals.get("over"))
+        under_probability = _probability(totals.get("under"))
+        if over_probability is not None and under_probability is not None:
+            implied = {"over": 1 / over_price, "under": 1 / under_price}
+            ou_overround = sum(implied.values())
+            for selection, price, probability in (("over", over_price, over_probability), ("under", under_price, under_probability)):
+                rows.append(_market_row("over_under", selection, price, probability, implied[selection] / ou_overround, probability * price - 1, odds.get("bookmaker")))
+
     odds_updated_at = odds.get("updated_at") or odds.get("captured_at")
     return {
         "odds_status": "stale" if _odds_stale(odds_updated_at) else "fresh",

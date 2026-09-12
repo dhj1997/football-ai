@@ -126,7 +126,7 @@ class DongqiudiProvider:
         }
 
     async def odds(self, match_id: str | int) -> dict[str, Any]:
-        """Return only Bet365 and Crown European/Asian odds."""
+        """Return only Bet365 and Crown European/Asian/over-under odds."""
 
         match_id = str(match_id)
         payload = await self._get_json(
@@ -135,7 +135,7 @@ class DongqiudiProvider:
         )
         captured_at = datetime.now(UTC).replace(microsecond=0).isoformat()
         bookmakers: dict[str, dict[str, Any]] = {}
-        for market_key, market_name in (("euro", "1x2"), ("asia", "asian_handicap")):
+        for market_key, market_name in (("euro", "1x2"), ("asia", "asian_handicap"), ("size", "over_under")):
             for item in payload.get(market_key) or []:
                 bookmaker_key = self._SOURCE_BY_AREA.get(str(item.get("area") or "").strip())
                 if not bookmaker_key:
@@ -324,6 +324,9 @@ class DongqiudiProvider:
     def _map_odds_state(state: dict[str, Any], market: str) -> dict[str, Any]:
         if market == "1x2":
             return {"home": _number(state.get("homeWin")), "draw": _number(state.get("draw")), "away": _number(state.get("awayWin")), "updated_at": _epoch_iso(state.get("ts"))}
+        if market == "over_under":
+            # size market: homeWin = over water, awayWin = under water, draw = line.
+            return {"over_odd": _hongkong_water_to_decimal(state.get("homeWin")), "under_odd": _hongkong_water_to_decimal(state.get("awayWin")), "line": _number(state.get("draw_value")) or _number(state.get("draw")), "updated_at": _epoch_iso(state.get("ts"))}
         # Asian prices arrive as Hong Kong water (e.g. 0.93 = win pays 0.93 per
         # unit). The pipeline prices handicap rows in decimal odds, so convert.
         return {"home_odd": _hongkong_water_to_decimal(state.get("homeWin")), "away_odd": _hongkong_water_to_decimal(state.get("awayWin")), "label": state.get("draw"), "line": _number(state.get("draw_value")), "updated_at": _epoch_iso(state.get("ts"))}

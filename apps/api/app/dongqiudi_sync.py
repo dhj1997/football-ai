@@ -209,6 +209,12 @@ class DongqiudiSyncService:
             odds.get("bookmakers") or {},
             captured_at=odds.get("captured_at") or odds.get("updated_at") or now,
         )
+        over_under = _preferred_over_under(odds.get("bookmakers") or {}, captured_at=odds.get("captured_at") or odds.get("updated_at") or now)
+        if over_under:
+            if preferred is None:
+                preferred = over_under
+            else:
+                preferred = {**preferred, **over_under}
         if preferred:
             context["odds"] = preferred
         _apply_dongqiudi_analysis(context, analysis, now)
@@ -327,6 +333,30 @@ def _preferred_odds(bookmakers: dict[str, Any], *, captured_at: str | None = Non
             if asia.get("line") is not None and asia.get("home_odd") and asia.get("away_odd"):
                 return candidate
     return fallback
+
+
+def _preferred_over_under(bookmakers: dict[str, Any], *, captured_at: str | None = None) -> dict[str, Any] | None:
+    for key in ("bet365", "crown"):
+        item = bookmakers.get(key) or {}
+        ou = (item.get("over_under") or {}).get("current") or {}
+        line = _number(ou.get("line"))
+        if line is not None and ou.get("over_odd") and ou.get("under_odd"):
+            return {
+                "over_under": line,
+                "over_odd": ou.get("over_odd"),
+                "under_odd": ou.get("under_odd"),
+                "updated_at": ou.get("updated_at") or item.get("updated_at") or captured_at,
+                "captured_at": captured_at,
+                "source": "dongqiudi",
+            }
+    return None
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _apply_dongqiudi_analysis(context: dict[str, Any], analysis: dict[str, Any], updated_at: str) -> None:
@@ -528,6 +558,13 @@ def _save_odds_snapshots(repository: Any, fixture_id: str, odds: dict[str, Any])
             for selection, key in (("home_handicap", "home_odd"), ("away_handicap", "away_odd")):
                 if current_asia.get(key) is not None:
                     quotes.append({"market": "asian_handicap", "selection": selection, "line": line, "line_label": current_asia.get("label"), "price": current_asia[key], "initial_price": initial_asia.get(key), "initial_line": _canonical_line(initial_asia.get("line"), initial_euro), "bookmaker": item.get("name") or bookmaker_key, "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_asia.get("updated_at") or captured_at})
+        ou = item.get("over_under") or {}
+        current_ou = ou.get("current") or {}
+        ou_line = _number(current_ou.get("line"))
+        if ou_line is not None:
+            for selection, key in (("over", "over_odd"), ("under", "under_odd")):
+                if current_ou.get(key) is not None:
+                    quotes.append({"market": "over_under", "selection": selection, "line": ou_line, "price": current_ou[key], "initial_price": (ou.get("initial") or {}).get(key), "bookmaker": item.get("name") or bookmaker_key, "source": "dongqiudi", "captured_at": captured_at, "source_updated_at": current_ou.get("updated_at") or captured_at})
         if not quotes:
             continue
         encoded = json.dumps({"fixture_id": fixture_id, "bookmaker": bookmaker_key, "quotes": quotes}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()

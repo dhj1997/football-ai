@@ -177,3 +177,12 @@ def test_metrics_expose_forecast_market_portfolio_layers_and_quality_gate(tmp_pa
     assert report["quality_gate"]["mode"] == "SHADOW_ONLY"
     assert "MIN_CLV_SAMPLES" in report["quality_gate"]["failures"]
     assert report["experiment"]["execution_config_version"] == "deepseek:baseline:v1"
+
+
+def test_over_under_settlement_uses_total_goals() -> None:
+    over = {"market": "over_under", "handicap_line": 2.5, "stake": 20, "odds": 1.85}
+    push_line = {"market": "over_under", "handicap_line": 2.0, "stake": 20, "odds": 1.85}
+
+    assert _bet_return(over, 0, None, total_goals=3) == ("full_win", 37.0)
+    assert _bet_return(over, 0, None, total_goals=2) == ("full_loss", 0.0)
+    assert _bet_return(push_line, 0, None, total_goals=2) == ("push", 20.0)

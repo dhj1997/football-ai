@@ -823,11 +823,11 @@ function outcomeText(value?: string) {
 }
 
 function marketText(value?: string) {
-  return value ? ({ "1x2": "胜平负", asian_handicap: "亚洲盘", no_bet: "不下注" }[value] ?? value) : "-";
+  return value ? ({ "1x2": "胜平负", asian_handicap: "亚洲盘", over_under: "大小球", no_bet: "不下注" }[value] ?? value) : "-";
 }
 
 function selectionText(value?: string) {
-  return value ? ({ home: "主胜", draw: "平局", away: "客胜", home_handicap: "主队亚洲盘", away_handicap: "客队亚洲盘", none: "无" }[value] ?? value) : "-";
+  return value ? ({ home: "主胜", draw: "平局", away: "客胜", home_handicap: "主队亚洲盘", away_handicap: "客队亚洲盘", over: "大球", under: "小球", none: "无" }[value] ?? value) : "-";
 }
 
 function betSelectionText(market?: string, selection?: string, line?: number | null) {

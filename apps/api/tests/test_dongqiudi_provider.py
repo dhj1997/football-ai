@@ -403,10 +403,10 @@ async def test_fixtures_fetch_future_days_from_schedule_list() -> None:
             self.calls.append((url, dict(params)))
             if url.endswith("/schedule_list"):
                 assert params["tab_type"] == "fixture"
-                assert params["start"].startswith("2026-09-12")
+                assert params["start"].startswith(("2099-08-26", "2099-08-27", "2099-08-28"))
                 return {"data": {"matches": [{
                     "match_id": "54483630",
-                    "match_timestamp": 1789221600,
+                    "match_timestamp": int(datetime(2099, 8, 28, 4, 0, tzinfo=UTC).timestamp()),
                     "status": "Fixture",
                     "competition": {"id": "1", "name": "英超", "area_name": "英格兰"},
                     "team_A": {"id": "31", "name": "伯恩茅斯"},
@@ -414,7 +414,7 @@ async def test_fixtures_fetch_future_days_from_schedule_list() -> None:
                 }]}}
             return {"data": {"matches": [{
                 "match_id": "54493234",
-                "match_timestamp": 1789153200,
+                "match_timestamp": int(datetime(2099, 8, 27, 4, 0, tzinfo=UTC).timestamp()),
                 "status": "Fixture",
                 "competition": {"id": "3", "name": "西甲", "area_name": "西班牙"},
                 "team_A": {"id": "1760", "name": "塞维利亚"},
@@ -422,12 +422,12 @@ async def test_fixtures_fetch_future_days_from_schedule_list() -> None:
             }]}}
 
     provider = Provider()
-    rows = await provider.fixtures(datetime(2026, 9, 11).date(), datetime(2026, 9, 12).date())
+    rows = await provider.fixtures(datetime(2099, 8, 26).date(), datetime(2099, 8, 28).date())
 
     assert any(url.endswith("/schedule_list") for url, _ in provider.calls)
     ids = {row["external_ids"]["dongqiudi"] for row in rows}
     assert ids == {"54493234", "54483630"}
-    assert all("2026-09-11" <= row["fixture_date"] <= "2026-09-12" for row in rows)
+    assert all("2099-08-26" <= row["fixture_date"] <= "2099-08-28" for row in rows)
 
 
 def test_dongqiudi_henan_native_name_normalizes_to_storage_name() -> None:
@@ -437,3 +437,59 @@ def test_dongqiudi_henan_native_name_normalizes_to_storage_name() -> None:
 
     assert to_chinese_team_name("河南") == "河南队"
     assert to_chinese_team_name("Henan") == "河南队"
+
+
+def test_dongqiudi_over_under_state_normalizes_water_and_line() -> None:
+    state = DongqiudiProvider._map_odds_state({"homeWin": "0.70", "awayWin": "0.92", "draw": "2.5"}, "over_under")
+
+    assert state == {"over_odd": 1.70, "under_odd": 1.92, "line": 2.5, "updated_at": None}
+
+
+def test_dongqiudi_sync_persists_over_under_odds() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.snapshots = []
+
+        def save_odds_snapshot(self, snapshot):
+            self.snapshots.append(snapshot)
+
+    provider = DongqiudiProvider()
+    repository = Repository()
+    service = DongqiudiSyncService(provider, repository)
+    fixture = {
+        "id": "dongqiudi-1",
+        "external_ids": {"dongqiudi": "1"},
+        "home_team": {"name": "主队"},
+        "away_team": {"name": "客队"},
+        "evidence": None,
+    }
+    enriched = {
+        "odds": {
+            "match_id": "1",
+            "captured_at": "2026-09-02T12:00:00+00:00",
+            "bookmakers": {
+                "bet365": {
+                    "name": "Bet365",
+                    "1x2": {"current": {"home": 1.7, "draw": 3.8, "away": 4.5}, "initial": {}},
+                    "asian_handicap": {"current": {"line": 0.5, "label": "半球", "home_odd": 1.9, "away_odd": 1.9}, "initial": {}},
+                    "over_under": {"current": {"line": 2.5, "over_odd": 1.85, "under_odd": 1.95}, "initial": {}},
+                },
+            },
+        },
+        "dongqiudi_analysis": {"match_id": "1"},
+    }
+
+    updated = service._apply_match_data(fixture, enriched, "initial")
+
+    odds = updated["evidence"]["odds"]
+    assert odds["over_under"] == 2.5
+    assert odds["over_odd"] == 1.85
+    assert odds["under_odd"] == 1.95
+    ou_quotes = [
+        (q["market"], q["selection"], q["price"], q["line"])
+        for snapshot in repository.snapshots
+        for q in snapshot["quotes"]
+        if q["market"] == "over_under"
+    ]
+    assert ("over_under", "over", 1.85, 2.5) in ou_quotes
+    assert ("over_under", "under", 1.95, 2.5) in ou_quotes

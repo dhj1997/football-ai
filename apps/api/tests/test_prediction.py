@@ -44,3 +44,15 @@ def test_predict_treats_missing_points_per_game_as_zero_without_crashing() -> No
 
     assert set(result["probabilities"]) == {"home", "draw", "away"}
     assert abs(sum(result["probabilities"].values()) - 1.0) < 0.01
+
+
+def test_predict_exposes_over_under_totals_forecast() -> None:
+    fixture = {"id": "fixture-1", "status": "scheduled", "is_demo": False}
+    context = demo_context(fixture["id"])
+
+    result = predict(fixture, context)
+
+    totals = result["totals_forecast"]
+    assert totals["line"] == 2.5
+    assert totals["over"] + totals["under"] == pytest.approx(1.0, abs=0.001)
+    assert 0.05 <= totals["over"] <= 0.95

@@ -432,3 +432,40 @@ def test_stale_handicap_distribution_is_not_applied_to_a_new_line() -> None:
 
     assert all(row["market"] == "1x2" for row in result["market_assessment"]["markets"])
     assert result["forecast"]["asian_handicap"] is None
+
+
+def test_over_under_markets_are_priced_from_totals_forecast() -> None:
+    item = prediction()
+    item["totals_forecast"] = {"line": 2.5, "over": 0.58, "under": 0.42}
+    odds = fresh_odds()
+    odds["over_under"] = 2.5
+    odds["over_odd"] = 1.85
+    odds["under_odd"] = 1.95
+    # home EV at 1.45 is only +0.015, so the over bet (EV +0.073) wins.
+    odds["home"] = 1.45
+
+    result = apply_market_decision(item, context(odds))
+
+    rows = result["market_assessment"]["markets"]
+    over = next(r for r in rows if r["market"] == "over_under" and r["selection"] == "over")
+    under = next(r for r in rows if r["market"] == "over_under" and r["selection"] == "under")
+    de_vig_over = (1 / 1.85) / ((1 / 1.85) + (1 / 1.95))
+    assert over["model_probability"] == 0.58
+    assert over["edge"] == pytest.approx(0.58 - de_vig_over, abs=0.001)
+    assert under["model_probability"] == 0.42
+    # 0.58 x 1.85 - 1 = +0.073: the strongest market wins the decision.
+    assert result["decision"]["market"] == "over_under"
+    assert result["decision"]["selection"] == "over"
+
+
+def test_over_under_rows_skipped_when_line_differs_from_forecast() -> None:
+    item = prediction()
+    item["totals_forecast"] = {"line": 2.5, "over": 0.58, "under": 0.42}
+    odds = fresh_odds()
+    odds["over_under"] = 3.5
+    odds["over_odd"] = 3.2
+    odds["under_odd"] = 1.4
+
+    result = apply_market_decision(item, context(odds))
+
+    assert all(r["market"] != "over_under" for r in result["market_assessment"]["markets"])

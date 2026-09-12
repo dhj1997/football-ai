@@ -139,6 +139,7 @@ def predict(fixture: dict, context: dict) -> dict:
         handicap_result = {key: round(value, 4) for key, value in handicap_result.items()}
 
     top_scores = sorted(score_matrix, key=lambda item: item[2], reverse=True)[:3]
+    over_probability = sum(probability for home, away, probability in score_matrix if home + away > 2.5)
     evidence_count = 4 + int(bool(odds)) + int(lineup["confirmed"])
     created_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     return {
@@ -158,6 +159,11 @@ def predict(fixture: dict, context: dict) -> dict:
             "away": round(forecast_probabilities[2], 4),
         },
         "expected_goals": {"home": round(home_xg, 2), "away": round(away_xg, 2)},
+        "totals_forecast": {
+            "line": 2.5,
+            "over": round(over_probability, 4),
+            "under": round(1.0 - over_probability, 4),
+        },
         "top_scores": [
             {"score": f"{home}-{away}", "probability": round(probability, 4)}
             for home, away, probability in top_scores

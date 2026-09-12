@@ -216,7 +216,7 @@ class SettlementService:
                     }
                 )
             if bet and bet.get("status") == "placed":
-                result, return_amount = _bet_return(bet, home_score - away_score, actual)
+                result, return_amount = _bet_return(bet, home_score - away_score, actual, total_goals=home_score + away_score)
                 bet = self.repository.settle_bet(
                     bet["id"],
                     settled_at,
@@ -447,9 +447,17 @@ class SettlementService:
         }
 
 
-def _bet_return(bet: dict[str, Any], goal_difference: int, actual: str) -> tuple[str, float]:
+def _bet_return(bet: dict[str, Any], goal_difference: int, actual: str, total_goals: int | None = None) -> tuple[str, float]:
     stake = float(bet["stake"])
     odds = float(bet["odds"])
+    if bet["market"] == "over_under":
+        line = float(bet["handicap_line"])
+        total = int(total_goals or 0)
+        if total > line:
+            return ("full_win", round(stake * odds, 2))
+        if total == line:
+            return ("push", round(stake, 2))
+        return ("full_loss", 0.0)
     if bet["market"] == "1x2":
         won = bet["selection"] == actual
         return ("full_win", round(stake * odds, 2)) if won else ("full_loss", 0.0)
