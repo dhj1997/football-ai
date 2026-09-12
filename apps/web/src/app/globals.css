@@ -1391,7 +1391,9 @@ main {
   gap: 10px;
   padding: 11px 13px;
   color: var(--color-text-primary);
-  background: var(--green-dark);
+  background: var(--color-success-surface);
+  border-left: 3px solid var(--color-success);
+  border-radius: 4px;
 }
 .simulated-position > span {
   color: var(--color-text-secondary);
