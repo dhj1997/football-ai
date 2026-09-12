@@ -271,6 +271,17 @@ class SettlementService:
             model_key,
             competition_id or self.competition_id,
         )
+        team_names = {
+            str(fixture.get("id") or ""): (
+                (fixture.get("home_team") or {}).get("name"),
+                (fixture.get("away_team") or {}).get("name"),
+            )
+            for fixture in self.repository.list_fixtures()
+        }
+        for row in rows:
+            home, away = team_names.get(str(row.get("fixture_id") or ""), (None, None))
+            row["home_team"] = home
+            row["away_team"] = away
         correct = sum(1 for row in rows if row["correct"])
         completeness = [
             float(row["data_completeness"])

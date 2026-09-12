@@ -1,6 +1,20 @@
-export type DateFilter = "yesterday" | "today" | "tomorrow" | "upcoming" | "history";
-export type LeagueFilter = "all" | "epl" | "laliga" | "csl";
-export type FixtureLeagueKey = "epl" | "laliga" | "csl" | "cfa_cup" | "ucl" | "acl" | "world_cup" | "asian_cup" | "euro" | "world_cup_qualifiers" | "asian_qualifiers" | "nations_league";
+export type DateFilter =
+  "yesterday" | "today" | "tomorrow" | "upcoming" | "history";
+export type LeagueFilter =
+  "all" | "epl" | "laliga" | "csl" | "cfa_cup" | "ucl" | "acl";
+export type FixtureLeagueKey =
+  | "epl"
+  | "laliga"
+  | "csl"
+  | "cfa_cup"
+  | "ucl"
+  | "acl"
+  | "world_cup"
+  | "asian_cup"
+  | "euro"
+  | "world_cup_qualifiers"
+  | "asian_qualifiers"
+  | "nations_league";
 export type FixtureLeagueFilter = "all" | FixtureLeagueKey;
 export type ModelKey = "deepseek" | "chatgpt";
 
@@ -26,7 +40,11 @@ export interface ModelEvaluationResponse {
   experiment_id: string;
   status: string;
   reports: Record<string, ModelEvaluationReport>;
-  leakage_audit: { violations: number; violation_rate: number; passed: boolean };
+  leakage_audit: {
+    violations: number;
+    violation_rate: number;
+    passed: boolean;
+  };
 }
 
 export interface StandingRow {
@@ -215,7 +233,12 @@ export interface EvidenceContext {
     away_points_per_game: number | null;
     updated_at: string | null;
   };
-  head_to_head: Array<{ date: string; home: string; away: string; score: string }>;
+  head_to_head: Array<{
+    date: string;
+    home: string;
+    away: string;
+    score: string;
+  }>;
   availability: {
     home_missing: number;
     away_missing: number;
@@ -263,12 +286,41 @@ export interface EvidenceContext {
     updated_at: string;
     is_demo: boolean;
   } | null;
-  odds_by_bookmaker?: Record<string, {
-    name: string;
-    source?: string;
-    "1x2"?: { initial?: { home?: number | null; draw?: number | null; away?: number | null; updated_at?: string | null }; current?: { home?: number | null; draw?: number | null; away?: number | null; updated_at?: string | null } };
-    asian_handicap?: { initial?: { home_odd?: number | null; away_odd?: number | null; line?: number | null; label?: string | null }; current?: { home_odd?: number | null; away_odd?: number | null; line?: number | null; label?: string | null } };
-  }>;
+  odds_by_bookmaker?: Record<
+    string,
+    {
+      name: string;
+      source?: string;
+      "1x2"?: {
+        initial?: {
+          home?: number | null;
+          draw?: number | null;
+          away?: number | null;
+          updated_at?: string | null;
+        };
+        current?: {
+          home?: number | null;
+          draw?: number | null;
+          away?: number | null;
+          updated_at?: string | null;
+        };
+      };
+      asian_handicap?: {
+        initial?: {
+          home_odd?: number | null;
+          away_odd?: number | null;
+          line?: number | null;
+          label?: string | null;
+        };
+        current?: {
+          home_odd?: number | null;
+          away_odd?: number | null;
+          line?: number | null;
+          label?: string | null;
+        };
+      };
+    }
+  >;
   dongqiudi_analysis?: Record<string, unknown> | null;
   source?: string | null;
   synced_at?: string | null;
@@ -290,7 +342,10 @@ export interface Prediction {
   top_scores: Array<{ score: string; probability: number }>;
   asian_handicap: {
     line: number;
-    home_settlement: Record<"full_win" | "half_win" | "push" | "half_loss" | "full_loss", number>;
+    home_settlement: Record<
+      "full_win" | "half_win" | "push" | "half_loss" | "full_loss",
+      number
+    >;
   } | null;
   confidence: string;
   evidence: {
@@ -339,7 +394,8 @@ export interface Prediction {
   evidence_fields?: Record<string, boolean>;
   recommendation?: {
     market: "1x2" | "asian_handicap" | "no_bet";
-    selection: "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
+    selection:
+      "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
     confidence: number;
     recommended_stake_fraction: number;
     reason: string;
@@ -350,7 +406,8 @@ export interface Prediction {
   model_recommendation?: {
     status: "bet" | "no_bet";
     market: "1x2" | "asian_handicap" | "no_bet";
-    selection: "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
+    selection:
+      "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
     reason: string;
   };
   market_assessment?: {
@@ -372,7 +429,8 @@ export interface Prediction {
   decision?: {
     status: "bet" | "no_bet" | "insufficient_data";
     market: "1x2" | "asian_handicap" | "no_bet";
-    selection: "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
+    selection:
+      "home" | "draw" | "away" | "home_handicap" | "away_handicap" | "none";
     considered_market: "1x2" | "asian_handicap" | null;
     considered_selection: string | null;
     price: number | null;
@@ -412,7 +470,11 @@ export interface Prediction {
     prompt_version: string | null;
     evidence_version?: string | null;
     request_id: string | null;
-    usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+    usage: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    } | null;
     error: string | null;
     provider_failures?: Array<{ provider: string; error: string }>;
   };
@@ -442,7 +504,8 @@ export interface SimulatedBet {
   balance_before: number;
   balance_after_placement: number;
   settled_at: string | null;
-  settlement_result: "full_win" | "half_win" | "push" | "half_loss" | "full_loss" | null;
+  settlement_result:
+    "full_win" | "half_win" | "push" | "half_loss" | "full_loss" | null;
   return_amount: number | null;
   net_profit: number | null;
   balance_after_settlement: number | null;
@@ -533,7 +596,13 @@ export interface FixtureDetail {
   bet: SimulatedBet | null;
   bets: Partial<Record<ModelKey, SimulatedBet | null>>;
   competition_id?: string;
-  capabilities: { evidence_sync: boolean; dongqiudi_sync?: boolean; dongqiudi_last_synced_at?: string | null; deepseek?: boolean; chatgpt?: boolean };
+  capabilities: {
+    evidence_sync: boolean;
+    dongqiudi_sync?: boolean;
+    dongqiudi_last_synced_at?: string | null;
+    deepseek?: boolean;
+    chatgpt?: boolean;
+  };
   evidence_error?: string | null;
   prediction_error?: string | null;
 }
@@ -565,6 +634,8 @@ export interface PredictionSettlement {
   prediction_id: string;
   fixture_id: string;
   fixture_date: string;
+  home_team?: string | null;
+  away_team?: string | null;
   league_key: Exclude<LeagueFilter, "all">;
   season: string;
   model_version: string;
@@ -616,7 +687,12 @@ export interface PredictionMetrics {
     brier_improvement: number | null;
     log_loss_improvement: number | null;
   };
-  decision_counts?: { bet: number; no_bet: number; insufficient_data: number; unknown: number };
+  decision_counts?: {
+    bet: number;
+    no_bet: number;
+    insufficient_data: number;
+    unknown: number;
+  };
   portfolio?: {
     settled_position_count: number;
     wins: number;
@@ -641,14 +717,24 @@ export interface PredictionMetrics {
     policy: Record<string, number>;
   };
   experiment?: PredictionSettlement["experiment"];
-  asian_handicap_results: Record<"full_win" | "half_win" | "push" | "half_loss" | "full_loss", number>;
+  asian_handicap_results: Record<
+    "full_win" | "half_win" | "push" | "half_loss" | "full_loss",
+    number
+  >;
   filters: Record<string, string | null>;
   items: PredictionSettlement[];
 }
 
 export interface JobRun {
   id: string;
-  job_name: "fixtures" | "standings" | "analysis" | "settlement" | "dongqiudi_schedule" | "dongqiudi_scores" | "dongqiudi_prematch";
+  job_name:
+    | "fixtures"
+    | "standings"
+    | "analysis"
+    | "settlement"
+    | "dongqiudi_schedule"
+    | "dongqiudi_scores"
+    | "dongqiudi_prematch";
   started_at: string;
   finished_at: string | null;
   status: "running" | "success" | "partial" | "failed";
@@ -676,7 +762,12 @@ export interface TeamPlayer {
   nationality: string | null;
   photo: string | null;
   status: string | null;
-  injuries: Array<{ type: string | null; status: string | null; detail: string | null; date: string | null }>;
+  injuries: Array<{
+    type: string | null;
+    status: string | null;
+    detail: string | null;
+    date: string | null;
+  }>;
   statistics: {
     appearances: number;
     substitute_appearances: number;
@@ -694,8 +785,18 @@ export interface TeamSeasonMatch {
   date: string;
   status: "scheduled" | "live" | "finished";
   status_text: string | null;
-  home: { id: string | null; name: string; original_name?: string; logo: string | null };
-  away: { id: string | null; name: string; original_name?: string; logo: string | null };
+  home: {
+    id: string | null;
+    name: string;
+    original_name?: string;
+    logo: string | null;
+  };
+  away: {
+    id: string | null;
+    name: string;
+    original_name?: string;
+    logo: string | null;
+  };
   home_score: number | null;
   away_score: number | null;
   result: "W" | "D" | "L" | null;

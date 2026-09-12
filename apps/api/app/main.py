@@ -668,7 +668,7 @@ async def fixtures(
 
 @app.get("/api/standings")
 async def standings(
-    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    league: Literal["all", "epl", "laliga", "csl", "cfa_cup", "ucl", "acl"] = "all",
 ) -> dict:
     """Return cached current-season tables with freshness metadata."""
 
@@ -1013,7 +1013,7 @@ def paper_executions(
 
 @app.get("/api/decisions")
 def prediction_decisions(
-    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    league: Literal["all", "epl", "laliga", "csl", "cfa_cup", "ucl", "acl"] = "all",
     fixture_date: str | None = None,
     model_version: str | None = None,
     model: Literal["all", "deepseek", "chatgpt"] = "all",
@@ -1110,7 +1110,7 @@ def prediction_decisions(
 
 @app.get("/api/metrics/predictions")
 def prediction_metrics(
-    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    league: Literal["all", "epl", "laliga", "csl", "cfa_cup", "ucl", "acl"] = "all",
     season: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
@@ -1132,7 +1132,7 @@ def prediction_metrics(
 
 @app.get("/api/strategy-performance")
 def strategy_performance(
-    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    league: Literal["all", "epl", "laliga", "csl", "cfa_cup", "ucl", "acl"] = "all",
     season: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
@@ -1189,7 +1189,7 @@ def strategy_performance(
 
 @app.get("/api/model-performance")
 def model_performance(
-    league: Literal["all", "epl", "laliga", "csl"] = "all",
+    league: Literal["all", "epl", "laliga", "csl", "cfa_cup", "ucl", "acl"] = "all",
     season: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
