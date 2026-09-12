@@ -1,0 +1,51 @@
+server {
+    listen 9000;
+    listen [::]:9000;
+    server_name _;
+
+    access_log /var/log/nginx/football-ai.access.log;
+    error_log /var/log/nginx/football-ai.error.log;
+    client_max_body_size 2m;
+
+    location = /admin {
+        return 404;
+    }
+
+    location ^~ /admin/ {
+        return 404;
+    }
+
+    location = /api/admin {
+        return 404;
+    }
+
+    location = /api/admin/predict {
+        proxy_pass http://127.0.0.1:3200;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 240s;
+        proxy_read_timeout 240s;
+    }
+
+    location ^~ /api/admin/ {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3200;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 240s;
+        proxy_read_timeout 240s;
+    }
+}

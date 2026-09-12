@@ -168,10 +168,85 @@ def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_pat
     assert bets[0]["candidate_score"] == 0.90
     assert len(repository.bet_executions(competition_id="dual")) == 1
     assert repository.current_balance("deepseek", "dual") == 1000.0
-    assert repository.current_balance("chatgpt", "dual") == 990.0
+    assert repository.current_balance("chatgpt", "dual") == 960.0
 
     selected = dual.select_portfolio_candidates(
         [candidate("deepseek", "prediction-deepseek", 0.8), candidate("chatgpt", "prediction-chatgpt", 0.9), candidate("poisson", "prediction-poisson", 0.7)]
     )
     assert len(selected) == 1
     assert selected[0].model_key == "chatgpt"
+
+
+def test_failed_ai_does_not_place_poisson_fallback_bet() -> None:
+    class Service:
+        def candidate_for_prediction(self, *_args):
+            return None
+
+        def candidate_for_poisson(self, *_args):
+            raise AssertionError("failed AI must not use Poisson for automatic betting")
+
+    dual = DualBankrollService({"chatgpt": Service()}, "dual")
+    failed_prediction = prediction("chatgpt", "prediction-failed")
+    failed_prediction["ai"] = {"status": "failed"}
+
+    assert dual.place_for_predictions([failed_prediction], fixture(), {}) == []
+
+
+def test_poisson_fallback_cannot_bet_against_ai_predicted_outcome() -> None:
+    """The deterministic baseline is a calculator, not an opinion: it may not
+    bet against the direction the AI research concluded (e.g. laying a huge
+    favourite on thin xG data)."""
+
+    from dataclasses import replace as dc_replace
+
+    away_candidate = dc_replace(candidate("poisson", "prediction-chatgpt", 0.9), selection="away")
+
+    class Service:
+        configured = True
+        placed: list = []
+
+        def candidate_for_prediction(self, *_args):
+            return None
+
+        def candidate_for_poisson(self, *_args):
+            return away_candidate
+
+        def place_for_candidate(self, prediction, fixture, candidate, fixed_stake=None):
+            Service.placed.append(candidate)
+            return {"model_key": "chatgpt", "stake": 100.0}
+
+    service = Service()
+    dual = DualBankrollService({"chatgpt": service}, "dual")
+    ai_prediction = prediction("chatgpt", "prediction-chatgpt")
+    ai_prediction["predicted_outcome"] = "home"
+
+    bets = dual.place_for_predictions([ai_prediction], fixture(), {})
+
+    assert bets == []
+    assert service.placed == []
+
+
+def test_poisson_fallback_bets_along_ai_predicted_outcome() -> None:
+    from dataclasses import replace as dc_replace
+
+    away_candidate = dc_replace(candidate("poisson", "prediction-chatgpt", 0.9), selection="away")
+
+    class Service:
+        configured = True
+
+        def candidate_for_prediction(self, *_args):
+            return None
+
+        def candidate_for_poisson(self, *_args):
+            return away_candidate
+
+        def place_for_candidate(self, prediction, fixture, candidate, fixed_stake=None):
+            return {"model_key": "chatgpt", "stake": 100.0}
+
+    dual = DualBankrollService({"chatgpt": Service()}, "dual")
+    ai_prediction = prediction("chatgpt", "prediction-chatgpt")
+    ai_prediction["predicted_outcome"] = "away"
+
+    bets = dual.place_for_predictions([ai_prediction], fixture(), {})
+
+    assert len(bets) == 1

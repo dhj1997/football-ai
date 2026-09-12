@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     api_football_key: str = ""
     api_football_base_url: str = "https://v3.football.api-sports.io"
     api_deepseek_key: str = ""
+    deepseek_enabled: bool = True
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_timeout_seconds: float = 90
@@ -25,6 +26,10 @@ class Settings(BaseSettings):
     api_chatgpt_key: str = ""
     chatgpt_model: str = "gpt-5.6-sol"
     chatgpt_base_url: str = "https://api.quya.org/v1"
+    chatgpt_timeout_seconds: float = 180
+    # Used as a one-shot retry when the primary model times out or returns
+    # invalid output. Must be a model the same relay actually serves.
+    chatgpt_fallback_model: str = "gpt-5.4-mini"
     simulation_competition_id: str = "dual-model-v1"
     admin_api_key: str = "dev-admin-key"
     database_url: str = "sqlite:///./football_ai.db"
@@ -34,36 +39,62 @@ class Settings(BaseSettings):
     thesportsdb_api_key: str = "123"
     thesportsdb_base_url: str = "https://www.thesportsdb.com/api/v1/json"
     schedule_lookback_days: int = 1
-    schedule_cache_ttl_minutes: int = 60
+    schedule_cache_ttl_minutes: int = 1440
+    dongqiudi_enabled: bool = True
+    dongqiudi_base_url: str = "https://www.dongqiudi.com"
+    dongqiudi_sport_data_base_url: str = "https://beta-sport-data.dongdianqiu.com"
+    dongqiudi_api_base_url: str = "https://beta-api.dongdianqiu.com"
+    dongqiudi_timeout_seconds: float = 20
+    dongqiudi_lookahead_hours: int = 36
+    dongqiudi_prematch_window_minutes: int = 50
+    dongqiudi_prematch_lead_hours: int = 24
+    dongqiudi_concurrency: int = 2
+    # Dongqiudi's public match_list only serves the current match cycle, so
+    # schedule mapping must run often enough to catch newly published cycles.
+    automation_dongqiudi_schedule_interval_minutes: int = 60
+    automation_dongqiudi_score_interval_minutes: int = 5
+    automation_dongqiudi_prematch_interval_minutes: int = 5
     espn_base_url: str = "https://site.api.espn.com"
     standings_cache_ttl_minutes: int = 360
     team_cache_ttl_minutes: int = 360
     automation_enabled: bool = True
     automation_analysis_enabled: bool = True
     automation_tick_seconds: int = 60
-    automation_fixture_interval_minutes: int = 60
+    automation_fixture_interval_minutes: int = 1440
+    automation_evidence_interval_minutes: int = 1440
+    automation_lineup_interval_minutes: int = 5
+    lineup_refresh_offsets_minutes: str = "60,30"
+    prediction_refresh_offsets_hours: str = "24,12,6,1,0.5"
     automation_standings_interval_minutes: int = 360
     automation_analysis_interval_minutes: int = 5
     automation_settlement_interval_minutes: int = 15
     automation_historical_accumulation_interval_minutes: int = 1440
     automation_failure_backoff_minutes: int = 15
-    prediction_lead_hours: int = 36
+    prediction_lead_hours: int = 24
     evidence_refresh_minutes: int = 180
     lineup_refresh_hours: int = 2
     model_retry_minutes: int = 180
-    automation_evidence_refresh_limit: int = 1
+    automation_evidence_refresh_limit: int = 32
+    schedule_lookahead_days: int = 7
+    automation_fixed_stake: float = 100.0
+    simulation_initial_bankroll: float = 5000.0
     # P2 deterministic portfolio policy. Fractions are relative to bankroll.
     portfolio_min_edge: float = 0.05
     portfolio_min_ev: float = 0.05
-    portfolio_max_odds_age_minutes: float = 180.0
-    portfolio_stake_fraction: float = 0.01
-    portfolio_max_single_bet_fraction: float = 0.01
-    portfolio_max_daily_exposure: float = 0.05
-    portfolio_max_league_exposure: float = 0.02
+    portfolio_max_plausible_edge: float = 0.25
+    portfolio_max_plausible_ev: float = 0.60
+    portfolio_max_odds_age_minutes: float = 720.0
+    portfolio_stake_fraction: float = 0.10
+    portfolio_max_single_bet_fraction: float = 0.25
+    portfolio_max_daily_exposure: float = 0.10
+    portfolio_max_league_exposure: float = 0.04
     portfolio_max_total_exposure: float = 0.10
     portfolio_max_drawdown: float = 0.30
     portfolio_min_data_completeness: float = 0.70
     portfolio_max_league_candidates: int | None = 2
+    # Selection priority: CSL matches rank first, and the priority team above them.
+    portfolio_priority_league_key: str = "csl"
+    portfolio_priority_team_name: str = "武汉三镇"
     portfolio_ev_weight: float = 1.0
     portfolio_edge_weight: float = 1.0
     portfolio_confidence_weight: float = 0.25

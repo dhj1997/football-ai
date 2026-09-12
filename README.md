@@ -6,7 +6,8 @@
 
 ## 已实现
 
-- 今日、明日、历史赛程与三联赛筛选
+- 昨日、今日、明日、未来七天、历史赛程与联赛筛选
+- 单场研究报告：模型共识、证据质量、关键因素、市场观察与分层页签
 - 单场比赛证据准备度：近期状态、交锋、阵容、首发、赔率、模型
 - FastAPI 常驻自动任务：赛程、积分榜、证据同步和赛后结算；模型预测全部由管理员手动触发
 - 管理员可查看持久作业记录并立即运行指定作业
@@ -43,6 +44,7 @@ pnpm install
 cd apps\api
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+$env:DATABASE_URL="sqlite:///D:/work/football-ai/apps/api/football_ai.db"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -61,6 +63,8 @@ pnpm dev --hostname 127.0.0.1 --port 3000
 - 管理与作业状态：`http://127.0.0.1:3000/admin`
 - API 文档：`http://127.0.0.1:8000/docs`
 
+本地启动命令显式使用 `apps/api/football_ai.db`。如果根目录 `.env` 中配置了共享或远程 MySQL，`DATABASE_URL` 环境变量优先，确保本地开发不会读写远程数据库。
+
 只要 FastAPI 进程保持运行，数据库驱动的自动任务就会持续工作。生产环境应使用 Windows 服务、systemd、Docker 或其他进程守护方式保持 API 进程常驻；浏览器和 Codex 任务不承担生产调度。
 
 ## 配置
@@ -78,23 +82,32 @@ Copy-Item .env.example .env
 - `API_FOOTBALL_KEY`：可选的 API-Football 密钥，后续用于详细赛前证据。
 - `ESPN_BASE_URL`：ESPN 公共数据地址，默认 `https://site.api.espn.com`，用于积分榜、球队资料和 API-Football 失败时的比赛证据。
 - `API_DEEPSEEK_KEY`：DeepSeek 后端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
+- `DEEPSEEK_ENABLED`：是否启用 DeepSeek 参与当前预测、翻译和历史自动任务，临时停用时设为 `false`。
 - `DEEPSEEK_MODEL`：默认 `deepseek-v4-flash`。
 - `DEEPSEEK_BASE_URL`：默认 `https://api.deepseek.com`。
 - `DEEPSEEK_TIMEOUT_SECONDS`、`DEEPSEEK_MAX_RETRIES`、`DEEPSEEK_MAX_TOKENS`：模型超时、重试和输出预算。
 - `API_CHATGPT_KEY`：GPT 服务端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
 - `CHATGPT_MODEL`、`CHATGPT_BASE_URL`：默认分别为 `gpt-5.6-sol` 和 `https://api.quya.org/v1`。
-- `SIMULATION_COMPETITION_ID`：当前双模型模拟竞赛标识；更换标识可开始一轮新的独立 1000 对 1000 对比，旧记录继续保留。
-- `GET /api/decisions`：返回每个模型每场比赛的最新策略决策、赔率优势、理论仓位、执行状态和不下注原因；`GET /api/metrics/predictions` 额外返回 proper score、市场对照、组合摘要和质量门禁。
+- `SIMULATION_COMPETITION_ID`：当前双模型模拟竞赛标识；更换标识可开始一轮新的独立模拟对比，旧记录继续保留。
+- `SIMULATION_INITIAL_BANKROLL`：每个模拟模型账户的初始资金，默认 `5000`；已有 1000 账户首次升级时自动补足差额。
+- `GET /api/decisions`：返回每个模型每场比赛的最新策略决策、赔率优势、理论仓位、执行状态和不下注原因；赔率快照超过 12 小时未刷新时不进入模拟下注；`GET /api/metrics/predictions` 额外返回 proper score、市场对照、组合摘要和质量门禁。
 - `GET /api/strategy-performance`：返回模型 × 策略表现榜，按 ROI 后按盈亏排序；当前策略不足样本时保持影子模式。
 - `SCHEDULE_PROVIDER`：当前为 `thesportsdb`。
 - `THESPORTSDB_API_KEY`：TheSportsDB 赛程 key，默认 `123`。
 - `SCHEDULE_LOOKBACK_DAYS`：赛程同步回看天数，默认 `1`，避免免费源的请求频率限制。
+- `SCHEDULE_LOOKAHEAD_DAYS`：赛程同步未来窗口，默认 `7` 天。
 - `AUTOMATION_ENABLED`：是否启动 FastAPI 常驻自动任务，默认 `true`。
-- `AUTOMATION_ANALYSIS_ENABLED`：是否自动运行证据与模型分析；当前本地配置为 `false`，模型预测需从比赛详情手动触发。
+- `AUTOMATION_ANALYSIS_ENABLED`：是否自动运行模型分析，默认 `true`；模型在开赛前五个窗口自动预测，证据和首发同步任务独立运行。
 - `AUTOMATION_*_INTERVAL_MINUTES`：赛程、积分榜、分析和结算间隔。
+- `AUTOMATION_EVIDENCE_INTERVAL_MINUTES`：未来七天赛前证据（近期状态、交锋、伤停、球队资料）刷新间隔，默认 `1440` 分钟。
+- `AUTOMATION_LINEUP_INTERVAL_MINUTES`：首发窗口扫描间隔，默认 `5` 分钟。
+- `PREDICTION_REFRESH_OFFSETS_HOURS`：自动预测窗口，默认 `24,12,6,1,0.5` 小时；每个窗口成功后只执行一次。
+- `AUTOMATION_FIXED_STAKE`：自动模拟下注固定金额，默认每场 `100`；余额不足或缺少有效赔率时不透支、不下注。
+- `AUTOMATION_DONGQIUDI_SCORE_INTERVAL_MINUTES`：懂球帝实时比分和比赛状态刷新间隔，默认 `5` 分钟。
+- `LINEUP_REFRESH_OFFSETS_MINUTES`：首发刷新窗口，默认 `60,30`，表示开赛前 60 分钟和 30 分钟。
 - `AUTOMATION_FAILURE_BACKOFF_MINUTES`：失败或部分成功后的退避时间。
-- `PREDICTION_LEAD_HOURS`：进入自动分析的开赛前时间窗，默认 `36`。
-- `AUTOMATION_EVIDENCE_REFRESH_LIMIT`：每轮最多刷新多少场 API-Football 证据，默认 `1`。
+- `AUTOMATION_EVIDENCE_REFRESH_LIMIT`：每日证据任务单轮最多刷新场数，默认 `32`，覆盖四个联赛未来七天的常见规模；供应商限流时会逐场记录失败并在后续周期重试。
+- `PREDICTION_LEAD_HOURS`：兼容旧配置的预测上限；实际自动窗口由 `PREDICTION_REFRESH_OFFSETS_HOURS` 控制。
 - `USE_DEMO_DATA`：是否在没有真实缓存时显示演示数据，默认 `false`。
 - `ADMIN_API_KEY`：保护刷新与预测接口。
 - `DATABASE_URL`：默认使用 `sqlite:///./football_ai.db`；生产或共享环境可使用 `mysql+pymysql://用户名:密码@主机:3306/football_ai?charset=utf8mb4`。应用启动时会创建赛程、联赛/球队/授权身价快照、不可变证据/预测、模拟下注/流水/结算和作业记录表。

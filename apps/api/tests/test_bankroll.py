@@ -89,13 +89,30 @@ def test_initial_balance_and_duplicate_bet_protection(tmp_path) -> None:
     duplicate = service.place_for_prediction(prediction(), fixture(), context())
 
     assert first is not None
-    assert first["stake"] == 10.0
+    assert first["stake"] == 40.0
     assert duplicate["id"] == first["id"]
-    assert repository.current_balance() == 990.0
+    assert repository.current_balance() == 960.0
     assert len(repository.bankroll_transactions()) == 2
     assert service.summary()["equity"] == 1000.0
     assert service.summary()["net_profit"] == 0.0
     assert service.summary()["equity_curve"][0]["balance"] == 1000.0
+
+
+def test_automation_fixed_stake_places_one_hundred(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "automation-stake.db"), initial_balance=5000.0)
+    repository.initialize()
+    service = BankrollService(repository, initial_bankroll=5000.0)
+
+    placed = service.place_for_prediction(
+        prediction(),
+        fixture(),
+        {**context(), "automation_fixed_stake": 100},
+    )
+
+    assert placed is not None
+    assert placed["stake"] == 100.0
+    assert repository.current_balance() == 4900.0
+    assert service.summary()["initial_balance"] == 5000.0
 
 
 def test_legacy_two_percent_bet_is_refunded_and_resized(tmp_path) -> None:
@@ -127,9 +144,9 @@ def test_legacy_two_percent_bet_is_refunded_and_resized(tmp_path) -> None:
     resized = BankrollService(repository).place_for_prediction(prediction(), fixture(), context())
 
     assert resized is not None and resized["id"] != "legacy-bet"
-    assert resized["stake"] == 10.0
+    assert resized["stake"] == 40.0
     assert len(repository.bets()) == 1
-    assert repository.current_balance() == 990.0
+    assert repository.current_balance() == 960.0
 
 
 def test_missing_price_and_degraded_ai_never_place_a_bet(tmp_path) -> None:
@@ -169,8 +186,8 @@ def test_daily_unsettled_exposure_is_capped(tmp_path) -> None:
 
     exposure = sum(item["stake"] for item in repository.bets(status="placed"))
     assert exposure == 50.0
-    assert len(repository.bets(status="placed")) == 5
-    assert all(item["stake"] == 10.0 for item in repository.bets())
+    assert len(repository.bets(status="placed")) == 2
+    assert sorted(item["stake"] for item in repository.bets()) == [10.0, 40.0]
 
 
 def test_multiple_prediction_versions_do_not_multiply_fixture_exposure(tmp_path) -> None:
@@ -185,7 +202,7 @@ def test_multiple_prediction_versions_do_not_multiply_fixture_exposure(tmp_path)
     assert second is not None
     assert second["prediction_id"] == "confirmed"
     assert len(repository.bets()) == 1
-    assert repository.current_balance() == 990.0
+    assert repository.current_balance() == 960.0
 
 
 def test_new_ineligible_prediction_discards_the_old_open_fixture_bet(tmp_path) -> None:
@@ -216,10 +233,10 @@ def test_low_confidence_warning_does_not_duplicate_the_market_gate(tmp_path) -> 
     placed = service.place_for_prediction(item, fixture(), context())
 
     assert placed is not None
-    assert placed["stake"] == 10.0
+    assert placed["stake"] == 40.0
 
 
-def test_higher_edge_fixture_can_share_the_league_day_until_portfolio_limit(tmp_path) -> None:
+def test_higher_edge_fixture_is_clamped_by_league_day_limit(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "league-day.db"))
     repository.initialize()
     service = BankrollService(repository)
@@ -243,10 +260,11 @@ def test_higher_edge_fixture_can_share_the_league_day_until_portfolio_limit(tmp_
     )
 
     assert first_bet is not None
-    assert second_bet is not None and second_bet["prediction_id"] == "league-p2"
+    assert second_bet is None
     assert repository.bet_for_prediction("league-p1") is not None
-    assert len(repository.bets()) == 2
-    assert repository.current_balance() == 980.0
+    assert len(repository.bets()) == 1
+    assert repository.bets()[0]["stake"] == 40.0
+    assert repository.current_balance() == 960.0
     assert service.execution_for_prediction(first_prediction, first_fixture)["execution_status"] == "EXECUTED"
 
 
@@ -280,6 +298,71 @@ def test_started_league_day_bet_is_not_replaced(tmp_path) -> None:
     )
 
     assert first_bet is not None
-    assert selected is not None and selected["prediction_id"] == "started-p2"
+    assert selected is None
     assert repository.bet_for_prediction("started-p1") is not None
-    assert len(repository.bets()) == 2
+    assert len(repository.bets()) == 1
+
+
+def test_execution_is_single_model_and_ignores_sibling_disagreement(tmp_path) -> None:
+    """Betting decisions judge one model per account; sibling AI views never gate execution."""
+
+    repository = PredictionRepository(str(tmp_path / "single-model.db"))
+    repository.initialize()
+    service = BankrollService(repository).configure("deepseek", "legacy")
+
+    sibling = prediction("sibling-1")
+    sibling.update(
+        {
+            "fixture_id": fixture()["id"],
+            "created_at": "2099-08-27T06:00:00+00:00",
+            "phase": "preliminary",
+            "model_key": "chatgpt",
+            "competition_id": "legacy",
+        }
+    )
+    sibling["probabilities"] = {"home": 0.1, "draw": 0.2, "away": 0.7}
+    repository.save(sibling)
+
+    execution = service.execution_for_prediction(prediction(), fixture())
+
+    assert "model_disagreement" not in execution["reason_codes"]
+
+
+def test_execution_reports_specific_gate_failures(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "gate-reasons.db"))
+    repository.initialize()
+    service = BankrollService(repository).configure("deepseek", "legacy")
+
+    weak_odds = {**context()["odds"], "home": 1.3, "draw": 4.0, "away": 6.0}
+    weak_fixture = {**fixture(), "evidence": {"odds": weak_odds}}
+
+    execution = service.execution_for_prediction(prediction(), weak_fixture)
+
+    assert execution["status"] == "no_bet"
+    assert "edge_below_threshold" in execution["reason_codes"]
+    assert "Edge" in execution["reason"]
+
+
+def test_fixed_stake_placement_still_respects_league_cap(tmp_path) -> None:
+    """The automation fixed stake overrides single-bet sizing only; the
+    league-day exposure cap still bounds how much one league can take."""
+
+    repository = PredictionRepository(str(tmp_path / "league-cap.db"), initial_balance=3000.0)
+    repository.initialize()
+    service = BankrollService(repository, initial_bankroll=3000.0).configure("deepseek", "legacy")
+
+    first = service.place_for_prediction(
+        prediction("p1"),
+        league_fixture("league-1", "2099-08-27T12:00:00+00:00"),
+        {**context(), "automation_fixed_stake": 100},
+    )
+    second = service.place_for_prediction(
+        prediction("p2"),
+        league_fixture("league-2", "2099-08-27T16:00:00+00:00"),
+        {**context(), "automation_fixed_stake": 100},
+    )
+
+    assert first is not None and first["stake"] == 100.0
+    assert second is not None
+    # League cap = 4% x 3000 equity = 120; first bet used 100 -> only 20 left.
+    assert second["stake"] == 20.0

@@ -10,7 +10,8 @@ from .team_names import to_chinese_team_name
 class ApiFootballProvider:
     """Fetch API-Football data only during explicit operator actions."""
 
-    LEAGUE_IDS = {"epl": 39, "laliga": 140, "csl": 169}
+    LEAGUE_IDS = {"epl": 39, "laliga": 140, "csl": 169, "cfa_cup": 171}
+    LEAGUE_NAMES = {"cfa_cup": "中国足协杯"}
     CHINA_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
 
     def __init__(self, api_key: str, base_url: str) -> None:
@@ -27,7 +28,7 @@ class ApiFootballProvider:
     def season_for(league_key: str, fixture_date: date) -> int:
         """Return the provider season year for a supported league."""
 
-        if league_key == "csl":
+        if league_key in {"csl", "cfa_cup"}:
             return fixture_date.year
         return fixture_date.year if fixture_date.month >= 7 else fixture_date.year - 1
 
@@ -157,7 +158,7 @@ class ApiFootballProvider:
             "id": f"api-{fixture['id']}",
             "provider_id": fixture["id"],
             "league_key": league_key,
-            "league": {"id": league["id"], "name": league["name"], "country": league["country"], "mark": league["name"][:3].upper()},
+            "league": {"id": league["id"], "name": ApiFootballProvider.LEAGUE_NAMES.get(league_key, league["name"]), "country": league["country"], "mark": "CFA" if league_key == "cfa_cup" else league["name"][:3].upper()},
             "fixture_date": kickoff.astimezone(ApiFootballProvider.CHINA_TZ).date().isoformat(),
             "kickoff": fixture["date"],
             "status": status,

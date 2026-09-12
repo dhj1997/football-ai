@@ -13,6 +13,7 @@ from app.portfolio import (
     calculate_edge,
     calculate_ev,
     cash_balance,
+    candidate_gate_reasons,
     candidate_sort_key,
     equity,
     exposure_snapshot,
@@ -23,6 +24,7 @@ from app.portfolio import (
     select_best_candidates,
     select_portfolio,
 )
+from app.config import Settings
 from app.settlement import calculate_clv
 
 
@@ -35,6 +37,9 @@ def candidate(
     edge: float = 0.10,
     ev: float = 0.20,
     score: float = 0.8,
+    stake_fraction: float = 0.0,
+    odds_age_minutes: float = 0.0,
+    data_quality: float = 0.9,
 ) -> BetCandidate:
     return BetCandidate(
         fixture_id=fixture_id,
@@ -51,11 +56,12 @@ def candidate(
         edge=edge,
         ev=ev,
         risk_score=0.1,
-        data_quality=0.9,
-        odds_age_minutes=0.0,
+        data_quality=data_quality,
+        odds_age_minutes=odds_age_minutes,
         confidence=0.8,
         correlation_group=correlation_group,
         candidate_score=score,
+        stake_fraction=stake_fraction,
     )
 
 
@@ -125,21 +131,42 @@ def test_candidate_filter_rejects_ev_below_p2_threshold() -> None:
     assert is_candidate_eligible(candidate(), PortfolioConfig())
 
 
+def test_candidate_filter_rejects_implausible_edge_and_ev_as_data_anomaly() -> None:
+    assert not is_candidate_eligible(candidate(edge=0.447, ev=18.278), PortfolioConfig())
+    assert not is_candidate_eligible(candidate(edge=0.30, ev=0.20), PortfolioConfig())
+    assert not is_candidate_eligible(candidate(edge=0.10, ev=0.70), PortfolioConfig())
+    assert is_candidate_eligible(candidate(edge=0.20, ev=0.30), PortfolioConfig())
+
+
+def test_candidate_filter_allows_odds_up_to_twelve_hours_old() -> None:
+    assert is_candidate_eligible(candidate(odds_age_minutes=720.0), PortfolioConfig())
+    assert not is_candidate_eligible(candidate(odds_age_minutes=720.1), PortfolioConfig())
+
+
 def test_risk_gate_failure_always_returns_zero_stake() -> None:
     result = risk_gate(candidate(ev=0.03), 10_000, config=PortfolioConfig())
     assert result["status"] == "FAIL"
     assert result["allowed_stake"] == 0.0
 
 
-def test_single_bet_limit_is_one_percent_of_bankroll() -> None:
-    result = risk_gate(candidate(), 10_000, config=PortfolioConfig())
-    assert result["allowed_stake"] == 100.0
+def test_single_bet_limit_allows_model_requested_fraction() -> None:
+    config = PortfolioConfig(max_daily_exposure=0.5, max_league_exposure=0.5, max_total_exposure=1.0)
+    result = risk_gate(candidate(), 10_000, config=config)
+    assert result["requested_stake"] == 1_000.0
+    assert result["allowed_stake"] == 1_000.0
+
+
+def test_risk_gate_uses_candidate_stake_fraction() -> None:
+    config = PortfolioConfig(max_daily_exposure=0.5, max_league_exposure=0.5, max_total_exposure=1.0)
+    result = risk_gate(candidate(stake_fraction=0.20), 10_000, config=config)
+    assert result["requested_stake"] == 2_000.0
+    assert result["allowed_stake"] == 2_000.0
 
 
 def test_daily_and_league_limits_clamp_requested_stake() -> None:
     config = PortfolioConfig()
     daily = risk_gate(candidate(), 10_000, daily_exposure=480, requested_stake=50, config=config)
-    league = risk_gate(candidate(), 10_000, league_exposure=200, requested_stake=50, config=config)
+    league = risk_gate(candidate(), 10_000, league_exposure=400, requested_stake=50, config=config)
     assert daily["status"] == "PASS"
     assert daily["allowed_stake"] == 20.0
     assert league["status"] == "FAIL"
@@ -174,7 +201,7 @@ def test_clv_is_calculated_from_frozen_bet_and_closing_price() -> None:
     assert calculate_clv(2.0, 1.8) == pytest.approx(0.1111, abs=0.0001)
 
 
-def test_p2_bankroll_freezes_execution_and_uses_one_percent_stake(tmp_path) -> None:
+def test_p2_bankroll_freezes_execution_and_uses_fallback_stake(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "p2.db"), "p2", ("deepseek",))
     repository.initialize()
     service = BankrollService(repository, PortfolioConfig()).configure("deepseek", "p2")
@@ -211,20 +238,20 @@ def test_p2_bankroll_freezes_execution_and_uses_one_percent_stake(tmp_path) -> N
     placed = service.place_for_prediction(prediction, fixture, context)
 
     assert placed is not None
-    assert placed["stake"] == 10.0
+    assert placed["stake"] == 40.0
     assert placed["execution_id"]
     execution = repository.bet_execution(placed["execution_id"])
     assert execution is not None and execution["status"] == "EXECUTED"
     settled = repository.settle_bet_execution(
         placed["execution_id"],
         result="full_win",
-        profit_loss=10.0,
+        profit_loss=20.0,
         settled_at="2099-08-27T13:00:00+00:00",
         metadata={"odds": 9.0, "stake": 1.0, "selection": "away", "clv": 0.1111},
     )
     assert settled is not None
     assert settled["odds"] == 2.0
-    assert settled["stake"] == 10.0
+    assert settled["stake"] == 40.0
     assert settled["selection"] == "home"
     assert settled["clv"] == pytest.approx(0.1111)
 
@@ -255,3 +282,90 @@ def test_build_candidates_exposes_edge_and_ev_separately() -> None:
     assert len(rows) == 1
     assert rows[0].edge == pytest.approx(0.1)
     assert rows[0].ev == pytest.approx(0.2)
+
+
+def test_candidate_gate_reasons_reports_each_failed_gate() -> None:
+    config = PortfolioConfig()
+
+    assert candidate_gate_reasons(candidate(), config) == []
+    assert candidate_gate_reasons(candidate(edge=0.01), config) == ["edge_below_threshold"]
+    assert candidate_gate_reasons(candidate(ev=0.03), config) == ["ev_below_threshold"]
+    assert candidate_gate_reasons(
+        candidate(edge=0.447, ev=18.278), config
+    ) == ["implausible_edge", "implausible_ev"]
+    assert candidate_gate_reasons(candidate(data_quality=0.5), config) == ["data_quality_below_threshold"]
+    assert candidate_gate_reasons(candidate(odds_age_minutes=None), config) == ["odds_age_missing"]
+    assert candidate_gate_reasons(candidate(odds_age_minutes=800.0), config) == ["odds_age_stale"]
+
+
+def test_build_candidates_assigns_priority_for_priority_league_and_team() -> None:
+    fixture = {
+        "id": "f1",
+        "fixture_date": "2099-08-27",
+        "league_key": "csl",
+        "status": "scheduled",
+        "home_team": {"name": "武汉三镇"},
+        "away_team": {"name": "河南队"},
+    }
+    prediction = {
+        "id": "p1",
+        "model_key": "deepseek",
+        "data_completeness": 0.9,
+        "forecast_confidence": 0.8,
+        "ai": {"status": "completed"},
+        "decision": {"status": "bet", "market": "1x2", "selection": "home", "model_confidence": 0.8},
+        "market_assessment": {
+            "odds_status": "fresh",
+            "odds_updated_at": datetime.now(UTC).isoformat(),
+            "markets": [
+                {"market": "1x2", "selection": "home", "price": 2.0, "model_probability": 0.6, "de_vig_probability": 0.5},
+            ],
+        },
+    }
+
+    candidates = build_candidates(prediction, fixture, PortfolioConfig.from_settings(Settings(_env_file=None)))
+
+    assert candidates
+    assert candidates[0].priority == pytest.approx(3.0)
+
+
+def test_build_candidates_assigns_no_priority_without_match() -> None:
+    fixture = {
+        "id": "f2",
+        "fixture_date": "2099-08-27",
+        "league_key": "epl",
+        "status": "scheduled",
+        "home_team": {"name": "利物浦"},
+        "away_team": {"name": "富勒姆"},
+    }
+    prediction = {
+        "id": "p2",
+        "model_key": "deepseek",
+        "data_completeness": 0.9,
+        "forecast_confidence": 0.8,
+        "ai": {"status": "completed"},
+        "decision": {"status": "bet", "market": "1x2", "selection": "home", "model_confidence": 0.8},
+        "market_assessment": {
+            "odds_status": "fresh",
+            "odds_updated_at": datetime.now(UTC).isoformat(),
+            "markets": [
+                {"market": "1x2", "selection": "home", "price": 2.0, "model_probability": 0.6, "de_vig_probability": 0.5},
+            ],
+        },
+    }
+
+    candidates = build_candidates(prediction, fixture, PortfolioConfig())
+
+    assert candidates
+    assert candidates[0].priority == 0.0
+
+
+def test_select_best_candidates_prefers_priority_over_score() -> None:
+    high_score = candidate(score=0.95, prediction_id="plain")
+    prioritized = candidate(score=0.10, prediction_id="sanzen")
+    object.__setattr__(prioritized, "priority", 3.0)
+
+    selected = select_best_candidates([high_score, prioritized])
+
+    assert len(selected) == 1
+    assert selected[0].prediction_id == "sanzen"

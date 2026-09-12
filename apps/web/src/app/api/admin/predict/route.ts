@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ detail: "缺少比赛编号" }, { status: 400 });
   }
 
-  const apiBase = (process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8001").replace(/\/+$/, "");
+  const apiBase = (process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
   const adminKey = process.env.ADMIN_API_KEY ?? "dev-admin-key";
   try {
     const response = await fetch(`${apiBase}/api/admin/fixtures/${encodeURIComponent(fixtureId)}/predictions`, {

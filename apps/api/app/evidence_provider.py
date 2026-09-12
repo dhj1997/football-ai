@@ -135,6 +135,33 @@ class ApiFootballEvidenceProvider:
             "synced_at": updated_at,
         }
 
+    async def fetch_lineup(self, fixture: dict[str, Any]) -> dict[str, Any]:
+        """Fetch only fixture identity and confirmed lineups near kickoff."""
+
+        if not self.configured:
+            raise RuntimeError("API_FOOTBALL_KEY is not configured")
+        external_id = (fixture.get("external_ids") or {}).get("api_football")
+        if not external_id:
+            raise RuntimeError("当前比赛没有 API-Football fixture ID，先同步赛程")
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"x-apisports-key": self.api_key},
+            timeout=20,
+        ) as client:
+            details = await self._get(client, "/fixtures", {"id": external_id})
+            item = (details.get("response") or [None])[0]
+            if not item:
+                raise RuntimeError("API-Football 没有返回这场比赛")
+            lineups = await self._get(client, "/fixtures/lineups", {"fixture": external_id})
+        updated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        home_id = (item.get("teams") or {}).get("home", {}).get("id")
+        away_id = (item.get("teams") or {}).get("away", {}).get("id")
+        return {
+            "lineup": _lineup(lineups, home_id, away_id, updated_at),
+            "source": "api-football-lineup",
+            "synced_at": updated_at,
+        }
+
     async def _get_many(
         self,
         client: httpx.AsyncClient,
@@ -263,7 +290,7 @@ def _recent_matches(events: list[dict[str, Any]], team_id: object) -> list[dict[
     """Map public event results into the five-match form rows used by the UI."""
 
     matches: list[dict[str, Any]] = []
-    for event in events[:5]:
+    for event in events[:10]:
         home_score = _optional_score(event.get("intHomeScore"))
         away_score = _optional_score(event.get("intAwayScore"))
         if home_score is None or away_score is None:
@@ -318,7 +345,7 @@ def _head_to_head(payload: dict[str, Any]) -> list[dict[str, str]]:
     """Map recent head-to-head matches."""
 
     result = []
-    for item in (payload.get("response") or [])[:5]:
+    for item in (payload.get("response") or [])[:10]:
         fixture = item.get("fixture") or {}
         teams = item.get("teams") or {}
         goals = item.get("goals") or {}
@@ -375,6 +402,7 @@ def _availability(payload: dict[str, Any], home_id: int, away_id: int, updated_a
         "notes": notes[:12],
         "players": players[:24],
         "updated_at": updated_at,
+        "checked_at": updated_at,
     }
 
 

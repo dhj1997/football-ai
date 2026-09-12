@@ -13,10 +13,15 @@ MIN_EXPECTED_EDGE = 0.03
 MIN_FORECAST_CONFIDENCE = 0.60
 MIN_STAKE_FRACTION = 0.10
 MAX_STAKE_FRACTION = 0.25
-ODDS_MAX_AGE = timedelta(hours=3)
+# Values beyond these are treated as data anomalies, not opportunities.
+MAX_PLAUSIBLE_EDGE = 0.25
+MAX_PLAUSIBLE_EV = 0.60
+ODDS_MAX_AGE = timedelta(hours=12)
 REASON_TEXT = {
+    "ai_unavailable": "AI服务不可用，未完成模型分析",
     "ai_no_bet": "AI基于当前证据不建议下注",
     "negative_edge": "模型概率未超过当前赔率所需的最低优势",
+    "implausible_market": "模型概率与赔率的偏差超出合理范围，疑似数据异常，已拦截",
     "low_confidence": "预测置信度不足",
     "lineup_unconfirmed": "首发阵容尚未确认",
     "stale_odds": "赔率已过期或缺少可靠更新时间",
@@ -67,11 +72,16 @@ def apply_market_decision(
     if player_data_missing:
         reason_codes.append("missing_player_data")
     if not ai_completed:
+        reason_codes.append("ai_unavailable")
         reason_codes.append("low_confidence")
     elif confidence < MIN_FORECAST_CONFIDENCE:
         warning_codes.append("low_confidence")
     if candidate and candidate["expected_edge"] < MIN_EXPECTED_EDGE:
         reason_codes.append("negative_edge")
+    if candidate and (
+        candidate["edge"] > MAX_PLAUSIBLE_EDGE or candidate["ev"] > MAX_PLAUSIBLE_EV
+    ):
+        reason_codes.append("implausible_market")
     if risk_limited:
         reason_codes.append("risk_limit")
     reason_codes = list(dict.fromkeys(reason_codes))
@@ -230,9 +240,10 @@ def assess_markets(prediction: dict[str, Any], odds: Any) -> dict[str, Any]:
                     "probability_source": probability_source,
                 }
             )
+    odds_updated_at = odds.get("updated_at") or odds.get("captured_at")
     return {
-        "odds_status": "stale" if _odds_stale(odds.get("updated_at")) else "fresh",
-        "odds_updated_at": odds.get("updated_at"),
+        "odds_status": "stale" if _odds_stale(odds_updated_at) else "fresh",
+        "odds_updated_at": odds_updated_at,
         "bookmaker": odds.get("bookmaker"),
         "markets": rows,
     }

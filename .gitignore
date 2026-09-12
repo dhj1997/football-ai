@@ -9,3 +9,9 @@ __pycache__/
 .env
 .DS_Store
 
+
+.artifacts/
+*.tsbuildinfo
+.impeccable/
+
+.superpowers/

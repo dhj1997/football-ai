@@ -1,5 +1,5 @@
 from app.data import demo_context, demo_fixtures
-from app.prediction_service import PredictionService
+from app.prediction_service import PredictionService, _data_completeness, _model_input
 from app.prompt_contract import DEFAULT_PROMPT_CONTRACT
 import pytest
 
@@ -158,3 +158,74 @@ async def test_unconfigured_ai_saves_explicit_degraded_prediction() -> None:
     assert result["experiment"]["strategy_id"] == "baseline"
     assert len(repository.snapshots) == 1
     assert len(repository.predictions) == 1
+
+
+def test_data_completeness_excludes_lineup_double_penalty() -> None:
+    context = {
+        "recent_form": {"home": [{"x": 1}], "away": [{"x": 1}]},
+        "head_to_head": [{"x": 1}],
+        "squads": {"home": [{"x": 1}], "away": [{"x": 1}]},
+        "availability": {"updated_at": "2026-09-10T00:00:00+00:00"},
+        "odds": {"home": 2.0},
+    }
+    standings = {"home": {"x": 1}, "away": {"x": 1}}
+
+    quality = _data_completeness(context, standings)
+
+    assert quality["score"] == 1.0
+    assert "lineup" not in quality["fields"]
+    assert quality["missing"] == []
+
+
+def test_data_completeness_counts_five_of_six_when_one_field_missing() -> None:
+    context = {
+        "recent_form": {"home": [{"x": 1}], "away": [{"x": 1}]},
+        "head_to_head": [{"x": 1}],
+        "squads": {"home": [{"x": 1}], "away": [{"x": 1}]},
+        "availability": {"updated_at": "2026-09-10T00:00:00+00:00"},
+    }
+    standings = {"home": {"x": 1}, "away": {"x": 1}}
+
+    quality = _data_completeness(context, standings)
+
+    assert quality["score"] == pytest.approx(5 / 6, abs=1e-3)
+    assert quality["missing"] == ["odds"]
+
+
+def test_model_input_strips_asian_odds_without_numeric_line() -> None:
+    """Dongqiudi sometimes serves asian odds with a label but no numeric line;
+    keeping them makes the model claim an unavailable handicap and fail validation."""
+
+    fixture = {"id": "f1", "league_key": "csl"}
+    context = {
+        "odds": {
+            "home": 2.1, "draw": 3.2, "away": 3.6,
+            "asian_handicap": None,
+            "asian_handicap_home_odd": 0.78,
+            "asian_handicap_away_odd": 1.03,
+            "updated_at": "2026-09-11T00:00:00+00:00",
+        }
+    }
+
+    model_input = _model_input(fixture, context, {"home": {}, "away": {}}, {"score": 1.0})
+
+    assert "asian_handicap" not in model_input["odds"]
+    assert "asian_handicap_home_odd" not in model_input["odds"]
+    assert model_input["odds"]["home"] == 2.1
+
+
+def test_model_input_keeps_asian_odds_with_numeric_line() -> None:
+    fixture = {"id": "f1", "league_key": "epl"}
+    context = {
+        "odds": {
+            "home": 1.9, "draw": 3.4, "away": 4.2,
+            "asian_handicap": -0.5,
+            "asian_handicap_home_odd": 1.95,
+            "asian_handicap_away_odd": 1.9,
+        }
+    }
+
+    model_input = _model_input(fixture, context, {"home": {}, "away": {}}, {"score": 1.0})
+
+    assert model_input["odds"]["asian_handicap"] == -0.5
+    assert model_input["odds"]["asian_handicap_home_odd"] == 1.95

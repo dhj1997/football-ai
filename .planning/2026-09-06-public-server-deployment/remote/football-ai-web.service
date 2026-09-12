@@ -1,0 +1,24 @@
+[Unit]
+Description=Football AI Next.js service
+After=network-online.target football-ai-api.service
+Wants=network-online.target football-ai-api.service
+
+[Service]
+Type=simple
+User=football-ai
+Group=football-ai
+WorkingDirectory=/opt/football-ai/app/apps/web
+EnvironmentFile=/opt/football-ai/app/.env
+Environment=NODE_ENV=production
+Environment=PATH=/opt/node-v22.23.2-linux-x64/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/local/bin/node /opt/football-ai/app/apps/web/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3200
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillSignal=SIGINT
+SuccessExitStatus=130
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

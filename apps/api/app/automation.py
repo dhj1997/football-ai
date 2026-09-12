@@ -4,8 +4,15 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable
 
-from .evidence_chain import evidence_needs_enrichment, localize_evidence_players, merge_evidence, should_use_secondary
+from .data import CHINA_TZ, unavailable_context
+from .evidence_chain import (
+    evidence_needs_daily_refresh,
+    evidence_needs_enrichment,
+    localize_evidence_players,
+    merge_evidence,
+)
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
+from .schedule_sync import deduplicate_fixtures
 
 
 class AutomationRunner:
@@ -22,6 +29,7 @@ class AutomationRunner:
         bankroll_service: Any,
         settlement_service: Any,
         historical_accumulation_service: Any | None = None,
+        dongqiudi_sync_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -32,10 +40,13 @@ class AutomationRunner:
         self.bankroll_service = bankroll_service
         self.settlement_service = settlement_service
         self.historical_accumulation_service = historical_accumulation_service
+        self.dongqiudi_sync_service = dongqiudi_sync_service
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._jobs: dict[str, tuple[int, Callable[[], Awaitable[dict[str, Any]]]]] = {
-            "fixtures": (settings.automation_fixture_interval_minutes, self._sync_fixtures),
+            "fixtures": (max(1, int(getattr(settings, "automation_fixture_interval_minutes", 1440))), self._sync_fixtures),
+            "evidence": (max(1, int(getattr(settings, "automation_evidence_interval_minutes", 1440))), self._refresh_daily_evidence),
+            "lineup": (max(1, int(getattr(settings, "automation_lineup_interval_minutes", 5))), self._refresh_lineups),
             "standings": (settings.automation_standings_interval_minutes, self._sync_standings),
             "analysis": (settings.automation_analysis_interval_minutes, self._analyze_upcoming),
             "settlement": (settings.automation_settlement_interval_minutes, self._settle_finished),
@@ -44,6 +55,19 @@ class AutomationRunner:
             self._jobs["historical_accumulation"] = (
                 max(1, int(getattr(settings, "automation_historical_accumulation_interval_minutes", 1440))),
                 self._accumulate_historical,
+            )
+        if dongqiudi_sync_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
+            self._jobs["dongqiudi_schedule"] = (
+                max(60, int(getattr(settings, "automation_dongqiudi_schedule_interval_minutes", 60))),
+                self._sync_dongqiudi_schedule,
+            )
+            self._jobs["dongqiudi_scores"] = (
+                max(1, int(getattr(settings, "automation_dongqiudi_score_interval_minutes", 5))),
+                self._sync_dongqiudi_scores,
+            )
+            self._jobs["dongqiudi_prematch"] = (
+                max(1, int(getattr(settings, "automation_dongqiudi_prematch_interval_minutes", 5))),
+                self._sync_dongqiudi_prematch,
             )
 
     async def run_loop(self) -> None:
@@ -83,13 +107,19 @@ class AutomationRunner:
                     runs.append(await self._execute_job(job_name))
             return runs
 
-    async def run_job(self, job_name: str) -> dict[str, Any]:
+    async def run_job(self, job_name: str, *, force: bool = False) -> dict[str, Any]:
         """Force one job while sharing the normal non-overlap lock."""
 
         async with self._lock:
-            return await self._execute_job(job_name)
+            callback = (lambda: self._analyze_upcoming(force=True)) if force and job_name == "analysis" else None
+            return await self._execute_job(job_name, callback=callback)
 
-    async def _execute_job(self, job_name: str) -> dict[str, Any]:
+    async def _execute_job(
+        self,
+        job_name: str,
+        *,
+        callback: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
         """Run one known job now and persist its complete lifecycle."""
 
         item = self._jobs.get(job_name)
@@ -98,7 +128,7 @@ class AutomationRunner:
         started_at = datetime.now(UTC).isoformat()
         run = self.repository.start_job_run(job_name, started_at)
         try:
-            result = await item[1]()
+            result = await (callback or item[1])()
             errors = result.get("errors") or []
             status = "partial" if errors else "success"
             item_count = int(result.get("item_count", 0))
@@ -127,20 +157,130 @@ class AutomationRunner:
             timestamp = datetime.fromisoformat(value).astimezone(UTC)
         except (TypeError, ValueError):
             return True
-        minutes = (
-            self.settings.automation_failure_backoff_minutes
-            if last.get("status") in {"failed", "partial", "running"}
-            else interval_minutes
-        )
-        return datetime.now(UTC) - timestamp >= timedelta(minutes=max(1, minutes))
+        if last.get("status") in {"failed", "partial", "running"}:
+            return datetime.now(UTC) - timestamp >= timedelta(
+                minutes=max(1, int(self.settings.automation_failure_backoff_minutes))
+            )
+        if job_name in {"fixtures", "evidence"}:
+            return timestamp.astimezone(CHINA_TZ).date() < datetime.now(CHINA_TZ).date()
+        return datetime.now(UTC) - timestamp >= timedelta(minutes=max(1, interval_minutes))
 
     async def _sync_fixtures(self) -> dict[str, Any]:
         result = await self.schedule_sync.force_refresh()
         return {**result, "item_count": int(result.get("item_count", 0))}
 
+    async def _refresh_daily_evidence(self) -> dict[str, Any]:
+        """Refresh missing or stale pre-match evidence without running models."""
+
+        now = datetime.now(UTC)
+        candidates = self._future_scheduled_fixtures(now)
+        limit = max(0, int(getattr(self.settings, "automation_evidence_refresh_limit", 32)))
+        counts = {"candidate_count": len(candidates), "refresh_count": 0, "skipped_count": 0, "deferred_count": 0}
+        errors: list[str] = []
+        for fixture in candidates:
+            existing = fixture.get("evidence") or {}
+            if not evidence_needs_daily_refresh(existing, now, self.settings.evidence_refresh_minutes):
+                counts["skipped_count"] += 1
+                continue
+            if limit and counts["refresh_count"] >= limit:
+                counts["deferred_count"] += 1
+                continue
+            try:
+                fetcher = getattr(self.evidence_provider, "fetch_public", None)
+                if not callable(fetcher):
+                    raise RuntimeError("TheSportsDB 证据源不支持每日刷新")
+                context = merge_evidence(existing, await fetcher(fixture))
+                localize_evidence_players(context)
+                self.repository.save_fixture_evidence(fixture["id"], context)
+                counts["refresh_count"] += 1
+            except Exception as error:
+                errors.append(f"{fixture.get('id')}: {_bounded_error(error)}")
+        return {**counts, "item_count": counts["refresh_count"], "errors": errors[:20]}
+
+    async def _refresh_lineups(self) -> dict[str, Any]:
+        """Refresh each scheduled fixture at the configured final-hour windows."""
+
+        now = datetime.now(UTC)
+        offsets = self._lineup_offsets()
+        window_minutes = max(1, int(getattr(self.settings, "automation_lineup_interval_minutes", 5)))
+        candidates = self._future_scheduled_fixtures(now)
+        counts = {"candidate_count": 0, "synced_count": 0, "confirmed_count": 0, "skipped_count": 0}
+        errors: list[str] = []
+        fetcher = getattr(self.evidence_provider, "fetch_lineup", None)
+        if not candidates:
+            return {**counts, "item_count": 0, "errors": []}
+        if not callable(fetcher):
+            return {**counts, "item_count": 0, "errors": ["证据源不支持只刷新首发"]}
+        for fixture in candidates:
+            kickoff = _as_utc(fixture.get("kickoff"))
+            if kickoff is None:
+                continue
+            delta_minutes = (kickoff - now).total_seconds() / 60
+            context = fixture.get("evidence") or unavailable_context()
+            if (context.get("lineup") or {}).get("confirmed"):
+                counts["skipped_count"] += 1
+                continue
+            markers = context.get("automation_refresh") or {}
+            offset = next(
+                (
+                    value
+                    for value in offsets
+                    if value - window_minutes < delta_minutes <= value
+                    and not markers.get(f"lineup_{value}_at")
+                ),
+                None,
+            )
+            if offset is None:
+                continue
+            counts["candidate_count"] += 1
+            try:
+                incoming = await fetcher(fixture)
+                merged = merge_evidence(context, incoming)
+                localize_evidence_players(merged)
+                refresh_state = dict(merged.get("automation_refresh") or {})
+                refresh_state[f"lineup_{offset}_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
+                merged["automation_refresh"] = refresh_state
+                updated = self.repository.save_fixture_evidence(fixture["id"], merged)
+                fixture = updated or fixture
+                counts["synced_count"] += 1
+                if (merged.get("lineup") or {}).get("confirmed"):
+                    counts["confirmed_count"] += 1
+            except Exception as error:
+                errors.append(f"{fixture.get('id')}: {_bounded_error(error)}")
+        return {**counts, "item_count": counts["synced_count"], "errors": errors[:20]}
+
+    def _future_scheduled_fixtures(self, now: datetime) -> list[dict[str, Any]]:
+        today = now.astimezone(CHINA_TZ).date()
+        last_day = today + timedelta(days=max(1, int(getattr(self.settings, "schedule_lookahead_days", 7))))
+        fixtures: list[dict[str, Any]] = []
+        for fixture in deduplicate_fixtures(self.repository.list_fixtures()):
+            if fixture.get("status") != "scheduled":
+                continue
+            kickoff = _as_utc(fixture.get("kickoff"))
+            if kickoff is None or kickoff < now or kickoff.astimezone(CHINA_TZ).date() > last_day:
+                continue
+            fixtures.append(fixture)
+        return fixtures
+
+    def _lineup_offsets(self) -> list[int]:
+        raw = str(getattr(self.settings, "lineup_refresh_offsets_minutes", "60,30"))
+        values = {int(item.strip()) for item in raw.split(",") if item.strip().isdigit() and int(item.strip()) > 0}
+        return sorted(values or {60, 30}, reverse=True)
+
     async def _sync_standings(self) -> dict[str, Any]:
         result = await self.league_sync.force_refresh()
         return {**result, "item_count": int(result.get("item_count", 0))}
+
+    async def _sync_dongqiudi_schedule(self) -> dict[str, Any]:
+        result = await self.dongqiudi_sync_service.sync_schedule()
+        return {**result, "item_count": int(result.get("item_count", 0))}
+
+    async def _sync_dongqiudi_scores(self) -> dict[str, Any]:
+        result = await self.dongqiudi_sync_service.sync_scores()
+        return {**result, "item_count": int(result.get("item_count", 0))}
+
+    async def _sync_dongqiudi_prematch(self) -> dict[str, Any]:
+        return await self.dongqiudi_sync_service.sync_prematch_due()
 
     async def _accumulate_historical(self) -> dict[str, Any]:
         result = await self.historical_accumulation_service.run()
@@ -149,7 +289,7 @@ class AutomationRunner:
             "item_count": int(result.get("newly_generated_predictions", 0)),
         }
 
-    async def _analyze_upcoming(self) -> dict[str, Any]:
+    async def _analyze_upcoming(self, force: bool = False) -> dict[str, Any]:
         now = datetime.now(UTC)
         counts = {
             "candidate_count": 0,
@@ -161,16 +301,13 @@ class AutomationRunner:
         }
         errors: list[str] = []
         refresh_attempts = 0
-        for fixture in self.repository.list_fixtures():
+        for fixture in deduplicate_fixtures(self.repository.list_fixtures()):
             kickoff = _as_utc(fixture.get("kickoff"))
-            if (
-                fixture.get("status") != "scheduled"
-                or kickoff is None
-                or kickoff < now
-                or kickoff - now > timedelta(hours=self.settings.prediction_lead_hours)
-            ):
+            if fixture.get("status") != "scheduled" or kickoff is None or kickoff < now:
                 continue
-            counts["candidate_count"] += 1
+            prediction_window = self._prediction_window(kickoff, now)
+            if prediction_window is None:
+                continue
             try:
                 if (
                     refresh_attempts < self.settings.automation_evidence_refresh_limit
@@ -195,13 +332,25 @@ class AutomationRunner:
                     continue
                 localize_evidence_players(context)
                 model_keys = list(getattr(self.prediction_service, "model_keys", ()))
+                refresh_state = context.get("automation_refresh") or {}
+                prediction_window = (
+                    self._prediction_window(kickoff, now)
+                    if force
+                    else self._prediction_window(kickoff, now, refresh_state, model_keys)
+                )
+                if prediction_window is None:
+                    continue
+                counts["candidate_count"] += 1
+                window_token = self._prediction_window_token(prediction_window)
+                marker_prefix = f"prediction_{window_token}"
                 current_predictions: dict[str, dict[str, Any] | None] = {}
                 if not model_keys:
                     latest = self.repository.latest_current(
                         fixture["id"],
                         DEFAULT_PROMPT_CONTRACT.version,
                     )
-                    due_model_keys: list[str] | None = None if self._should_predict(latest, context, now) else []
+                    current_predictions = {"default": latest} if latest else {}
+                    due_model_keys: list[str] = [] if refresh_state.get(f"{marker_prefix}_default_at") else ["default"]
                 else:
                     competition_id = getattr(self.prediction_service, "competition_id", None)
                     current_predictions = {
@@ -215,19 +364,22 @@ class AutomationRunner:
                     }
                     due_model_keys = [
                         key for key in model_keys
-                        if self._should_predict(
-                            current_predictions[key],
-                            context,
-                            now,
-                        )
+                        if not refresh_state.get(f"{marker_prefix}_{key}_at")
                     ]
-                if due_model_keys == []:
+                if due_model_keys == [] and not force:
                     current = [item for item in current_predictions.values() if item]
                     counts["bet_count"] += len(self._place_predictions(current, fixture, context))
                     continue
                 created = await self.prediction_service.create(fixture, context, due_model_keys) if model_keys else await self.prediction_service.create(fixture, context)
                 predictions = created if isinstance(created, list) else [created]
                 counts["prediction_count"] += len(predictions)
+                refresh_state = dict(context.get("automation_refresh") or {})
+                marked_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+                for prediction in predictions:
+                    model_key = str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "default")
+                    refresh_state[f"{marker_prefix}_{model_key}_at"] = marked_at
+                context["automation_refresh"] = refresh_state
+                fixture = self.repository.save_fixture_evidence(fixture["id"], context) or fixture
                 counts["bet_count"] += len(self._place_predictions(predictions, fixture, context))
             except Exception as error:
                 errors.append(f"{fixture.get('id')}: {_bounded_error(error)}")
@@ -239,6 +391,9 @@ class AutomationRunner:
         fixture: dict[str, Any],
         context: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        fixed_stake = float(getattr(self.settings, "automation_fixed_stake", 0) or 0)
+        if fixed_stake > 0:
+            context = {**context, "automation_fixed_stake": fixed_stake}
         bulk = getattr(self.bankroll_service, "place_for_predictions", None)
         if callable(bulk):
             return bulk(predictions, fixture, context)
@@ -247,6 +402,38 @@ class AutomationRunner:
             for prediction in predictions
             if (bet := self.bankroll_service.place_for_prediction(prediction, fixture, context))
         ]
+
+    def _prediction_window(
+        self,
+        kickoff: datetime,
+        now: datetime,
+        refresh_state: dict[str, Any] | None = None,
+        model_keys: list[str] | None = None,
+    ) -> float | None:
+        delta_minutes = (kickoff - now).total_seconds() / 60
+        offset = next((item for item in sorted(self._prediction_offsets()) if delta_minutes <= item * 60), None)
+        if offset is None or refresh_state is None:
+            return offset
+        token = self._prediction_window_token(offset)
+        keys = model_keys or ["default"]
+        return offset if any(not refresh_state.get(f"prediction_{token}_{key}_at") for key in keys) else None
+
+    def _prediction_offsets(self) -> list[float]:
+        raw = str(getattr(self.settings, "prediction_refresh_offsets_hours", "24,12,6,1,0.5"))
+        values: set[float] = set()
+        for item in raw.split(","):
+            try:
+                value = float(item.strip())
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                values.add(value)
+        return sorted(values or {24.0, 12.0, 6.0, 1.0, 0.5}, reverse=True)
+
+    @staticmethod
+    def _prediction_window_token(offset_hours: float) -> str:
+        minutes = round(offset_hours * 60)
+        return f"{minutes}m" if minutes < 60 else f"{minutes // 60}h"
 
     def _evidence_refresh_due(
         self,
@@ -271,8 +458,9 @@ class AutomationRunner:
 
     async def _refresh_evidence(self, fixture: dict[str, Any]) -> dict[str, Any]:
         existing = fixture.get("evidence") or {}
-        fetch_secondary = getattr(self.evidence_provider, "fetch_secondary", None)
-        fetcher = fetch_secondary if should_use_secondary(existing) and callable(fetch_secondary) else self.evidence_provider.fetch
+        fetcher = getattr(self.evidence_provider, "fetch_public", None)
+        if not callable(fetcher):
+            raise RuntimeError("TheSportsDB 证据源不可用")
         context = merge_evidence(existing, await fetcher(fixture))
         return self.repository.save_fixture_evidence(fixture["id"], context) or fixture
 
@@ -319,3 +507,19 @@ def _as_utc(value: Any) -> datetime | None:
 
 def _bounded_error(error: Exception) -> str:
     return (str(error).replace("\n", " ").replace("\r", " ")[:300] or error.__class__.__name__)
+
+
+def _has_core_daily_evidence(context: dict[str, Any]) -> bool:
+    """Use quota-free refreshes only after all daily evidence fields exist."""
+
+    recent = context.get("recent_form") or {}
+    availability = context.get("availability") or {}
+    teams = context.get("teams") or {}
+    return (
+        len(recent.get("home") or []) >= 3
+        and len(recent.get("away") or []) >= 3
+        and bool(context.get("head_to_head"))
+        and bool(availability.get("checked_at") or availability.get("updated_at") or availability.get("players"))
+        and bool(teams.get("home"))
+        and bool(teams.get("away"))
+    )

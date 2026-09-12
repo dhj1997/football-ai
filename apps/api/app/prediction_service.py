@@ -33,12 +33,14 @@ class PredictionService:
         model_key: str | None = None,
         competition_id: str = "legacy",
         player_value_service: Any | None = None,
+        initial_bankroll: float = 1000.0,
     ) -> None:
         self.model_provider = model_provider
         self.repository = repository
         self.model_key = model_key or getattr(model_provider, "provider_name", "deepseek")
         self.competition_id = competition_id
         self.player_value_service = player_value_service
+        self.initial_bankroll = max(0.0, float(initial_bankroll))
 
     async def create(
         self,
@@ -78,12 +80,12 @@ class PredictionService:
         current_balance = (
             balance_reader(self.model_key, self.competition_id)
             if callable(balance_reader)
-            else 1000.0
+            else self.initial_bankroll
         )
         model_input["simulation_account"] = {
             "competition_id": self.competition_id,
             "model_key": self.model_key,
-            "initial_balance": 1000.0,
+            "initial_balance": self.initial_bankroll,
             "current_balance": current_balance,
             "risk_policy": {"backend_owned": True, "max_fixture_fraction": 0.25},
             "real_money_execution": False,
@@ -98,6 +100,9 @@ class PredictionService:
         baseline["baseline"] = baseline_summary
         baseline["model_probabilities"] = deepcopy(baseline["probabilities"])
         baseline["prediction_timestamp"] = baseline["created_at"]
+        baseline["fixture_status_at_prediction"] = fixture.get("status")
+        baseline["score_at_prediction"] = deepcopy(fixture.get("score"))
+        baseline["match_minute_at_prediction"] = fixture.get("minute") or fixture.get("elapsed")
         baseline["evidence_snapshot_id"] = snapshot["id"]
         baseline["evidence_hash"] = snapshot["content_hash"]
         baseline["evidence_version"] = snapshot.get("evidence_version") or EVIDENCE_CONTRACT_VERSION
@@ -385,6 +390,9 @@ def _model_input(
             "id": fixture["id"],
             "league": fixture.get("league"),
             "kickoff": fixture.get("kickoff"),
+            "status": fixture.get("status"),
+            "score": fixture.get("score"),
+            "minute": fixture.get("minute") or fixture.get("elapsed"),
             "home_team": fixture.get("home_team"),
             "away_team": fixture.get("away_team"),
             "venue": fixture.get("venue"),
@@ -421,11 +429,29 @@ def _model_input(
             for side in ("home", "away")
         },
         "player_impact": public_payload(context.get("player_impact")),
-        "odds": context.get("odds"),
+        "odds": _model_odds(context.get("odds")),
         "standings": standings,
         "data_completeness": quality,
         "evidence_source": context.get("source"),
         "evidence_synced_at": context.get("synced_at"),
+    }
+
+
+def _model_odds(odds: Any) -> Any:
+    """Drop asian-handicap quotes that carry no numeric line.
+
+    Dongqiudi sometimes serves asian odds with only a Chinese label ("受平/半")
+    and a null line. Presenting them to the model makes it claim an available
+    handicap forecast, which then fails contract validation and kills the
+    whole prediction.
+    """
+
+    if not isinstance(odds, dict) or odds.get("asian_handicap") is not None:
+        return odds
+    return {
+        key: value
+        for key, value in odds.items()
+        if not str(key).startswith("asian_handicap")
     }
 
 
@@ -490,13 +516,15 @@ def _canonical_name(value: Any) -> str:
 def _data_completeness(context: dict[str, Any], standings: dict[str, Any]) -> dict[str, Any]:
     recent = context.get("recent_form") or {}
     squads = context.get("squads") or {}
+    # Lineup state is excluded on purpose: unconfirmed lineups are already
+    # surfaced via `phase` and the `lineup_unconfirmed` warning, so counting
+    # them here would double-penalize every preliminary prediction.
     fields = {
         "standings": bool(standings.get("home") and standings.get("away")),
         "recent_form": bool(recent.get("home") and recent.get("away")),
         "head_to_head": bool(context.get("head_to_head")),
         "squads": bool(squads.get("home") and squads.get("away")),
         "availability": bool((context.get("availability") or {}).get("updated_at")),
-        "lineup": bool((context.get("lineup") or {}).get("confirmed")),
         "odds": bool(context.get("odds")),
     }
     return {

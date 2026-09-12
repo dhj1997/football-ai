@@ -157,3 +157,26 @@ def test_p6_backfill_snapshot_uses_the_same_as_of_recent_form(tmp_path) -> None:
     recent = result["snapshot"]["payload"]["context"]["recent_form"]
     assert recent["as_of"] == cutoff.isoformat()
     assert len(recent["home"]) == 3
+
+
+def test_context_for_fixture_returns_none_when_one_side_has_no_matches() -> None:
+    """A one-sided snapshot would carry None ppg and crash the Poisson baseline."""
+
+    cutoff = datetime(2026, 8, 30, 12, tzinfo=UTC)
+    other = {"canonical_team_id": "team:epl:other", "provider_id": 30, "name": "Other FC"}
+    fixtures = [_fixture(index, kickoff=cutoff - timedelta(days=index)) for index in range(1, 4)]
+    for item in fixtures:
+        item["home_team"], item["away_team"] = TEAM, other
+        item["score"] = {"home": 2, "away": 0}
+    service = RecentFormService(FakeRepository(fixtures))
+    fixture = {
+        "id": "upcoming",
+        "league_key": "epl",
+        "kickoff": (cutoff + timedelta(days=1)).isoformat(),
+        "home_team": TEAM,
+        "away_team": OPPONENT,
+    }
+
+    context = service.context_for_fixture(fixture, as_of=cutoff)
+
+    assert context is None

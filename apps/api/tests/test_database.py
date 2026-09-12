@@ -91,6 +91,22 @@ def test_fixture_replacement_preserves_saved_evidence(tmp_path) -> None:
     assert refreshed["lineup_confirmed"] is True
 
 
+def test_fixture_replacement_keeps_dongqiudi_rows(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "preserve-dongqiudi.db"))
+    repository.initialize()
+    dqd = {
+        **fixture("api-9", "2026-08-24"),
+        "source": "dongqiudi",
+        "external_ids": {"dongqiudi": "54524981"},
+        "dongqiudi_sync": {"initial_synced_at": "2026-08-24T10:00:00+00:00"},
+    }
+    repository.replace_fixtures("2026-08-24", "2026-08-24", [dqd], "2026-08-24T10:00:00+00:00")
+    repository.replace_fixtures("2026-08-24", "2026-08-24", [fixture("api-10", "2026-08-24")], "2026-08-24T11:00:00+00:00")
+
+    assert repository.fixture("api-9")["external_ids"]["dongqiudi"] == "54524981"
+    assert repository.fixture("api-10") is not None
+
+
 def test_missing_fixture_evidence_is_restored_from_latest_snapshot(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "restore-evidence.db"))
     repository.initialize()
@@ -243,3 +259,27 @@ def test_repository_initializes_one_simulated_bankroll_credit(tmp_path) -> None:
     transactions = repository.bankroll_transactions()
     assert len(transactions) == 1
     assert transactions[0]["kind"] == "initial_credit"
+
+
+def test_repository_can_initialize_simulation_accounts_with_five_thousand(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "initial-5000.db"), initial_balance=5000.0)
+    repository.initialize()
+
+    assert repository.current_balance() == 5000.0
+    assert repository.bankroll_transactions()[0]["amount"] == 5000.0
+
+
+def test_repository_upgrades_existing_simulation_account_once(tmp_path) -> None:
+    path = str(tmp_path / "upgrade-5000.db")
+    repository = PredictionRepository(path)
+    repository.initialize()
+
+    upgraded = PredictionRepository(path, initial_balance=5000.0)
+    upgraded.initialize()
+    upgraded.initialize()
+
+    assert upgraded.current_balance() == 5000.0
+    assert {item["kind"] for item in upgraded.bankroll_transactions()} == {
+        "initial_credit",
+        "initial_credit_adjustment",
+    }

@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Activity } from "lucide-react";
 import { SiteNav } from "@/components/site-nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "足球赛前分析台",
-  description: "中超、西甲与英超的可追溯赛前预测工作台",
+  title: "EDGE / FOOTBALL",
+  description: "可追溯的足球竞猜研究终端",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -22,10 +21,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
         <header className="app-header">
           <Link className="brand" href="/" aria-label="返回赛程首页">
-            <span className="brand-mark"><Activity size={19} aria-hidden="true" /></span>
+            <span className="brand-mark" aria-hidden="true">E/F</span>
             <span>
-              <strong>足球赛前分析台</strong>
-              <small>PRE-MATCH DESK</small>
+              <strong>EDGE / FOOTBALL</strong>
+              <small>足球竞猜研究终端</small>
             </span>
           </Link>
           <SiteNav />

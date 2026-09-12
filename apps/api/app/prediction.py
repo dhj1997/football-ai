@@ -102,8 +102,8 @@ def predict(fixture: dict, context: dict) -> dict:
     lineup = context["lineup"]
     odds = context.get("odds")
 
-    home_form = recent["home_points_per_game"] / 1.5
-    away_form = recent["away_points_per_game"] / 1.5
+    home_form = float(recent.get("home_points_per_game") or 0.0) / 1.5
+    away_form = float(recent.get("away_points_per_game") or 0.0) / 1.5
     impact = context.get("player_impact") or {}
     home_retention = _attack_retention(impact.get("home"), lineup.get("home_strength"))
     away_retention = _attack_retention(impact.get("away"), lineup.get("away_strength"))

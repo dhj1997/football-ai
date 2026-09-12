@@ -71,15 +71,15 @@ def test_prediction_and_bet_settlement_are_idempotent(tmp_path) -> None:
     evaluation = first["items"][0]["prediction"]
     assert evaluation["correct"] is True
     assert evaluation["brier_score"] == 0.245
-    assert first["items"][0]["bet"]["net_profit"] == 11.0
-    assert second["items"][0]["bet"]["net_profit"] == 11.0
-    assert repository.current_balance() == 1011.0
+    assert first["items"][0]["bet"]["net_profit"] == 44.0
+    assert second["items"][0]["bet"]["net_profit"] == 44.0
+    assert repository.current_balance() == 1044.0
     assert len(repository.bankroll_transactions()) == 3
     metrics = service.metrics("epl", "unknown")
     assert metrics["accuracy"] == 1.0
     assert metrics["average_data_completeness"] == 0.75
     assert metrics["asian_handicap_results"]["half_win"] == 0
-    assert bankroll.summary()["equity_curve"][-1]["balance"] == 1011.0
+    assert bankroll.summary()["equity_curve"][-1]["balance"] == 1044.0
 
 
 def test_asian_half_win_and_half_loss_returns() -> None:
@@ -105,12 +105,14 @@ def test_asian_settlement_is_aggregated_in_metrics(tmp_path) -> None:
     }
     asian_prediction["asian_handicap"] = {
         "line": -0.75,
+        # Plausible cover distribution: a certain cover (1.0) is rejected as a
+        # data anomaly by the portfolio plausibility gate.
         "home_settlement": {
-            "full_win": 0.0,
-            "half_win": 1.0,
-            "push": 0.0,
-            "half_loss": 0.0,
-            "full_loss": 0.0,
+            "full_win": 0.5,
+            "half_win": 0.2,
+            "push": 0.05,
+            "half_loss": 0.15,
+            "full_loss": 0.1,
         },
     }
     repository.save(asian_prediction)

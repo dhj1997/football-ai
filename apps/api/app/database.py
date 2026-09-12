@@ -22,11 +22,14 @@ class PredictionRepository:
         database_url: str,
         competition_id: str = "legacy",
         model_keys: tuple[str, ...] = ("deepseek",),
+        initial_balance: float = 1000.0,
     ) -> None:
         self.database_url = self._normalize_url(database_url)
         self.is_sqlite = self.database_url.startswith("sqlite:")
         self.competition_id = competition_id
         self.model_keys = tuple(model_keys)
+        self.initial_balance = max(0.0, float(initial_balance))
+        self._fixture_revision = 0
         connect_args = {"check_same_thread": False} if self.is_sqlite else {}
         engine_kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": not self.is_sqlite}
         if self.database_url in {"sqlite:///:memory:", "sqlite://"}:
@@ -872,21 +875,58 @@ class PredictionRepository:
         for model_key in self.model_keys:
             account_id = f"{self.competition_id}:{model_key}"
             existing = connection.execute(
-                text("SELECT id FROM simulation_accounts WHERE competition_id = :competition_id AND model_key = :model_key"),
+                text("SELECT id, initial_balance, created_at, payload FROM simulation_accounts WHERE competition_id = :competition_id AND model_key = :model_key"),
                 {"competition_id": self.competition_id, "model_key": model_key},
-            ).first()
+            ).mappings().first()
             if not existing:
                 account = {
                     "id": account_id,
                     "competition_id": self.competition_id,
                     "model_key": model_key,
-                    "initial_balance": 1000.0,
+                    "initial_balance": self.initial_balance,
                     "created_at": created_at,
                 }
                 connection.execute(
                     text("INSERT INTO simulation_accounts (id, competition_id, model_key, initial_balance, created_at, payload) VALUES (:id, :competition_id, :model_key, :initial_balance, :created_at, :payload)"),
                     {**account, "payload": json.dumps(account, ensure_ascii=False)},
                 )
+            elif float(existing["initial_balance"] or 0) < self.initial_balance:
+                previous = float(existing["initial_balance"] or 0)
+                account = json.loads(existing["payload"] or "{}")
+                account.update({"initial_balance": self.initial_balance})
+                connection.execute(
+                    text("UPDATE simulation_accounts SET initial_balance = :initial_balance, payload = :payload WHERE id = :id"),
+                    {
+                        "id": existing["id"],
+                        "initial_balance": self.initial_balance,
+                        "payload": json.dumps(account, ensure_ascii=False),
+                    },
+                )
+                adjustment_id = f"bankroll-initial-adjustment:{self.competition_id}:{model_key}"
+                adjustment_exists = connection.execute(
+                    text("SELECT id FROM bankroll_transactions WHERE id = :id"),
+                    {"id": adjustment_id},
+                ).first()
+                if adjustment_exists is None:
+                    balance_before_adjustment = self._current_balance(
+                        connection,
+                        model_key,
+                        self.competition_id,
+                    )
+                    adjustment = {
+                        "id": adjustment_id,
+                        "created_at": created_at,
+                        "kind": "initial_credit_adjustment",
+                        "reference_id": None,
+                        "amount": round(self.initial_balance - previous, 2),
+                        "balance_after": round(balance_before_adjustment + self.initial_balance - previous, 2),
+                        "model_key": model_key,
+                        "competition_id": self.competition_id,
+                    }
+                    connection.execute(
+                        text("INSERT INTO bankroll_transactions (id, created_at, kind, reference_id, amount, balance_after, model_key, competition_id, payload) VALUES (:id, :created_at, :kind, :reference_id, :amount, :balance_after, :model_key, :competition_id, :payload)"),
+                        {**adjustment, "payload": json.dumps(adjustment, ensure_ascii=False)},
+                    )
             transaction_exists = connection.execute(
                 text("SELECT id FROM bankroll_transactions WHERE model_key = :model_key AND competition_id = :competition_id LIMIT 1"),
                 {"model_key": model_key, "competition_id": self.competition_id},
@@ -897,8 +937,8 @@ class PredictionRepository:
                     "created_at": created_at,
                     "kind": "initial_credit",
                     "reference_id": None,
-                    "amount": 1000.0,
-                    "balance_after": 1000.0,
+                    "amount": self.initial_balance,
+                    "balance_after": self.initial_balance,
                     "model_key": model_key,
                     "competition_id": self.competition_id,
                 }
@@ -1711,11 +1751,17 @@ class PredictionRepository:
                     text("UPDATE fixtures SET provider_id = :provider_id, league_key = :league_key, fixture_date = :fixture_date, kickoff = :kickoff, payload = :payload, synced_at = :synced_at WHERE id = :id"),
                     {"id": fixture["id"], "provider_id": fixture.get("provider_id"), "league_key": fixture["league_key"], "fixture_date": fixture["fixture_date"], "kickoff": fixture["kickoff"], "payload": json.dumps(fixture, ensure_ascii=False), "synced_at": synced_at},
                 )
-                return
-            connection.execute(
-                text("INSERT INTO fixtures (id, provider_id, league_key, fixture_date, kickoff, payload, synced_at) VALUES (:id, :provider_id, :league_key, :fixture_date, :kickoff, :payload, :synced_at)"),
-                {"id": fixture["id"], "provider_id": fixture.get("provider_id"), "league_key": fixture["league_key"], "fixture_date": fixture["fixture_date"], "kickoff": fixture["kickoff"], "payload": json.dumps(fixture, ensure_ascii=False), "synced_at": synced_at},
-            )
+            else:
+                connection.execute(
+                    text("INSERT INTO fixtures (id, provider_id, league_key, fixture_date, kickoff, payload, synced_at) VALUES (:id, :provider_id, :league_key, :fixture_date, :kickoff, :payload, :synced_at)"),
+                    {"id": fixture["id"], "provider_id": fixture.get("provider_id"), "league_key": fixture["league_key"], "fixture_date": fixture["fixture_date"], "kickoff": fixture["kickoff"], "payload": json.dumps(fixture, ensure_ascii=False), "synced_at": synced_at},
+                )
+        self._fixture_revision += 1
+
+    def fixture_revision(self) -> int:
+        """Return the in-process revision for invalidating read caches."""
+
+        return self._fixture_revision
 
     def closing_odds_for_bet(
         self,
@@ -1870,6 +1916,27 @@ class PredictionRepository:
             max(group, key=lambda item: (str(item.get("created_at") or ""), str(item["id"])))
             for _, group in sorted(groups.items())
         ]
+
+    def fixture_ids_with_current_predictions(
+        self,
+        prompt_version: str,
+        competition_id: str | None = None,
+    ) -> set[str]:
+        """Return fixtures with at least one prediction on the active prompt contract."""
+
+        clauses = ["prompt_version = :prompt_version"]
+        parameters: dict[str, Any] = {"prompt_version": prompt_version}
+        if competition_id:
+            clauses.append("competition_id = :competition_id")
+            parameters["competition_id"] = competition_id
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"SELECT DISTINCT fixture_id FROM predictions WHERE {' AND '.join(clauses)}"
+                ),
+                parameters,
+            ).mappings().all()
+        return {str(row["fixture_id"]) for row in rows}
 
     def current_prediction_decisions(
         self,
@@ -2238,6 +2305,15 @@ class PredictionRepository:
 
         unique_fixtures = list({fixture["id"]: dict(fixture) for fixture in fixtures}.values())
         with self.engine.begin() as connection:
+            window_rows = connection.execute(
+                text("SELECT id, payload FROM fixtures WHERE fixture_date BETWEEN :start_date AND :end_date"),
+                {"start_date": start_date, "end_date": end_date},
+            ).mappings().all()
+            protected_fixtures = []
+            for row in window_rows:
+                previous = json.loads(row["payload"])
+                if previous.get("source") == "dongqiudi" or (previous.get("external_ids") or {}).get("dongqiudi"):
+                    protected_fixtures.append(previous)
             if unique_fixtures:
                 ids = {f"id_{index}": fixture["id"] for index, fixture in enumerate(unique_fixtures)}
                 placeholders = ", ".join(f":{key}" for key in ids)
@@ -2253,9 +2329,13 @@ class PredictionRepository:
                     previous = existing_by_id.get(fixture["id"])
                     if not previous:
                         continue
-                    for field in ("evidence", "evidence_synced_at", "lineup_confirmed"):
+                    for field in ("evidence", "evidence_synced_at", "lineup_confirmed", "dongqiudi", "dongqiudi_sync", "free_team_data", "free_team_data_synced_at"):
                         if field in previous:
                             fixture[field] = previous[field]
+                    fixture["external_ids"] = {**(previous.get("external_ids") or {}), **(fixture.get("external_ids") or {})}
+            for protected in protected_fixtures:
+                if not any(item["id"] == protected["id"] for item in unique_fixtures):
+                    unique_fixtures.append(protected)
             connection.execute(
                 text("DELETE FROM fixtures WHERE fixture_date BETWEEN :start_date AND :end_date"),
                 {"start_date": start_date, "end_date": end_date},
@@ -2296,6 +2376,7 @@ class PredictionRepository:
                     text("INSERT INTO sync_metadata (name, synced_at, item_count) VALUES ('fixtures', :synced_at, :item_count)"),
                     {"synced_at": synced_at, "item_count": len(unique_fixtures)},
                 )
+        self._fixture_revision += 1
 
     def list_fixtures(
         self,
@@ -2345,6 +2426,10 @@ class PredictionRepository:
             if not row:
                 return None
             payload = json.loads(row["payload"])
+            previous_context = payload.get("evidence") or {}
+            for field in ("odds_by_bookmaker", "dongqiudi_analysis"):
+                if field not in context and field in previous_context:
+                    context[field] = previous_context[field]
             payload["evidence"] = context
             payload["evidence_synced_at"] = context.get("synced_at")
             payload["lineup_confirmed"] = bool((context.get("lineup") or {}).get("confirmed"))
@@ -2352,6 +2437,7 @@ class PredictionRepository:
                 text("UPDATE fixtures SET payload = :payload WHERE id = :fixture_id"),
                 {"payload": json.dumps(payload, ensure_ascii=False), "fixture_id": fixture_id},
             )
+        self._fixture_revision += 1
         odds_snapshot = _odds_snapshot_document(fixture_id, context)
         if odds_snapshot:
             self.save_odds_snapshot(odds_snapshot)
@@ -2396,6 +2482,7 @@ class PredictionRepository:
                 text("UPDATE fixtures SET payload = :payload WHERE id = :fixture_id"),
                 {"payload": json.dumps(fixture, ensure_ascii=False), "fixture_id": fixture_id},
             )
+            self._fixture_revision += 1
             return fixture
 
     def fixture_sync(self) -> dict[str, Any] | None:

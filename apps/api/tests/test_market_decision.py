@@ -111,9 +111,30 @@ def test_missing_market_is_insufficient_but_missing_players_is_no_bet() -> None:
     assert "missing_player_data" in no_players["decision"]["reason_codes"]
 
 
+def test_implausible_model_vs_market_deviation_blocks_execution() -> None:
+    result = apply_market_decision(
+        prediction({"home": 0.2782, "draw": 0.2517, "away": 0.4702}),
+        context(fresh_odds(home=5.5, draw=5.5, away=41.0)),
+    )
+
+    assert result["decision"]["status"] == "no_bet"
+    assert "implausible_market" in result["decision"]["reason_codes"]
+    assert result["decision"]["reason"]
+
+
+def test_plausible_large_edge_still_executes() -> None:
+    result = apply_market_decision(
+        prediction({"home": 0.55, "draw": 0.25, "away": 0.20}),
+        context(fresh_odds(home=2.5, draw=4.0, away=6.5)),
+    )
+
+    assert result["decision"]["status"] == "bet"
+    assert "implausible_market" not in result["decision"]["reason_codes"]
+
+
 def test_stale_odds_blocks_one_model_without_cross_model_disagreement_rule() -> None:
     odds = fresh_odds()
-    odds["updated_at"] = (datetime.now(UTC) - timedelta(hours=4)).isoformat()
+    odds["updated_at"] = (datetime.now(UTC) - timedelta(hours=13)).isoformat()
 
     result = apply_market_decision(prediction(), context(odds), model_disagreement=0.15)
 
@@ -121,6 +142,25 @@ def test_stale_odds_blocks_one_model_without_cross_model_disagreement_rule() -> 
     assert "stale_odds" in result["decision"]["reason_codes"]
     assert "model_disagreement" not in result["decision"]["reason_codes"]
     assert result["decision"]["stake_fraction"] == 0.19
+
+
+def test_four_hour_old_odds_remains_fresh_under_twelve_hour_window() -> None:
+    odds = fresh_odds()
+    odds["updated_at"] = (datetime.now(UTC) - timedelta(hours=4)).isoformat()
+
+    result = apply_market_decision(prediction(), context(odds))
+
+    assert result["market_assessment"]["odds_status"] == "fresh"
+
+
+def test_captured_at_is_a_freshness_fallback_for_legacy_odds() -> None:
+    captured_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    odds = {**fresh_odds(), "updated_at": None, "captured_at": captured_at}
+
+    result = apply_market_decision(prediction(), context(odds))
+
+    assert result["market_assessment"]["odds_status"] == "fresh"
+    assert result["market_assessment"]["odds_updated_at"] == captured_at
 
 
 def test_preliminary_prediction_can_bet_at_normal_size_before_lineup() -> None:
@@ -151,6 +191,7 @@ def test_failed_ai_keeps_low_confidence_as_a_hard_gate() -> None:
     result = apply_market_decision(item, context(fresh_odds(home=1.6)))
 
     assert result["decision"]["status"] == "no_bet"
+    assert "ai_unavailable" in result["decision"]["reason_codes"]
     assert "low_confidence" in result["decision"]["reason_codes"]
 
 

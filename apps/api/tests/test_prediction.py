@@ -32,3 +32,15 @@ def test_prediction_is_normalized_and_auditable() -> None:
     assert sum(result["asian_handicap"]["home_settlement"].values()) == pytest.approx(1, abs=0.001)
     assert result["model_version"]
     assert result["evidence"]["odds_at"]
+
+
+def test_predict_treats_missing_points_per_game_as_zero_without_crashing() -> None:
+    fixture = {"id": "fixture-1", "status": "scheduled", "is_demo": False}
+    context = demo_context(fixture["id"])
+    context["recent_form"]["home_points_per_game"] = None
+    context["recent_form"]["away_points_per_game"] = None
+
+    result = predict(fixture, context)
+
+    assert set(result["probabilities"]) == {"home", "draw", "away"}
+    assert abs(sum(result["probabilities"].values()) - 1.0) < 0.01

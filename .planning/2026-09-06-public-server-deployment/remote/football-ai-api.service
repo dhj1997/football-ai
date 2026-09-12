@@ -1,0 +1,22 @@
+[Unit]
+Description=Football AI FastAPI service
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=football-ai
+Group=football-ai
+WorkingDirectory=/opt/football-ai/app/apps/api
+EnvironmentFile=/opt/football-ai/app/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/football-ai/app/apps/api/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=30
+KillSignal=SIGINT
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

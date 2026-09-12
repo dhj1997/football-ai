@@ -1,0 +1,69 @@
+# Deployment Progress
+
+## 2026-09-06
+
+- Created an isolated deployment plan to avoid changing the project's existing long-running planning records.
+- Completed the local deployment audit.
+- Decided to expose only the web entry and keep FastAPI loopback-only.
+- Confirmed deployment must package the current working tree and transfer `.env` separately.
+- Authenticated to the target as root and completed the first remote OS/resource/port audit.
+- Preserved existing public services by selecting unused internal ports and an isolated Nginx listener for this project.
+- Logged one harmless quoting error from optional user enumeration; it will not be repeated.
+- Confirmed the existing Nginx listeners and npm installation.
+- Selected an isolated uv-managed Python 3.12 runtime so the OS Python and existing services remain untouched.
+- Logged and abandoned one nested-shell free-port loop after PowerShell variable expansion changed it.
+- Verified the candidate custom port is blocked by Alibaba Cloud security-group rules.
+- Verified a dedicated nip.io hostname resolves to the server and selected Host-based routing over already-public port 80 without touching the existing default site.
+- Phase 2 is complete.
+- Created the `football-ai` system account and service home.
+- Installed official uv `0.12.10` in `/usr/local/bin`.
+- First managed-Python install inherited root's working directory and failed on `/root/uv.toml`; recorded the error and will retry from the service home with config discovery disabled.
+- Completed uv-managed Python 3.12 installation under the service account.
+- Created and audited a 466,162-byte deployment archive from the current working tree.
+- Securely transferred the code archive and separate `.env` upload to `/opt/football-ai`.
+- Local web ESLint passed.
+- Extracted the application as the service account and replaced the development admin key with a server-generated random value.
+- Verified secret file ownership/mode and removed the temporary secret upload.
+- Created the application virtual environment with CPython 3.12.14.
+- The first pnpm dependency install failed because the service PATH omits the custom Node prefix; recorded it and will use the absolute binary path.
+- Installed all web dependencies with the explicit Node prefix and completed the production build.
+- Staged and installed the two systemd units and exact-host Nginx site; unit parsing and Nginx syntax checks pass.
+- API dependency resolution succeeded and downloads are still active over TLS; no duplicate install was started.
+- Switched the slow API download from public PyPI to the same-region Alibaba Cloud mirror while retaining uv cache; installation then completed in under five seconds.
+- Web artifact and Node runtime checks pass.
+- The first API import/database probe timed out because the copied DB URL points back through the public IP. The secret audit also found the original weak admin assignment alongside the rotated value.
+- Atomically normalized the remote environment without exposing secrets: one rotated admin key remains and MySQL uses loopback.
+- API import and MySQL initialization now pass as `football-ai`.
+- Phase 3 is complete.
+- Enabled and started `football-ai-api.service`; it is active and bound only to `127.0.0.1:8000`.
+- Logged one incorrect `/api/health` probe (404); source confirms the actual endpoint is `/health`.
+- Correct `/health` returns status `ok`, MySQL backend, configured evidence/model providers, cached data, and automation state.
+- Enabled and started `football-ai-web.service`; it returns HTTP 200 and binds only to `127.0.0.1:3200`.
+- Reloaded Nginx after a successful syntax check; the pre-existing direct-IP site remains HTTP 200 with the same response size.
+- Initial public hostname requests returned 403. This may be the local HTTP proxy blocking dynamic DNS rather than Nginx, so direct Host/routing tests are next.
+- Server-side Host routing returned 200, but external bypassed-proxy requests received an Alibaba Cloud ICP filing block. Dynamic DNS routing was abandoned.
+- Corrected an initial false RAM-role finding after inspecting the metadata body: it is a 404 page, and the server has no cloud credential able to change security groups.
+- Switched the Nginx design to direct IP port 9000. Existing port 80 remains untouched.
+- Installed and reloaded the port-9000 Nginx config after syntax validation.
+- Internal root and target match routes return 200; services are active/enabled and Nginx listens on both IPv4/IPv6 port 9000.
+- Confirmed external port 9000 is still security-group blocked and the existing IP:80 app is unaffected.
+- Diagnosed the generic Next API proxy 500 from bounded systemd logs: unconditional Nginx WebSocket headers were forwarded into Node's backend fetch.
+- Updated the deployment Nginx config to clear the hop-by-hop `Connection` header; reload and regression probes are next.
+- Post-fix root, match, standings, performance, API proxy, and admin proxy probes all pass through Nginx.
+- Controlled API/web restart tests recover to 200. Next exits 130 on SIGINT, so the web unit is being updated to classify that expected code as successful.
+- Installed the final web unit with `SuccessExitStatus=130`; controlled restart now records success and recovers to HTTP 200.
+- Phase 4 is complete. Application path, isolated runtimes, systemd supervision, loopback API/web listeners, and Nginx port 9000 routing are all operational.
+- Phase 5 internal verification is complete. Waiting only for the user/account owner to allow inbound TCP 9000 in the ECS security group, after which external HTTP verification can finish.
+- User confirmed the ECS rule was added; external direct-IP port 9000 now returns 200 for root, match detail, and API proxy.
+- Final public-surface audit found the Next server-side admin proxy could expose management actions, so added Nginx 404 guards for `/admin` and `/api/admin/*`; the public Nginx config is being reloaded and checked now.
+- Phase 5 is complete after final external route and service checks.
+- Reloaded the final Nginx configuration after syntax validation.
+- Final external regression passed: public root, match detail, standings, performance, and API proxy return 200; public admin paths return 404.
+- Final systemd/Nginx audit passed: all services enabled/active, application units successful with zero restarts, Nginx bound on port 9000, and deployment-record whitespace check clean.
+- Started Phase 6 after the user requested a redeploy and asked why overnight matches had no predictions.
+- Confirmed the production analysis switch was intentionally false and that no analysis job had run since 2026-08-28; past-kickoff fixtures are not eligible for retroactive predictions.
+- 2026-09-09: backed up the remote source, transferred the current application archive and merged the updated runtime configuration without replacing the rotated admin key.
+- 2026-09-09: remote Web production build passed; API and Web systemd services restarted successfully with zero restarts.
+- 2026-09-09: remote configuration verified as automatic analysis enabled, prediction windows `24,12,6,1,0.5`, fixed stake `100`, initial bankroll `5000`.
+- 2026-09-09: `/health` returned MySQL and automation enabled; `lineup` and `analysis` job runs both returned `success`.
+- 2026-09-09: public `http://47.99.207.112:9000/` returned HTTP 200; API/Web/Nginx are enabled and active.

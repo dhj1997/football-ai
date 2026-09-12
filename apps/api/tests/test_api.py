@@ -9,18 +9,43 @@ TEST_DATABASE = Path("test_football_ai.db")
 TEST_DATABASE.unlink(missing_ok=True)
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DATABASE}"
 os.environ["USE_DEMO_DATA"] = "false"
+os.environ["DEEPSEEK_ENABLED"] = "true"
 os.environ["API_DEEPSEEK_KEY"] = ""
 os.environ["API_CHATGPT_KEY"] = ""
 
 from fastapi.testclient import TestClient
 
 from app.data import CHINA_TZ, demo_context, demo_fixtures, unavailable_context
-from app.main import app, evidence_provider, provider, repository, schedule_provider
+from app.main import app, deepseek_provider, evidence_provider, player_name_service, repository, schedule_provider, schedule_sync, settings
 from app.prediction import predict
 from app.prompt_contract import DEFAULT_PROMPT_CONTRACT
 
 
 client = TestClient(app)
+
+
+def test_runtime_model_config_requires_admin_and_updates_in_process() -> None:
+    assert client.get("/api/admin/model-config").status_code == 401
+    original_model = deepseek_provider.model
+    original_min_edge = settings.portfolio_min_edge
+    try:
+        response = client.put(
+            "/api/admin/model-config",
+            headers={"x-admin-key": "dev-admin-key"},
+            json={"models": {"deepseek": {"model": "deepseek-test-model"}}, "portfolio": {"min_edge": 0.12}},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["models"]["deepseek"]["model"] == "deepseek-test-model"
+        assert payload["portfolio"]["min_edge"] == 0.12
+        assert deepseek_provider.model == "deepseek-test-model"
+        assert settings.portfolio_min_edge == 0.12
+    finally:
+        client.put(
+            "/api/admin/model-config",
+            headers={"x-admin-key": "dev-admin-key"},
+            json={"models": {"deepseek": {"model": original_model}}, "portfolio": {"min_edge": original_min_edge}},
+        )
 
 
 def seed_real_fixture(fixture_id: str = "api-123", provider_id: int = 123) -> dict:
@@ -57,9 +82,103 @@ def test_fixture_list_and_detail_are_consistent() -> None:
     assert detail["fixture"]["id"] == fixture["id"]
     assert detail["context"]["odds"] is None
     assert detail["context"]["teams"]["home"]["name"] == fixture["home_team"]["name"]
-    assert detail["capabilities"]["evidence_sync"] is provider.configured
+    assert detail["capabilities"]["evidence_sync"] is schedule_provider.configured
+    assert detail["capabilities"]["evidence_sources"] == ["thesportsdb-partial", "dongqiudi"]
     assert detail["prediction"] is None
     assert fixture_response.json()["mode"] == "cached"
+
+
+def test_fixture_list_supports_yesterday_and_upcoming_with_compact_summary(monkeypatch) -> None:
+    today = datetime.now(CHINA_TZ).date()
+    fixtures = []
+    for offset in (-1, 0, 6, 7):
+        fixture = demo_fixtures(today)[0]
+        fixture_id = f"api-date-window-{offset}"
+        kickoff = datetime.combine(today + timedelta(days=offset), datetime.min.time(), tzinfo=CHINA_TZ)
+        context = demo_context(fixture_id)
+        context["teams"] = {"home": {"name": "主队"}, "away": {"name": "客队"}}
+        fixture.update(
+            {
+                "id": fixture_id,
+                "provider_id": 8100 + offset,
+                "fixture_date": (today + timedelta(days=offset)).isoformat(),
+                "kickoff": kickoff.isoformat(),
+                "is_demo": False,
+                "evidence": context,
+            }
+        )
+        repository.upsert_fixture(fixture)
+        fixtures.append(fixture)
+
+    requested_windows: list[tuple[str | None, str | None]] = []
+
+    def cached_fixtures(start_date: str | None, end_date: str | None) -> list[dict]:
+        requested_windows.append((start_date, end_date))
+        return [
+            fixture
+            for fixture in fixtures
+            if (start_date is None or fixture["fixture_date"] >= start_date)
+            and (end_date is None or fixture["fixture_date"] <= end_date)
+        ]
+
+    monkeypatch.setattr(schedule_sync, "cached_fixtures", cached_fixtures)
+    monkeypatch.setattr(schedule_sync, "cached_state", lambda: {"status": "fresh"})
+
+    prediction = predict(fixtures[1], fixtures[1]["evidence"])
+    prediction.update(
+        {
+            "id": "api-date-window-prediction",
+            "model_key": "deepseek",
+            "competition_id": repository.competition_id,
+            "ai": {"status": "completed", "provider": "deepseek", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
+        }
+    )
+    repository.save(prediction)
+
+    yesterday = client.get("/api/fixtures", params={"date": "yesterday", "league": "all"})
+    upcoming = client.get("/api/fixtures", params={"date": "upcoming", "league": "all"})
+
+    assert yesterday.status_code == 200
+    assert "api-date-window--1" in {item["id"] for item in yesterday.json()["items"]}
+    assert upcoming.status_code == 200
+    assert requested_windows == [
+        ((today - timedelta(days=1)).isoformat(), (today - timedelta(days=1)).isoformat()),
+        (today.isoformat(), (today + timedelta(days=6)).isoformat()),
+    ]
+    upcoming_items = {item["id"]: item for item in upcoming.json()["items"]}
+    assert {"api-date-window-0", "api-date-window-6"} <= set(upcoming_items)
+    assert "api-date-window-7" not in upcoming_items
+    summary_item = upcoming_items["api-date-window-0"]
+    assert summary_item["fixture_date"] == fixtures[1]["fixture_date"]
+    assert "evidence" not in summary_item
+    assert summary_item["evidence_summary"] == {
+        "ready_count": 4,
+        "total_count": 4,
+        "missing": [],
+        "updated_at": fixtures[1]["evidence"]["availability"]["updated_at"],
+    }
+    assert summary_item["has_prediction"] is True
+
+
+def test_fixture_list_accepts_china_fa_cup_filter() -> None:
+    fixture = seed_real_fixture("sportsdb-fa-cup", 124)
+    fixture.update(
+        {
+            "league_key": "cfa_cup",
+            "league": {"id": 5525, "name": "中国足协杯", "country": "中国", "mark": "CFA"},
+        }
+    )
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
+
+    response = client.get("/api/fixtures", params={"date": "today", "league": "中国足协杯"})
+
+    assert response.status_code == 200
+    assert [item["league_key"] for item in response.json()["items"]] == ["cfa_cup"]
 
 
 def test_p3_intelligence_endpoints_return_read_only_contracts() -> None:
@@ -203,7 +322,44 @@ def test_public_fixture_payload_removes_supplier_player_names() -> None:
     assert injury["provider_player_id"] == "supplier-9"
 
 
-def test_fixture_detail_auto_syncs_evidence(monkeypatch) -> None:
+def test_fixture_detail_only_applies_cached_player_names(monkeypatch) -> None:
+    fixture = seed_real_fixture("api-player-name-resolution", 131)
+    fixture["status"] = "finished"
+    context = unavailable_context()
+    context["source"] = "espn-evidence"
+    context["squads"]["home"] = [
+        {
+            "id": "supplier-10",
+            "name": "Unknown Forward",
+            "original_name": "Unknown Forward",
+            "position": "Forward",
+        }
+    ]
+    fixture["evidence"] = context
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
+    )
+    calls: list[bool] = []
+
+    async def fake_enrich(value: dict, resolve_missing: bool = False) -> dict:
+        calls.append(resolve_missing)
+        return value
+
+    monkeypatch.setattr(player_name_service, "enrich", fake_enrich)
+
+    response = client.get(f"/api/fixtures/{fixture['id']}")
+
+    assert response.status_code == 200
+    assert calls == [False]
+    payload = response.json()
+    assert payload["context"]["squads"]["home"][0]["name"].startswith("待核验球员")
+    assert "Unknown Forward" not in str(payload)
+
+
+def test_fixture_detail_does_not_sync_missing_evidence(monkeypatch) -> None:
     fixture = seed_real_fixture("api-auto-evidence", 125)
     fixture["status"] = "scheduled"
     fixture["external_ids"] = {"api_football": 123}
@@ -213,52 +369,112 @@ def test_fixture_detail_auto_syncs_evidence(monkeypatch) -> None:
         [fixture],
         "2026-08-24T10:00:00+00:00",
     )
-    context = unavailable_context()
-    context["synced_at"] = "2026-08-24T11:00:00+00:00"
-    context["source"] = "test"
+    calls = 0
 
     async def fake_fetch(_fixture):
-        return context
+        nonlocal calls
+        calls += 1
+        raise AssertionError("fixture detail must not fetch external evidence")
 
     monkeypatch.setattr(evidence_provider, "fetch", fake_fetch)
+    monkeypatch.setattr(evidence_provider, "fetch_public", fake_fetch)
     response = client.get(f"/api/fixtures/{fixture['id']}")
 
     assert response.status_code == 200
-    assert response.json()["context"]["synced_at"] == context["synced_at"]
-    assert repository.fixture(fixture["id"])["evidence"]["source"] == "test"
+    assert calls == 0
+    assert response.json()["context"]["synced_at"] is None
+    assert repository.fixture(fixture["id"]).get("evidence") is None
     assert response.json()["prediction"] is None
     assert repository.latest(fixture["id"], "deepseek", response.json()["competition_id"]) is None
-    second_response = client.get(f"/api/fixtures/{fixture['id']}")
-    assert second_response.json()["prediction"] is None
 
 
-def test_fixture_detail_enriches_incomplete_recent_form_from_secondary(monkeypatch) -> None:
+def test_fixture_detail_keeps_incomplete_cached_evidence_without_refresh(monkeypatch) -> None:
     fixture = seed_real_fixture("api-secondary-refresh", 126)
     fixture["status"] = "scheduled"
     existing = unavailable_context()
     existing["source"] = "api-football-single-fixture"
     existing["recent_form"] = {"home": [{"result": "D"}], "away": [{"result": "D"}]}
     repository.save_fixture_evidence(fixture["id"], existing)
-    incoming = unavailable_context()
-    incoming["source"] = "espn-evidence"
-    incoming["synced_at"] = "2026-08-26T02:00:00+00:00"
-    incoming["recent_form"] = {"home": [{"result": "W"}] * 5, "away": [{"result": "L"}] * 5}
+    calls = 0
 
     async def fake_secondary(_fixture):
-        return incoming
+        nonlocal calls
+        calls += 1
+        raise AssertionError("fixture detail must not refresh cached evidence")
 
     monkeypatch.setattr(evidence_provider, "fetch_secondary", fake_secondary)
     response = client.get(f"/api/fixtures/{fixture['id']}")
 
     assert response.status_code == 200
-    assert len(response.json()["context"]["recent_form"]["home"]) == 5
-    assert repository.fixture(fixture["id"])["evidence"]["source"] == "api-football-single-fixture+espn-evidence"
+    assert calls == 0
+    assert len(response.json()["context"]["recent_form"]["home"]) == 1
+    assert repository.fixture(fixture["id"])["evidence"]["source"] == "api-football-single-fixture"
+
+
+def test_manual_evidence_sync_uses_thesportsdb_public_path(monkeypatch) -> None:
+    fixture = seed_real_fixture("api-public-evidence", 127)
+    calls: list[str] = []
+    context = unavailable_context()
+    context["source"] = "thesportsdb-partial"
+    context["synced_at"] = "2026-09-08T08:00:00+00:00"
+
+    async def fake_public(_fixture):
+        calls.append("public")
+        return context
+
+    async def fail_legacy(_fixture):
+        raise AssertionError("legacy evidence providers must not be called")
+
+    monkeypatch.setattr(evidence_provider, "fetch_public", fake_public)
+    monkeypatch.setattr(evidence_provider, "fetch", fail_legacy)
+
+    response = client.post(
+        f"/api/admin/fixtures/{fixture['id']}/evidence",
+        headers={"x-admin-key": "dev-admin-key"},
+    )
+
+    assert response.status_code == 200
+    assert calls == ["public"]
+    assert response.json()["context"]["source"] == "thesportsdb-partial"
 
 
 def test_prediction_requires_admin_key() -> None:
     seed_real_fixture()
     response = client.post("/api/admin/fixtures/api-123/predictions")
     assert response.status_code == 401
+
+
+def test_prediction_allows_started_and_live_fixtures_but_rejects_finished() -> None:
+    for fixture_id, status, kickoff_delta, expected_status in (
+        ("api-started-scheduled", "scheduled", timedelta(minutes=-5), 200),
+        ("api-live", "live", timedelta(minutes=-30), 200),
+        ("api-finished", "finished", timedelta(hours=-2), 409),
+    ):
+        fixture = seed_real_fixture(fixture_id, 7000 + len(fixture_id))
+        fixture.update(
+            {
+                "status": status,
+                "kickoff": (datetime.now(UTC) + kickoff_delta).replace(microsecond=0).isoformat(),
+                "score": {"home": 1, "away": 0} if status != "scheduled" else None,
+                "evidence": demo_context(fixture_id),
+            }
+        )
+        repository.upsert_fixture(fixture)
+
+        response = client.post(
+            f"/api/admin/fixtures/{fixture_id}/predictions",
+            headers={"x-admin-key": "dev-admin-key"},
+        )
+
+        assert response.status_code == expected_status
+        if expected_status == 200:
+            payload = response.json()
+            assert payload["predictions"]
+            assert payload["bets"] == []
+            assert all(item["fixture_status_at_prediction"] == status for item in payload["predictions"])
+            assert all(item["score_at_prediction"] == fixture["score"] for item in payload["predictions"])
+        else:
+            assert "不能生成预测" in response.json()["detail"]
 
 
 def test_fixture_detail_never_falls_back_to_legacy_prediction_bet() -> None:
@@ -343,7 +559,7 @@ def test_simulated_bankroll_and_empty_metrics_are_public() -> None:
     metrics_response = client.get("/api/metrics/predictions")
 
     assert bankroll_response.status_code == 200
-    assert bankroll_response.json()["initial_balance"] == 1000.0
+    assert bankroll_response.json()["initial_balance"] == 5000.0
     assert bankroll_response.json()["is_simulated"] is True
     assert metrics_response.status_code == 200
     assert metrics_response.json()["sample_size"] == 0
@@ -535,5 +751,6 @@ def test_sync_persists_provider_fixtures(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["item_count"] == 1
-    assert response.json()["request_count"] == 9
+    # One lookback day plus seven lookahead days across six TheSportsDB leagues.
+    assert response.json()["request_count"] == 54
     assert repository.fixture("api-123") is not None

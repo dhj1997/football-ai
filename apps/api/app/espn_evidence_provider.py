@@ -60,7 +60,7 @@ class EspnEvidenceProvider:
         context = {
             "recent_form": _recent_form(summary.get("lastFiveGames") or [], home_id, away_id, updated_at),
             "head_to_head": _head_to_head(summary.get("seasonseries") or []),
-            "availability": _availability(home_roster[0], away_roster[0]),
+            "availability": _availability(home_roster[0], away_roster[0], updated_at),
             "lineup": _lineup(summary.get("rosters") or [], home_id, away_id, updated_at),
             "teams": {
                 "home": _team_profile(home_roster[0].get("team") or home.get("team") or {}, fixture.get("home_team") or {}),
@@ -83,6 +83,42 @@ class EspnEvidenceProvider:
         if failures:
             context["provider_failures"] = failures
         return context
+
+    async def fetch_lineup(self, fixture: dict[str, Any]) -> dict[str, Any]:
+        """Fetch only the event summary needed for lineup status."""
+
+        if not self.configured:
+            raise RuntimeError("ESPN evidence provider is not configured")
+        league_key = str(fixture.get("league_key") or "")
+        slug = self.LEAGUE_SLUGS.get(league_key)
+        if not slug:
+            raise RuntimeError(f"ESPN does not support league {league_key}")
+        async with self._client() as client:
+            event = await self._find_event(client, fixture, slug)
+            event_id = str(event.get("id") or "")
+            if not event_id:
+                raise RuntimeError("ESPN event has no ID")
+            summary = await self._get(
+                client,
+                f"/apis/site/v2/sports/soccer/{slug}/summary",
+                {"event": event_id},
+            )
+        competition = ((summary.get("header") or {}).get("competitions") or [{}])[0]
+        competitors = competition.get("competitors") or []
+        home = next((item for item in competitors if item.get("homeAway") == "home"), {})
+        away = next((item for item in competitors if item.get("homeAway") == "away"), {})
+        updated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        return {
+            "lineup": _lineup(
+                summary.get("rosters") or [],
+                str(home.get("id") or (home.get("team") or {}).get("id") or ""),
+                str(away.get("id") or (away.get("team") or {}).get("id") or ""),
+                updated_at,
+            ),
+            "source": "espn-lineup",
+            "synced_at": updated_at,
+            "espn_event_id": event_id,
+        }
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -169,7 +205,7 @@ def _recent_form(blocks: list[dict[str, Any]], home_id: str, away_id: str, updat
         side = "home" if team_id == home_id else "away" if team_id == away_id else None
         if not side:
             continue
-        for event in (block.get("events") or [])[:5]:
+        for event in (block.get("events") or [])[:10]:
             home_score = _int(event.get("homeTeamScore"))
             away_score = _int(event.get("awayTeamScore"))
             if home_score is None or away_score is None:
@@ -201,7 +237,7 @@ def _recent_form(blocks: list[dict[str, Any]], home_id: str, away_id: str, updat
 def _head_to_head(series: list[dict[str, Any]]) -> list[dict[str, str]]:
     events = next((item.get("events") or [] for item in series if item.get("type") == "head-to-head"), [])
     result: list[dict[str, str]] = []
-    for event in events[:5]:
+    for event in events[:10]:
         competitors = event.get("competitors") or []
         home = next((item for item in competitors if item.get("homeAway") == "home"), {})
         away = next((item for item in competitors if item.get("homeAway") == "away"), {})
@@ -249,7 +285,7 @@ def _lineup(rows: list[dict[str, Any]], home_id: str, away_id: str, updated_at: 
     }
 
 
-def _availability(home_payload: dict[str, Any], away_payload: dict[str, Any]) -> dict[str, Any]:
+def _availability(home_payload: dict[str, Any], away_payload: dict[str, Any], updated_at: str | None = None) -> dict[str, Any]:
     players: list[dict[str, str]] = []
     counts = {"home": 0, "away": 0}
     for side, payload in (("home", home_payload), ("away", away_payload)):
@@ -267,12 +303,14 @@ def _availability(home_payload: dict[str, Any], away_payload: dict[str, Any]) ->
                     }
                 )
                 counts[side] += 1
+    checked_at = updated_at or datetime.now(UTC).replace(microsecond=0).isoformat()
     return {
         "home_missing": counts["home"],
         "away_missing": counts["away"],
         "notes": [],
         "players": players[:24],
-        "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat() if players else None,
+        "updated_at": checked_at if players else None,
+        "checked_at": checked_at,
     }
 
 

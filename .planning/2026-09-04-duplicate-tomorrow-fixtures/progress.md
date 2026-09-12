@@ -1,0 +1,43 @@
+# Progress
+
+## 2026-09-04
+
+- Read project instructions and confirmed the existing dirty worktree must be preserved.
+- Loaded the browser and file-planning workflows.
+- Connected to the local in-app browser; no page interaction has been performed yet.
+- Created an isolated plan for the duplicate-fixture investigation.
+- Claimed the existing local application tab and captured the initial DOM state.
+- Selected the tomorrow range and observed its loading state.
+- Waited for the fetch to finish and captured the complete nine-match tomorrow list; no duplicate is currently visible.
+- Traced the tomorrow UI to the public fixture API and identified the synchronous freshness check before cached reads.
+- Logged a 20-second direct API timeout for follow-up; no conclusion is based on that failed request.
+- Read the schedule refresh and fixture replacement implementations.
+- Bypassed refresh waiting and confirmed the persistent tomorrow cache contains nine unique TheSportsDB fixtures.
+- Read the complete Dongqiudi schedule matching path and identified a persistence boundary that can preserve an unmatched cross-provider duplicate.
+- Scanned all 309 cached fixtures for exact semantic duplicates; none were found.
+- A malformed inline Python syntax probe was rejected before execution; it will be replaced with a coroutine expression.
+- Compared the live TheSportsDB tomorrow probe with cache data and found a China-time/UTC date-boundary discrepancy.
+- Observed repository date filtering returning payload dates that do not match the requested relational date; direct SQL verification is now the next step.
+- Two SQL probes were rejected before execution due to quote nesting; the query shape will be retried with unambiguous quoting.
+- Corrected the date-boundary lead after direct SQL verification: relational and payload dates match for all nine tomorrow rows.
+- Implemented public-list semantic deduplication with richer-record selection and external-ID preservation.
+- Added focused regression tests for cross-provider duplicates, reversed home/away fixtures, and kickoff separation.
+- Focused tests passed (29); web lint passed; API restarted with the fix.
+- Direct live API verification passed: tomorrow returned 9 fixtures and 0 duplicate keys.
+- Full API suite passed (241); marked all plan phases complete.
+- Final helper merge required one more API restart; the first restart command was rejected by the PowerShell `$PID` variable collision before changing process state.
+- API restarted successfully on port 8000 after the final helper merge.
+- Final live API probe: `mode=cached`, `sync_status=fresh`, 9 tomorrow items, 0 duplicate identity keys, counts EPL 4 / La Liga 2 / CSL 3.
+- Confirmed live Dongqiudi schedule currently exposes two supported tomorrow matches, but the cache has no Dongqiudi-bound rows because the daily schedule job last ran before those matches were visible.
+- The first parallel analysis probe was rejected before network access due to `asyncio.run` receiving a Future; direct per-match probes are being retried.
+- Follow-up audit started after the user asked whether Dongqiudi match-analysis data was actually arriving.
+- Verified that cached historical Dongqiudi analysis payloads are complete and that the detail API and frontend summary component are wired to the field.
+- Identified the root cause: daily schedule discovery had not yet seen the two newly available tomorrow fixtures, leaving the five-minute prematch job with zero candidates.
+- Manually synchronized the live Dongqiudi schedule: 2 matched, 2 enriched, 0 inserted, 0 errors.
+- Verified both tomorrow fixture detail APIs now contain complete Dongqiudi pre-analysis, comparison, and H2H data.
+- Confirmed the frontend currently shows only analysis-availability chips, not the actual analysis content; completed the follow-up audit without code changes.
+- New request: investigated slow page opening and found remote-MySQL startup latency plus immediate automation work can block the API event loop; the frontend has no last-success fixture cache.
+- Presented a cache-first/stale-while-revalidate design for approval before implementing the performance phase.
+- User approved the performance design; added asynchronous schedule warmup, delayed automation startup, revision-based cache invalidation, compact browser fixture caching, and opposite-date prefetch.
+- Fixed the React effect lint issue by applying cached state in a microtask; API tests (243) pass, targeted database/schedule tests (25) pass, web lint and TypeScript checks pass.
+- Restarted API and web services; live API returns one canonical today fixture with finished 0:0 plus Dongqiudi ID/analysis, and browser verification confirms cached instant rendering and pre-fetched tomorrow data.

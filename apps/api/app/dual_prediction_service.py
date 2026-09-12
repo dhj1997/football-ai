@@ -2,9 +2,13 @@
 
 import asyncio
 import inspect
+import logging
 from typing import Any
 
 from .prediction_intelligence import build_performance_profiles, weighted_ensemble
+
+
+logger = logging.getLogger(__name__)
 
 
 class DualPredictionService:
@@ -69,6 +73,13 @@ class DualPredictionService:
         predictions: list[dict[str, Any]] = []
         for service, result in zip(selected, results):
             if isinstance(result, Exception):
+                logger.warning(
+                    "prediction failed for fixture %s model %s: %r",
+                    fixture.get("id"),
+                    getattr(service, "model_key", "?"),
+                    result,
+                    exc_info=result,
+                )
                 continue
             else:
                 predictions.append(result)

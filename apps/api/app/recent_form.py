@@ -93,7 +93,9 @@ class RecentFormService:
             code,
             self._recent_matches(away_id, fixtures, cutoff, code),
         )
-        if not home["matches"] and not away["matches"]:
+        if not home["matches"] or not away["matches"]:
+            # A one-sided snapshot carries None points-per-game for the missing
+            # side and would crash the Poisson baseline; keep evidence instead.
             return None
         return {
             "home": home["matches"],

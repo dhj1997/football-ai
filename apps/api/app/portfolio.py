@@ -137,11 +137,13 @@ class PortfolioConfig:
 
     min_edge: float = 0.05
     min_ev: float = 0.05
-    max_odds_age_minutes: float = 180.0
-    stake_fraction: float = 0.01
-    max_single_bet_fraction: float = 0.01
+    max_plausible_edge: float = 0.25
+    max_plausible_ev: float = 0.60
+    max_odds_age_minutes: float = 720.0
+    stake_fraction: float = 0.10
+    max_single_bet_fraction: float = 0.25
     max_daily_exposure: float = 0.05
-    max_league_exposure: float = 0.02
+    max_league_exposure: float = 0.04
     max_total_exposure: float = 0.10
     max_drawdown: float = 0.30
     min_data_completeness: float = 0.70
@@ -153,6 +155,10 @@ class PortfolioConfig:
     clv_weight: float = 0.10
     freshness_weight: float = 0.10
     risk_weight: float = 0.25
+    # Selection priority: candidates from this league (and especially this team)
+    # rank ahead of others regardless of score.
+    priority_league_key: str = ""
+    priority_team_name: str = ""
 
     @classmethod
     def from_settings(cls, settings: Any) -> "PortfolioConfig":
@@ -186,8 +192,10 @@ class BetCandidate:
     historical_clv: float | None = None
     correlation_group: str | None = None
     candidate_score: float = 0.0
+    priority: float = 0.0
     bookmaker: str | None = None
     odds_snapshot_id: str | None = None
+    stake_fraction: float = 0.0
 
     @property
     def expected_edge(self) -> float:
@@ -258,6 +266,7 @@ def candidate_from_market_row(
         risk_score,
         config,
     )
+    stake_fraction = _candidate_stake_fraction(prediction, config)
     return BetCandidate(
         fixture_id=str(fixture.get("id") or ""),
         fixture_date=str(fixture.get("fixture_date")) if fixture.get("fixture_date") is not None else None,
@@ -279,8 +288,10 @@ def candidate_from_market_row(
         historical_clv=historical_clv,
         correlation_group=str(fixture.get("id") or ""),
         candidate_score=score,
+        priority=_selection_priority(fixture, config),
         bookmaker=market_row.get("bookmaker"),
         odds_snapshot_id=prediction.get("odds_snapshot_id"),
+        stake_fraction=stake_fraction,
     )
 
 
@@ -313,20 +324,41 @@ def build_candidates(
     return sorted(candidates, key=candidate_sort_key)
 
 
-def is_candidate_eligible(candidate: BetCandidate | Mapping[str, Any], config: PortfolioConfig | None = None) -> bool:
+def candidate_gate_reasons(
+    candidate: BetCandidate | Mapping[str, Any],
+    config: PortfolioConfig | None = None,
+) -> list[str]:
+    """Return the specific eligibility gates a candidate fails, in check order."""
+
     config = config or PortfolioConfig()
     edge = _number(_value(candidate, "edge"), -1) or -1
     ev = _number(_value(candidate, "ev"), -1) or -1
     quality = _number(_value(candidate, "data_quality"), 0) or 0
     age = _number(_value(candidate, "odds_age_minutes"))
+    reasons: list[str] = []
+    if edge < config.min_edge:
+        reasons.append("edge_below_threshold")
+    elif edge > config.max_plausible_edge:
+        reasons.append("implausible_edge")
+    if ev < config.min_ev:
+        reasons.append("ev_below_threshold")
+    elif ev > config.max_plausible_ev:
+        reasons.append("implausible_ev")
+    if quality < config.min_data_completeness:
+        reasons.append("data_quality_below_threshold")
+    if age is None:
+        reasons.append("odds_age_missing")
+    elif age > config.max_odds_age_minutes:
+        reasons.append("odds_age_stale")
+    return reasons
+
+
+def is_candidate_eligible(candidate: BetCandidate | Mapping[str, Any], config: PortfolioConfig | None = None) -> bool:
+    config = config or PortfolioConfig()
     odds = _odds(_value(candidate, "odds"))
     return bool(
-        edge >= config.min_edge
-        and ev >= config.min_ev
-        and quality >= config.min_data_completeness
-        and odds is not None
-        and age is not None
-        and age <= config.max_odds_age_minutes
+        odds is not None
+        and not candidate_gate_reasons(candidate, config)
     )
 
 
@@ -366,14 +398,31 @@ def score_candidate_values(
     return round(score, 6)
 
 
-def candidate_sort_key(candidate: BetCandidate | Mapping[str, Any]) -> tuple[float, float, float, str, str]:
+def candidate_sort_key(candidate: BetCandidate | Mapping[str, Any]) -> tuple[float, float, float, float, str, str]:
+    priority = _number(_value(candidate, "priority"), 0) or 0
     return (
+        -priority,
         -(_number(_value(candidate, "candidate_score"), 0) or 0),
         -(_number(_value(candidate, "ev"), 0) or 0),
         -(_number(_value(candidate, "edge"), 0) or 0),
         str(_value(candidate, "model_key") or ""),
         str(_value(candidate, "prediction_id") or ""),
     )
+
+
+def _selection_priority(fixture: Mapping[str, Any], config: PortfolioConfig) -> float:
+    """Rank priority-league candidates first, and the priority team above them."""
+
+    priority = 0.0
+    if config.priority_league_key and str(fixture.get("league_key") or "") == config.priority_league_key:
+        priority += 1.0
+    if config.priority_team_name:
+        for side in ("home_team", "away_team"):
+            team = fixture.get(side) or {}
+            if config.priority_team_name in str(team.get("name") or ""):
+                priority += 2.0
+                break
+    return priority
 
 
 def select_best_candidates(
@@ -432,7 +481,14 @@ def risk_gate(
 ) -> dict[str, Any]:
     config = config or PortfolioConfig()
     base = max(0.0, float(bankroll))
-    requested = max(0.0, float(requested_stake if requested_stake is not None else base * config.stake_fraction))
+    requested = max(
+        0.0,
+        float(
+            requested_stake
+            if requested_stake is not None
+            else base * _candidate_stake_fraction(candidate, config)
+        ),
+    )
     reasons: list[str] = []
     if not is_candidate_eligible(candidate, config):
         reasons.append("candidate_ineligible")
@@ -485,7 +541,7 @@ def allocate_stake(
     config: PortfolioConfig | None = None,
     requested_stake: float | None = None,
 ) -> float:
-    """Return the allowed fixed-fraction stake after the Risk Gate."""
+    """Return the allowed model-requested stake after the Risk Gate."""
 
     return float(
         risk_gate(
@@ -510,6 +566,7 @@ def select_portfolio(
     config: PortfolioConfig | None = None,
     drawdown: float = 0.0,
     account_snapshot: Mapping[str, Any] | None = None,
+    requested_stake: float | None = None,
 ) -> list[dict[str, Any]]:
     config = config or PortfolioConfig()
     existing = list(existing_bets)
@@ -549,6 +606,7 @@ def select_portfolio(
             total_exposure=total_exposure,
             drawdown=drawdown,
             config=config,
+            requested_stake=requested_stake,
         )
         if gate["status"] != "PASS" or gate["allowed_stake"] <= 0:
             continue
@@ -571,6 +629,18 @@ def select_portfolio(
 
 def _value(candidate: BetCandidate | Mapping[str, Any], key: str) -> Any:
     return getattr(candidate, key, None) if isinstance(candidate, BetCandidate) else candidate.get(key)
+
+
+def _candidate_stake_fraction(
+    candidate: BetCandidate | Mapping[str, Any],
+    config: PortfolioConfig,
+) -> float:
+    """Return a valid model-requested fraction, falling back for old predictions."""
+
+    requested = _number(_value(candidate, "stake_fraction"))
+    if requested is None or requested <= 0:
+        requested = config.stake_fraction
+    return max(0.0, min(float(config.max_single_bet_fraction), requested))
 
 
 def _correlation_keys(candidate: BetCandidate | Mapping[str, Any]) -> set[str]:

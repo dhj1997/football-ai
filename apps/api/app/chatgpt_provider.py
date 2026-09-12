@@ -26,6 +26,7 @@ class ChatGptProvider:
         timeout_seconds: float = 30,
         max_retries: int = 1,
         max_tokens: int = 3000,
+        fallback_model: str = "",
         transport: httpx.AsyncBaseTransport | None = None,
         contract: PromptContract = DEFAULT_PROMPT_CONTRACT,
     ) -> None:
@@ -35,6 +36,7 @@ class ChatGptProvider:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(0, max_retries)
         self.max_tokens = max(500, min(int(max_tokens), 8000))
+        self.fallback_model = str(fallback_model or "").strip()
         self.transport = transport
         self.contract = contract
         self.prompt_version = contract.version
@@ -70,33 +72,50 @@ class ChatGptProvider:
         ) as client:
             for attempt in range(self.max_retries + 1):
                 try:
-                    response = await client.post("/responses", json=payload)
-                    if response.status_code == 429 or response.status_code >= 500:
-                        raise httpx.HTTPStatusError(
-                            f"ChatGPT temporary HTTP {response.status_code}",
-                            request=response.request,
-                            response=response,
-                        )
-                    response.raise_for_status()
-                    body = response.json()
-                    assessment = ForecastAssessment.model_validate(json.loads(_output_text(body)))
-                    validate_forecast_assessment(assessment, model_input)
-                    return {
-                        "assessment": assessment.model_dump(),
-                        "provider": self.provider_name,
-                        "requested_model": self.model,
-                        "returned_model": body.get("model") or self.model,
-                        "prompt_version": self.contract.version,
-                        "evidence_version": self.contract.evidence_version,
-                        "usage": _safe_usage(body.get("usage")),
-                        "request_id": response.headers.get("x-request-id"),
-                    }
+                    return await self._post_assessment(client, payload, model_input, fallback_used=False)
                 except (httpx.HTTPError, json.JSONDecodeError, ValueError) as error:
                     last_error = error
                     if attempt >= self.max_retries or not _retryable(error):
                         break
                     await asyncio.sleep(0.25 * (attempt + 1))
+            if (
+                isinstance(last_error, (httpx.TimeoutException, httpx.HTTPStatusError, ValueError))
+                and self.fallback_model
+            ):
+                fallback_payload = {**payload, "model": self.fallback_model}
+                return await self._post_assessment(client, fallback_payload, model_input, fallback_used=True)
         raise RuntimeError(_bounded_error(last_error))
+
+    async def _post_assessment(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, Any],
+        model_input: dict[str, Any],
+        *,
+        fallback_used: bool,
+    ) -> dict[str, Any]:
+        response = await client.post("/responses", json=payload)
+        if response.status_code == 429 or response.status_code >= 500:
+            raise httpx.HTTPStatusError(
+                f"ChatGPT temporary HTTP {response.status_code}",
+                request=response.request,
+                response=response,
+            )
+        response.raise_for_status()
+        body = response.json()
+        assessment = ForecastAssessment.model_validate(json.loads(_output_text(body)))
+        validate_forecast_assessment(assessment, model_input)
+        return {
+            "assessment": assessment.model_dump(),
+            "provider": self.provider_name,
+            "requested_model": self.model,
+            "returned_model": body.get("model") or payload["model"],
+            "prompt_version": self.contract.version,
+            "evidence_version": self.contract.evidence_version,
+            "usage": _safe_usage(body.get("usage")),
+            "request_id": response.headers.get("x-request-id"),
+            "fallback_used": fallback_used,
+        }
 
 
 def _output_text(body: dict[str, Any]) -> str:

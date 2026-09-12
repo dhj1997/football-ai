@@ -10,6 +10,9 @@ const jobs: Array<{ key: JobRun["job_name"]; label: string }> = [
   { key: "standings", label: "积分榜" },
   { key: "analysis", label: "证据与预测" },
   { key: "settlement", label: "赛后结算" },
+  { key: "dongqiudi_schedule", label: "懂球帝赛程" },
+  { key: "dongqiudi_scores", label: "懂球帝比分" },
+  { key: "dongqiudi_prematch", label: "懂球帝临场数据" },
 ];
 
 export function OperationsPanel() {

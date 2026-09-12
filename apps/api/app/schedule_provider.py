@@ -12,8 +12,119 @@ from .team_names import to_chinese_player_name, to_chinese_team_name
 class TheSportsDbProvider:
     """Fetch scheduled football events without requiring a private API key."""
 
-    LEAGUE_IDS = {"epl": 4328, "laliga": 4335, "csl": 4359}
-    LEAGUE_NAMES = {"epl": "英超", "laliga": "西甲", "csl": "中超"}
+    # TheSportsDB currently has stable public IDs for these competitions. The
+    # remaining supported keys are filled by Dongqiudi's public match list.
+    LEAGUE_IDS = {
+        "epl": 4328,
+        "laliga": 4335,
+        "csl": 4359,
+        "cfa_cup": 5525,
+        "ucl": 4480,
+        "world_cup": 4429,
+    }
+    SUPPORTED_LEAGUE_KEYS = (
+        "epl",
+        "laliga",
+        "csl",
+        "cfa_cup",
+        "ucl",
+        "acl",
+        "world_cup",
+        "asian_cup",
+        "euro",
+        "world_cup_qualifiers",
+        "asian_qualifiers",
+        "nations_league",
+    )
+    LEAGUE_NAMES = {
+        "epl": "英超",
+        "laliga": "西甲",
+        "csl": "中超",
+        "cfa_cup": "中国足协杯",
+        "ucl": "欧冠",
+        "acl": "亚冠",
+        "world_cup": "世界杯",
+        "asian_cup": "亚洲杯",
+        "euro": "欧洲杯",
+        "world_cup_qualifiers": "世预赛",
+        "asian_qualifiers": "亚洲预选赛",
+        "nations_league": "欧国联",
+    }
+    LEAGUE_COUNTRIES = {
+        "epl": "英格兰",
+        "laliga": "西班牙",
+        "csl": "中国",
+        "cfa_cup": "中国",
+        "ucl": "欧洲",
+        "acl": "亚洲",
+        "world_cup": "世界",
+        "asian_cup": "亚洲",
+        "euro": "欧洲",
+        "world_cup_qualifiers": "世界",
+        "asian_qualifiers": "亚洲",
+        "nations_league": "欧洲",
+    }
+    LEAGUE_MARKS = {
+        "epl": "PL",
+        "laliga": "LL",
+        "csl": "CSL",
+        "cfa_cup": "CFA",
+        "ucl": "UCL",
+        "acl": "ACL",
+        "world_cup": "WC",
+        "asian_cup": "AC",
+        "euro": "EURO",
+        "world_cup_qualifiers": "WCQ",
+        "asian_qualifiers": "AQ",
+        "nations_league": "UNL",
+    }
+    LEAGUE_ALIASES = {
+        "epl": "epl",
+        "英超": "epl",
+        "laliga": "laliga",
+        "西甲": "laliga",
+        "csl": "csl",
+        "中超": "csl",
+        "cfa_cup": "cfa_cup",
+        "china fa cup": "cfa_cup",
+        "chinese fa cup": "cfa_cup",
+        "fa cup china": "cfa_cup",
+        "足协杯": "cfa_cup",
+        "中国足协杯": "cfa_cup",
+        "5525": "cfa_cup",
+        "171": "cfa_cup",
+        "ucl": "ucl",
+        "欧冠": "ucl",
+        "uefa champions league": "ucl",
+        "4480": "ucl",
+        "acl": "acl",
+        "亚冠": "acl",
+        "asian champions league": "acl",
+        "world cup": "world_cup",
+        "世界杯": "world_cup",
+        "world_cup": "world_cup",
+        "4429": "world_cup",
+        "asian cup": "asian_cup",
+        "亚洲杯": "asian_cup",
+        "asian_cup": "asian_cup",
+        "euro": "euro",
+        "european championship": "euro",
+        "欧洲杯": "euro",
+        "european_championship": "euro",
+        "world cup qualifiers": "world_cup_qualifiers",
+        "世界杯预选赛": "world_cup_qualifiers",
+        "世预赛": "world_cup_qualifiers",
+        "world_cup_qualifiers": "world_cup_qualifiers",
+        "asian qualifiers": "asian_qualifiers",
+        "asian qualifying": "asian_qualifiers",
+        "亚洲预选赛": "asian_qualifiers",
+        "亚洲区预选赛": "asian_qualifiers",
+        "asian_qualifiers": "asian_qualifiers",
+        "uefa nations league": "nations_league",
+        "nations league": "nations_league",
+        "欧国联": "nations_league",
+        "nations_league": "nations_league",
+    }
     CHINA_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
 
     def __init__(self, api_key: str, base_url: str) -> None:
@@ -26,6 +137,13 @@ class TheSportsDbProvider:
 
         return bool(self.api_key)
 
+    @classmethod
+    def normalize_league_key(cls, value: object) -> str | None:
+        """Normalize browse-facing league labels to internal fixture keys."""
+
+        raw = str(value or "").strip().casefold()
+        return cls.LEAGUE_ALIASES.get(raw)
+
     async def fixtures(self, start_date: date, end_date: date) -> list[dict]:
         """Fetch one day and league at a time, then deduplicate event IDs."""
 
@@ -36,12 +154,11 @@ class TheSportsDbProvider:
             current = start_date
             while current <= end_date:
                 for league_key, league_id in self.LEAGUE_IDS.items():
-                    response = await client.get(
+                    payload = await self._request_json(
+                        client,
                         f"{self.base_url}/{self.api_key}/eventsday.php",
                         params={"d": current.isoformat(), "s": "Soccer", "l": league_id},
                     )
-                    response.raise_for_status()
-                    payload = response.json()
                     for item in payload.get("events") or []:
                         mapped = self._map_fixture(item, league_key)
                         results[mapped["id"]] = mapped
@@ -72,12 +189,11 @@ class TheSportsDbProvider:
         async with httpx.AsyncClient(timeout=15) as client:
             current = start
             while current <= end and len(results) < max(1, int(limit)):
-                response = await client.get(
+                payload = await self._request_json(
+                    client,
                     f"{self.base_url}/{self.api_key}/eventsday.php",
                     params={"d": current.isoformat(), "s": "Soccer", "l": league_id},
                 )
-                response.raise_for_status()
-                payload = response.json()
                 for item in payload.get("events") or []:
                     mapped = self._map_fixture(item, league_key)
                     mapped["source"] = "thesportsdb"
@@ -87,6 +203,30 @@ class TheSportsDbProvider:
                         break
                 current += timedelta(days=1)
         return {"items": sorted(results.values(), key=lambda fixture: fixture["kickoff"]), "has_more": False}
+
+    async def _request_json(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        params: dict[str, object],
+    ) -> dict[str, Any]:
+        """Retry the free API's short request-window throttle without hiding other errors."""
+
+        for attempt in range(4):
+            response = await client.get(url, params=params)
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response.json()
+            if attempt == 3:
+                response.raise_for_status()
+            retry_after = response.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else 30.0 * (attempt + 1)
+            except (TypeError, ValueError):
+                delay = 30.0 * (attempt + 1)
+            await asyncio.sleep(min(90.0, max(1.0, delay)))
+        raise RuntimeError("TheSportsDB rate limit retry exhausted")
 
     async def historical_results(self, **kwargs: object) -> dict:
         response = await self.historical_fixtures(**kwargs)
@@ -231,8 +371,8 @@ class TheSportsDbProvider:
             "league": {
                 "id": cls.LEAGUE_IDS[league_key],
                 "name": cls.LEAGUE_NAMES[league_key],
-                "country": {"epl": "英格兰", "laliga": "西班牙", "csl": "中国"}[league_key],
-                "mark": {"epl": "PL", "laliga": "LL", "csl": "CSL"}[league_key],
+                "country": cls.LEAGUE_COUNTRIES[league_key],
+                "mark": cls.LEAGUE_MARKS[league_key],
             },
             "fixture_date": fixture_date,
             "kickoff": kickoff.isoformat(),

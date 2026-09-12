@@ -101,3 +101,110 @@ async def test_chatgpt_rejects_incomplete_handicap_probabilities() -> None:
         await provider.assess(
             {"odds": {"asian_handicap": -1.5, "asian_handicap_home_odd": 1.9, "asian_handicap_away_odd": 1.9}}
         )
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_falls_back_to_glm_when_primary_times_out() -> None:
+    models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        models.append(payload["model"])
+        if payload["model"] == "gpt-5.6-sol":
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(
+            200,
+            json={"model": "glm-5.3", "output_text": assessment_content()},
+        )
+
+    provider = ChatGptProvider(
+        "test-key",
+        "gpt-5.6-sol",
+        "https://api.quya.test/v1",
+        fallback_model="glm-5.3",
+        max_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await provider.assess({"odds": None})
+
+    assert models == ["gpt-5.6-sol", "glm-5.3"]
+    assert result["returned_model"] == "glm-5.3"
+    assert result["requested_model"] == "gpt-5.6-sol"
+    assert result["fallback_used"] is True
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_timeout_without_fallback_model_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    provider = ChatGptProvider(
+        "test-key",
+        "gpt-5.6-sol",
+        "https://api.quya.test/v1",
+        max_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RuntimeError):
+        await provider.assess({"odds": None})
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_falls_back_to_glm_when_primary_output_fails_validation() -> None:
+    models: list[str] = []
+    payload = json.loads(assessment_content())
+    payload["asian_handicap_forecast"].update(
+        {"available": True, "line": -1.5, "home_cover_probability": 0.6, "away_cover_probability": 0.4, "confidence": 0.4}
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        models.append(body["model"])
+        text = assessment_content() if body["model"] == "glm-5.3" else json.dumps(payload)
+        return httpx.Response(200, json={"model": body["model"], "output_text": text})
+
+    provider = ChatGptProvider(
+        "test-key",
+        "gpt-5.6-sol",
+        "https://api.quya.test/v1",
+        fallback_model="glm-5.3",
+        max_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await provider.assess(
+        {"odds": {"home": 2.0, "draw": 3.2, "away": 4.0, "updated_at": "2026-09-11T00:00:00+00:00"}}
+    )
+
+    assert models == ["gpt-5.6-sol", "glm-5.3"]
+    assert result["returned_model"] == "glm-5.3"
+    assert result["fallback_used"] is True
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_falls_back_when_primary_channel_returns_502() -> None:
+    models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        models.append(body["model"])
+        if body["model"] == "gpt-5.6-sol":
+            return httpx.Response(502, json={"error": "bad gateway"})
+        return httpx.Response(200, json={"model": body["model"], "output_text": assessment_content()})
+
+    provider = ChatGptProvider(
+        "test-key",
+        "gpt-5.6-sol",
+        "https://api.quya.test/v1",
+        fallback_model="gpt-5.4-mini",
+        max_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await provider.assess({"odds": None})
+
+    assert models == ["gpt-5.6-sol", "gpt-5.4-mini"]
+    assert result["returned_model"] == "gpt-5.4-mini"
+    assert result["fallback_used"] is True

@@ -1,5 +1,7 @@
-export type DateFilter = "today" | "tomorrow" | "history";
+export type DateFilter = "yesterday" | "today" | "tomorrow" | "upcoming" | "history";
 export type LeagueFilter = "all" | "epl" | "laliga" | "csl";
+export type FixtureLeagueKey = "epl" | "laliga" | "csl" | "cfa_cup" | "ucl" | "acl" | "world_cup" | "asian_cup" | "euro" | "world_cup_qualifiers" | "asian_qualifiers" | "nations_league";
+export type FixtureLeagueFilter = "all" | FixtureLeagueKey;
 export type ModelKey = "deepseek" | "chatgpt";
 
 export interface ModelEvaluationMetric {
@@ -185,7 +187,8 @@ export interface TeamPlayerImpact {
 export interface Fixture {
   id: string;
   provider_id: number | null;
-  league_key: Exclude<LeagueFilter, "all">;
+  fixture_date?: string;
+  league_key: FixtureLeagueKey;
   league: { id: number; name: string; country: string; mark: string };
   kickoff: string;
   status: "scheduled" | "finished" | "postponed" | "cancelled" | "live";
@@ -195,14 +198,21 @@ export interface Fixture {
   venue: string;
   lineup_confirmed: boolean;
   is_demo: boolean;
+  evidence_summary?: {
+    ready_count: number;
+    total_count: number;
+    missing: string[];
+    updated_at: string | null;
+  };
+  has_prediction?: boolean;
 }
 
 export interface EvidenceContext {
   recent_form: {
     home: Array<RecentMatch | string>;
     away: Array<RecentMatch | string>;
-    home_points_per_game: number;
-    away_points_per_game: number;
+    home_points_per_game: number | null;
+    away_points_per_game: number | null;
     updated_at: string | null;
   };
   head_to_head: Array<{ date: string; home: string; away: string; score: string }>;
@@ -253,6 +263,13 @@ export interface EvidenceContext {
     updated_at: string;
     is_demo: boolean;
   } | null;
+  odds_by_bookmaker?: Record<string, {
+    name: string;
+    source?: string;
+    "1x2"?: { initial?: { home?: number | null; draw?: number | null; away?: number | null; updated_at?: string | null }; current?: { home?: number | null; draw?: number | null; away?: number | null; updated_at?: string | null } };
+    asian_handicap?: { initial?: { home_odd?: number | null; away_odd?: number | null; line?: number | null; label?: string | null }; current?: { home_odd?: number | null; away_odd?: number | null; line?: number | null; label?: string | null } };
+  }>;
+  dongqiudi_analysis?: Record<string, unknown> | null;
   source?: string | null;
   synced_at?: string | null;
 }
@@ -261,6 +278,9 @@ export interface Prediction {
   id: string;
   fixture_id: string;
   created_at: string;
+  fixture_status_at_prediction?: Fixture["status"];
+  score_at_prediction?: Fixture["score"];
+  match_minute_at_prediction?: number | string | null;
   phase: "preliminary" | "confirmed_lineup";
   model_version: string;
   model_key?: ModelKey;
@@ -478,6 +498,33 @@ export interface StrategyPerformance {
   gate_mode: "SHADOW_ONLY" | "EXECUTABLE";
 }
 
+export interface RuntimeModelConfig {
+  key: ModelKey;
+  label: string;
+  model: string;
+  base_url: string;
+  api_key_configured: boolean;
+  api_key_hint: string | null;
+  provider_ready: boolean;
+  enabled: boolean;
+}
+
+export interface RuntimePortfolioConfig {
+  min_edge: number;
+  min_ev: number;
+  stake_fraction: number;
+  max_total_exposure: number;
+  max_drawdown: number;
+}
+
+export interface RuntimeConfigResponse {
+  models: Record<ModelKey, RuntimeModelConfig>;
+  portfolio: RuntimePortfolioConfig;
+  simulation_competition_id: string;
+  updated_at: string | null;
+  is_runtime: true;
+}
+
 export interface FixtureDetail {
   fixture: Fixture;
   context: EvidenceContext;
@@ -486,7 +533,7 @@ export interface FixtureDetail {
   bet: SimulatedBet | null;
   bets: Partial<Record<ModelKey, SimulatedBet | null>>;
   competition_id?: string;
-  capabilities: { evidence_sync: boolean; deepseek?: boolean; chatgpt?: boolean };
+  capabilities: { evidence_sync: boolean; dongqiudi_sync?: boolean; dongqiudi_last_synced_at?: string | null; deepseek?: boolean; chatgpt?: boolean };
   evidence_error?: string | null;
   prediction_error?: string | null;
 }
@@ -601,7 +648,7 @@ export interface PredictionMetrics {
 
 export interface JobRun {
   id: string;
-  job_name: "fixtures" | "standings" | "analysis" | "settlement";
+  job_name: "fixtures" | "standings" | "analysis" | "settlement" | "dongqiudi_schedule" | "dongqiudi_scores" | "dongqiudi_prematch";
   started_at: string;
   finished_at: string | null;
   status: "running" | "success" | "partial" | "failed";

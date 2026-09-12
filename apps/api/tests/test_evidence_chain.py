@@ -1,6 +1,8 @@
+from datetime import UTC, datetime
+
 import pytest
 
-from app.evidence_chain import EvidenceProviderChain, evidence_needs_enrichment, localize_evidence_players, merge_evidence
+from app.evidence_chain import EvidenceProviderChain, evidence_needs_daily_refresh, evidence_needs_enrichment, localize_evidence_players, merge_evidence
 
 
 @pytest.mark.asyncio
@@ -58,6 +60,49 @@ async def test_provider_chain_falls_through_to_partial_when_espn_fails() -> None
     assert [item["provider"] for item in result["provider_failures"]] == ["api-football", "espn"]
 
 
+@pytest.mark.asyncio
+async def test_public_evidence_uses_only_thesportsdb() -> None:
+    class Unused:
+        configured = True
+
+        async def fetch(self, _fixture):
+            raise AssertionError("legacy providers must not run in the public evidence path")
+
+    class Partial:
+        public_configured = True
+
+        async def fetch_public(self, _fixture):
+            return {"source": "thesportsdb-partial", "synced_at": "2026-09-08T00:00:00+00:00"}
+
+    result = await EvidenceProviderChain(Unused(), Unused(), Partial()).fetch_public({})
+
+    assert result["source"] == "thesportsdb-partial"
+
+
+@pytest.mark.asyncio
+async def test_provider_chain_lineup_falls_back_without_full_evidence_fetch() -> None:
+    class Primary:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            raise RuntimeError("quota")
+
+    class ESPN:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            return {"lineup": {"confirmed": True}, "source": "espn-lineup", "synced_at": "2026-08-26T00:00:00+00:00"}
+
+    class Partial:
+        public_configured = True
+
+    result = await EvidenceProviderChain(Primary(), ESPN(), Partial()).fetch_lineup({})
+
+    assert result["source"] == "espn-lineup"
+    assert result["fallback_from"] == "api-football"
+    assert result["provider_failures"] == [{"provider": "api-football", "error": "quota"}]
+
+
 def test_incomplete_form_is_enriched_without_discarding_existing_fields() -> None:
     previous = {
         "source": "api-football-single-fixture",
@@ -85,6 +130,22 @@ def test_incomplete_form_is_enriched_without_discarding_existing_fields() -> Non
         {"source": "api-football+espn-evidence+espn-evidence", "squads": {"home": [], "away": []}, "lineup": {}, "availability": {}}
     )
     assert localized["source"] == "api-football+espn-evidence"
+
+
+def test_daily_refresh_detects_missing_h2h_but_accepts_complete_evidence() -> None:
+    now = datetime.now(UTC)
+    context = {
+        "source": "espn-evidence",
+        "synced_at": now.isoformat(),
+        "recent_form": {"home": [{"result": "W"}] * 5, "away": [{"result": "D"}] * 5},
+        "head_to_head": [],
+        "availability": {"players": [], "checked_at": now.isoformat()},
+        "teams": {"home": {"name": "主队"}, "away": {"name": "客队"}},
+    }
+
+    assert evidence_needs_daily_refresh(context, now) is True
+    context["head_to_head"] = [{"score": "1 - 0"}]
+    assert evidence_needs_daily_refresh(context, now) is False
 
 
 def test_performance_rich_squad_replaces_basic_identity_only_squad() -> None:

@@ -3,14 +3,18 @@
 import uuid
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
 from .market_decision import assess_markets
 from .portfolio import (
+    BetCandidate,
     PortfolioConfig,
     build_candidates,
     calculate_drawdown,
+    candidate_from_market_row,
+    candidate_gate_reasons,
     exposure_snapshot,
     is_active_bet,
     risk_gate,
@@ -26,12 +30,53 @@ def _candidate_value(candidate: Any, key: str) -> Any:
     return candidate.get(key) if isinstance(candidate, Mapping) else getattr(candidate, key, None)
 
 
+def _candidate_side(candidate: Any) -> str | None:
+    market = str(_candidate_value(candidate, "market") or "")
+    selection = str(_candidate_value(candidate, "selection") or "")
+    if market == "asian_handicap":
+        return "home" if "home" in selection else "away" if "away" in selection else None
+    return selection if selection in {"home", "away", "draw"} else None
+
+
+def _follows_ai_direction(prediction: dict[str, Any], candidate: Any) -> bool:
+    """The Poisson baseline is a fallback calculator: it may express the AI's
+    research direction, never contradict it (e.g. laying a clear favourite on
+    thin xG data)."""
+
+    predicted = str(
+        (prediction.get("forecast") or {}).get("predicted_outcome")
+        or prediction.get("predicted_outcome")
+        or ""
+    )
+    side = _candidate_side(candidate)
+    if not predicted or not side:
+        return True
+    return side == predicted
+
+
+def _fixed_stake(value: Any) -> float | None:
+    """Read the optional fixed stake used only by the automation path."""
+
+    raw = value.get("automation_fixed_stake") if isinstance(value, Mapping) else None
+    try:
+        amount = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return round(amount, 2) if amount > 0 else None
+
+
 class BankrollService:
     """Place bounded simulated bets from deterministic backend decisions."""
 
-    def __init__(self, repository: Any, portfolio_config: PortfolioConfig | None = None) -> None:
+    def __init__(
+        self,
+        repository: Any,
+        portfolio_config: PortfolioConfig | None = None,
+        initial_bankroll: float = INITIAL_BANKROLL,
+    ) -> None:
         self.repository = repository
         self.portfolio_config = portfolio_config or PortfolioConfig()
+        self.initial_bankroll = max(0.0, float(initial_bankroll))
         self.model_key = "deepseek"
         self.competition_id = "legacy"
         self.uncapped = False
@@ -50,6 +95,12 @@ class BankrollService:
     ) -> dict[str, Any] | None:
         if fixture.get("status") != "scheduled" or _fixture_started(fixture):
             return None
+        fixed_stake = _fixed_stake(context)
+        if fixed_stake is not None:
+            candidate = self.candidate_for_prediction(prediction, fixture, context)
+            if candidate is None:
+                return None
+            return self.place_for_candidate(prediction, fixture, candidate, fixed_stake=fixed_stake)
         latest_reader = getattr(self.repository, "latest", None)
         latest = latest_reader(fixture["id"], self.model_key, self.competition_id) if callable(latest_reader) else None
         if latest is not None and latest.get("id") != prediction.get("id"):
@@ -147,6 +198,7 @@ class BankrollService:
         prediction: dict[str, Any],
         fixture: dict[str, Any],
         candidate: Any,
+        fixed_stake: float | None = None,
     ) -> dict[str, Any] | None:
         """Execute one globally selected candidate without re-ranking its model peers."""
 
@@ -161,12 +213,14 @@ class BankrollService:
             "market": payload.get("market"),
             "selection": payload.get("selection"),
         }
+        if fixed_stake is not None:
+            working_prediction["automation_fixed_stake"] = fixed_stake
         latest_reader = getattr(self.repository, "latest", None)
         latest = latest_reader(fixture["id"], self.model_key, self.competition_id) if callable(latest_reader) else None
         if latest is not None and latest.get("id") != prediction.get("id"):
             return None
         existing = self.repository.bet_for_prediction(prediction["id"])
-        if existing and _bet_matches_candidate(existing, working_prediction):
+        if existing and _bet_matches_candidate(existing, working_prediction, expected_stake=fixed_stake):
             return existing
         discard = getattr(self.repository, "discard_open_fixture_bets", None)
         if callable(discard):
@@ -208,10 +262,16 @@ class BankrollService:
         )
         current = next((item for item in candidates if item[0].get("id") == prediction.get("id")), None)
         if current is None:
+            diagnosis = _candidate_gate_diagnosis(
+                prediction,
+                fixture,
+                self.portfolio_config,
+                self.repository,
+            )
             return {
                 "status": "no_bet",
-                "reason_codes": ["portfolio_filter"],
-                "reason": "候选未同时满足 Portfolio 的 Edge、EV、数据质量或赔率新鲜度门槛",
+                "reason_codes": diagnosis["reason_codes"],
+                "reason": diagnosis["reason"],
                 "bet_id": None,
                 "execution_id": None,
                 "execution_status": "REJECTED",
@@ -297,6 +357,7 @@ class BankrollService:
         return sorted(
             rows,
             key=lambda item: (
+                -float((item[0].get("portfolio_candidate") or {}).get("priority") or 0),
                 -float((item[0].get("portfolio_candidate") or {}).get("candidate_score") or 0),
                 str((item[0].get("portfolio_candidate") or {}).get("model_key") or ""),
                 str(item[0].get("id") or ""),
@@ -388,13 +449,24 @@ class BankrollService:
             fixture_date=fixture.get("fixture_date"),
             league_key=fixture.get("league_key"),
         )
+        fixed_stake = _fixed_stake(prediction)
+        selection_config = self.portfolio_config
+        if fixed_stake is not None:
+            # The automation fixed stake overrides single-bet sizing only;
+            # league, daily and total exposure caps still bound the placement.
+            selection_config = replace(
+                selection_config,
+                max_single_bet_fraction=1.0,
+                max_league_candidates=None,
+            )
         selected = select_portfolio(
             [candidate],
             account_snapshot=account_snapshot,
             existing_bets=account_bets,
             correlation_bets=all_bets,
-            config=self.portfolio_config,
+            config=selection_config,
             drawdown=float(self.summary().get("max_drawdown") or 0),
+            requested_stake=fixed_stake,
         )
         if not selected:
             return None
@@ -483,9 +555,9 @@ class BankrollService:
         realized_profit = round(sum(float(item.get("net_profit") or 0) for item in settled), 2)
         profitable = sum(1 for item in settled if float(item.get("net_profit") or 0) > 0)
         decided = sum(1 for item in settled if item.get("settlement_result") != "push")
-        betting_drawdown = calculate_drawdown(_equity_curve(settled, transactions), INITIAL_BANKROLL)
+        betting_drawdown = calculate_drawdown(_equity_curve(settled, transactions, self.initial_bankroll), self.initial_bankroll)
         return {
-            "initial_balance": INITIAL_BANKROLL,
+            "initial_balance": self.initial_bankroll,
             "balance": balance,
             "cash_balance": balance,
             "equity": account["equity"],
@@ -574,10 +646,11 @@ def _fixture_started(fixture: dict[str, Any]) -> bool:
 def _equity_curve(
     settled_bets: list[dict[str, Any]],
     transactions: list[dict[str, Any]],
+    initial_bankroll: float = INITIAL_BANKROLL,
 ) -> list[dict[str, Any]]:
     initial_at = transactions[0].get("created_at") if transactions else None
-    points = [{"at": initial_at, "balance": INITIAL_BANKROLL}]
-    balance = INITIAL_BANKROLL
+    points = [{"at": initial_at, "balance": initial_bankroll}]
+    balance = initial_bankroll
     for bet in sorted(settled_bets, key=lambda item: (item.get("settled_at") or "", item["id"])):
         balance = round(balance + float(bet.get("net_profit") or 0), 2)
         points.append({"at": bet.get("settled_at"), "balance": balance, "bet_id": bet["id"]})
@@ -615,11 +688,15 @@ class DualBankrollService:
                 candidate_entries.append((candidate, service, prediction))
         # The existing baseline is a candidate input only; it never creates a prediction row.
         for prediction in predictions:
+            # A Poisson baseline may explain a degraded forecast, but it must
+            # not create an automatic bet when the configured AI model failed.
+            if (prediction.get("ai") or {}).get("status") != "completed":
+                continue
             baseline_service = self.services.get(str(prediction.get("model_key") or "deepseek"))
             if baseline_service is None:
                 continue
             poisson = baseline_service.candidate_for_poisson(prediction, fixture, context)
-            if poisson is not None:
+            if poisson is not None and _follows_ai_direction(prediction, poisson):
                 candidate_entries.append((poisson, baseline_service, prediction))
                 break
         fallback_service = next(iter(self.services.values()), None)
@@ -639,7 +716,8 @@ class DualBankrollService:
         for candidate, service, prediction in candidate_entries:
             if id(candidate) not in selected_ids:
                 continue
-            if bet := service.place_for_candidate(prediction, fixture, candidate):
+            fixed_stake = _fixed_stake(context)
+            if bet := service.place_for_candidate(prediction, fixture, candidate, fixed_stake=fixed_stake):
                 bets.append(bet)
         return bets
 
@@ -669,3 +747,52 @@ class DualBankrollService:
             "accounts": accounts,
             "is_simulated": True,
         }
+
+
+def _candidate_gate_diagnosis(
+    prediction: dict[str, Any],
+    fixture: dict[str, Any],
+    config: PortfolioConfig,
+    repository: Any | None = None,
+) -> dict[str, Any]:
+    """Explain which portfolio gates the fixture's best candidate failed."""
+
+    generic = {
+        "reason_codes": ["portfolio_filter"],
+        "reason": "候选未同时满足 Portfolio 的 Edge、EV、数据质量或赔率新鲜度门槛",
+    }
+    working = deepcopy(prediction)
+    _complete_candidate_decision(working, fixture.get("evidence") or {}, repository)
+    scored = [
+        candidate
+        for row in (working.get("market_assessment") or {}).get("markets") or []
+        if (candidate := candidate_from_market_row(working, fixture, row, config)) is not None
+    ]
+    if not scored:
+        return generic
+    best = max(scored, key=lambda item: item.candidate_score)
+    reasons = candidate_gate_reasons(best, config)
+    if not reasons:
+        return generic
+    return {
+        "reason_codes": reasons,
+        "reason": "；".join(_gate_detail(code, best, config) for code in reasons),
+    }
+
+
+def _gate_detail(code: str, candidate: BetCandidate, config: PortfolioConfig) -> str:
+    if code == "edge_below_threshold":
+        return f"Edge {candidate.edge * 100:.1f}% 低于门槛 {config.min_edge * 100:.0f}%"
+    if code == "implausible_edge":
+        return f"Edge {candidate.edge * 100:.1f}% 超出合理上限 {config.max_plausible_edge * 100:.0f}%，疑似数据异常"
+    if code == "ev_below_threshold":
+        return f"EV {candidate.ev * 100:.1f}% 低于门槛 {config.min_ev * 100:.0f}%"
+    if code == "implausible_ev":
+        return f"EV {candidate.ev * 100:.1f}% 超出合理上限 {config.max_plausible_ev * 100:.0f}%，疑似数据异常"
+    if code == "data_quality_below_threshold":
+        return f"数据质量 {candidate.data_quality * 100:.0f}% 低于门槛 {config.min_data_completeness * 100:.0f}%"
+    if code == "odds_age_missing":
+        return "赔率缺少可靠的更新时间"
+    if code == "odds_age_stale":
+        return f"赔率已 {candidate.odds_age_minutes:.0f} 分钟未更新，超过 {config.max_odds_age_minutes:.0f} 分钟门槛"
+    return code

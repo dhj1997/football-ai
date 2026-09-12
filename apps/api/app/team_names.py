@@ -75,12 +75,30 @@ _RAW_TEAM_NAMES = {
     "Deportivo de A Coruna": "拉科鲁尼亚",
     "Racing de Santander": "桑坦德竞技",
     "Racing Santander": "桑坦德竞技",
+    # UEFA Champions League and European club aliases
+    "Lille": "里尔",
+    "Borussia Dortmund": "多特蒙德",
+    "Porto": "波尔图",
+    "VfB Stuttgart": "斯图加特",
+    "Stuttgart": "斯图加特",
+    "Viking": "维京",
+    "Paris Saint-Germain": "巴黎圣日耳曼",
+    "PSG": "巴黎圣日耳曼",
+    "Slovan Bratislava": "布拉迪斯拉发",
+    "PSV Eindhoven": "埃因霍温",
+    "Sabah Baku": "沙巴巴库",
+    "Shakhtar Donetsk": "顿涅茨克矿工",
+    "Bayern Munich": "拜仁慕尼黑",
+    "Bodø/Glimt": "博德闪耀",
+    "Sporting CP": "葡萄牙体育",
+    "Galatasaray": "加拉塔萨雷",
     # Chinese Super League
     "Beijing Guoan": "北京国安",
     "Changchun Yatai": "长春亚泰",
     "Chengdu Rongcheng": "成都蓉城",
     "Chongqing Tonglianglong": "重庆铜梁龙",
     "Dalian Yingbo": "大连英博",
+    "Lanzhou Longyuan Athletic": "兰州陇原竞技",
     "Henan": "河南队",
     "Henan FC": "河南队",
     "Meizhou Hakka": "梅州客家",
@@ -99,6 +117,15 @@ _RAW_TEAM_NAMES = {
 }
 
 TEAM_NAMES_ZH = {_normalize(name): chinese_name for name, chinese_name in _RAW_TEAM_NAMES.items()}
+
+# Some providers return a reviewed Chinese short name instead of the English
+# name used by the schedule provider. Keep these aliases separate because the
+# ASCII normalizer intentionally strips non-Latin characters.
+TEAM_NAMES_ZH_EXACT = {
+    "塞尔塔": "维戈塞尔塔",
+    "PSV埃因霍温": "埃因霍温",
+    "河南": "河南队",
+}
 
 _RAW_PLAYER_NAMES = {
     # Valencia and Real Betis names most likely to appear in the current La Liga view.
@@ -329,7 +356,8 @@ PLAYER_NAMES_ZH = {_normalize(name): chinese_name for name, chinese_name in _RAW
 def to_chinese_team_name(name: str) -> str:
     """Return a standard Chinese club name or the provider name when unknown."""
 
-    return TEAM_NAMES_ZH.get(_normalize(name), name)
+    value = str(name or "").strip()
+    return TEAM_NAMES_ZH_EXACT.get(value) or TEAM_NAMES_ZH.get(_normalize(value), name)
 
 
 def to_chinese_player_name(name: str) -> str:

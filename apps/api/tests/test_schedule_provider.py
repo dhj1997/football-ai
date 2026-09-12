@@ -104,3 +104,34 @@ def test_schedule_provider_localizes_known_team_names() -> None:
 
     assert result["home_team"]["name"] == "富勒姆"
     assert result["away_team"]["name"] == "切尔西"
+
+
+def test_schedule_provider_registers_china_fa_cup() -> None:
+    assert TheSportsDbProvider.LEAGUE_IDS["cfa_cup"] == 5525
+    assert TheSportsDbProvider.normalize_league_key("中国足协杯") == "cfa_cup"
+    assert TheSportsDbProvider.normalize_league_key("China FA Cup") == "cfa_cup"
+
+    result = TheSportsDbProvider._map_fixture(
+        {
+            "idEvent": "794",
+            "dateEvent": "2026-09-01",
+            "strTime": "19:35:00",
+            "strStatus": "Not Started",
+            "strHomeTeam": "Lanzhou Longyuan Athletic",
+            "strAwayTeam": "Shanghai FC",
+        },
+        "cfa_cup",
+    )
+
+    assert result["league"] == {"id": 5525, "name": "中国足协杯", "country": "中国", "mark": "CFA"}
+    assert result["home_team"]["name"] == "兰州陇原竞技"
+
+
+def test_schedule_provider_registers_verified_international_competitions() -> None:
+    assert TheSportsDbProvider.LEAGUE_IDS["ucl"] == 4480
+    assert TheSportsDbProvider.LEAGUE_IDS["world_cup"] == 4429
+    assert TheSportsDbProvider.normalize_league_key("欧冠") == "ucl"
+    assert TheSportsDbProvider.normalize_league_key("亚洲杯") == "asian_cup"
+    assert TheSportsDbProvider.normalize_league_key("欧国联") == "nations_league"
+    assert TheSportsDbProvider.normalize_league_key("world_cup") == "world_cup"
+    assert TheSportsDbProvider.normalize_league_key("asian_qualifiers") == "asian_qualifiers"
