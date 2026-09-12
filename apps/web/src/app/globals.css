@@ -516,6 +516,10 @@ main { width: min(1480px, 100%); margin: 0 auto; padding: 0 clamp(16px, 3.2vw, 5
 @media (max-width: 640px) { .bookmaker-odds-row { grid-template-columns: 1fr; gap: 3px; } }
 .dongqiudi-analysis { padding: 18px 24px; border-bottom: 1px solid var(--line); }
 .analysis-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.score-forecast { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.score-forecast > span { font-size: 10px; color: var(--muted); margin-right: 2px; }
+.score-forecast b { padding: 4px 8px; border: 1px solid var(--line); background: var(--surface-soft); font-size: 12px; display: inline-flex; align-items: baseline; gap: 5px; }
+.score-forecast b small { font-size: 10px; font-weight: 400; color: var(--muted); }
 .analysis-chip-row span { padding: 4px 7px; border: 1px solid var(--line); color: var(--muted); background: var(--surface-soft); font-size: 10px; }
 
 .prediction-panel { margin: 18px 24px 24px; border: 1px solid #aebbb1; border-radius: 6px; overflow: hidden; background: #fbfcfa; }

@@ -178,10 +178,10 @@ function EvaluationSummary({ metrics }: { metrics: PredictionMetrics }) {
     <SectionHeader className="team-section-heading" eyebrow="STRATEGY EVALUATION" title="策略质量门禁" meta={metrics.experiment?.strategy_name ?? "基准策略"} />
     <div className="evaluation-grid">
       <div className={`evaluation-gate ${gate?.status === "READY" ? "ready" : "shadow"}`}><small>当前状态</small><strong>{gateLabel}</strong><span>{failureLabels.length ? failureLabels.join(" · ") : "所有评估条件已满足"}</span></div>
+      <div><small>CLV 相对收盘价（北极星）</small><strong>{portfolio?.average_clv != null ? percent(portfolio.average_clv) : "-"}</strong><span>{portfolio?.clv_samples ?? 0} 样本 · 长期跑赢收盘价 = 真实优势</span></div>
       <div><small>预测样本</small><strong>{gate?.counts.prediction_samples ?? metrics.sample_size}</strong><span>命中 {percent(metrics.accuracy)} · Brier {metrics.average_brier_score?.toFixed(3) ?? "-"}</span></div>
       <div><small>概率质量</small><strong>{metrics.average_log_loss?.toFixed(3) ?? "-"}</strong><span>Log Loss · RPS {metrics.average_rps?.toFixed(3) ?? "-"}</span></div>
-      <div><small>市场对照</small><strong>{comparison?.sample_size ?? 0}</strong><span>Brier 改善 {signedMetric(comparison?.brier_improvement)} · CLV {portfolio?.clv_samples ?? 0} 样本</span></div>
-      <div><small>决策记录</small><strong>{(decisions?.bet ?? 0) + (decisions?.no_bet ?? 0) + (decisions?.insufficient_data ?? 0) + (decisions?.unknown ?? 0)}</strong><span>下注 {decisions?.bet ?? 0} · 不下注 {decisions?.no_bet ?? 0} · 数据不足 {decisions?.insufficient_data ?? 0} · 历史未记录 {decisions?.unknown ?? 0}</span></div>
+      <div><small>市场对照</small><strong>{comparison?.sample_size ?? 0}</strong><span>Brier 改善 {signedMetric(comparison?.brier_improvement)}</span></div>
       <div><small>组合表现</small><strong>{portfolio ? signedMoney(portfolio.realized_pnl) : "-"}</strong><span>ROI {portfolio ? percent(portfolio.roi) : "-"} · 回撤 {portfolio ? percent(portfolio.max_drawdown) : "-"}</span></div>
     </div>
   </section>;

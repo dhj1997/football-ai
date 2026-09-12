@@ -553,6 +553,14 @@ export function ProbabilityPanel({ prediction, fixture, bet, onManualPredict, pr
           </div>
         ))}
       </div>
+      {prediction.top_scores?.length ? (
+        <div className="score-forecast" aria-label="比分预测">
+          <span>比分预测</span>
+          {prediction.top_scores.map((item) => (
+            <b key={item.score}>{item.score}<small>{percent(item.probability)}</small></b>
+          ))}
+        </div>
+      ) : null}
       {prediction.ai && (
         <div className={`ai-assessment ai-${prediction.ai.status}`}>
           <div className="ai-assessment-copy">
