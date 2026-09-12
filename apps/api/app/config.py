@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     automation_fixed_stake: float = 100.0
     simulation_initial_bankroll: float = 5000.0
     # P2 deterministic portfolio policy. Fractions are relative to bankroll.
+    notify_webhook_url: str = ""
+    automation_notify_interval_minutes: int = 5
     portfolio_min_edge: float = 0.05
     portfolio_min_ev: float = 0.05
     portfolio_max_plausible_edge: float = 0.25

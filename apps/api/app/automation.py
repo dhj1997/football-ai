@@ -13,6 +13,7 @@ from .evidence_chain import (
 )
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
 from .schedule_sync import deduplicate_fixtures
+from .notifier import notify_due_fixtures
 
 
 class AutomationRunner:
@@ -69,6 +70,11 @@ class AutomationRunner:
                 max(1, int(getattr(settings, "automation_dongqiudi_prematch_interval_minutes", 5))),
                 self._sync_dongqiudi_prematch,
             )
+            if bool(getattr(settings, "notify_webhook_url", "")):
+                self._jobs["prediction_notify"] = (
+                    max(1, int(getattr(settings, "automation_notify_interval_minutes", 5))),
+                    self._notify_predictions,
+                )
 
     async def run_loop(self) -> None:
         """Run immediately on startup, then wake on the configured short tick."""
@@ -270,6 +276,31 @@ class AutomationRunner:
     async def _sync_standings(self) -> dict[str, Any]:
         result = await self.league_sync.force_refresh()
         return {**result, "item_count": int(result.get("item_count", 0))}
+
+    async def _notify_predictions(self) -> dict[str, Any]:
+        """Push the AI prediction summary one hour before kickoff."""
+
+        webhook_url = str(getattr(self.settings, "notify_webhook_url", "") or "")
+        if not webhook_url:
+            return {"sent": 0, "skipped": 0}
+
+        def latest_prediction(fixture: dict[str, Any]) -> dict[str, Any] | None:
+            return self.repository.latest_current(
+                fixture["id"],
+                DEFAULT_PROMPT_CONTRACT.version,
+                "chatgpt",
+                getattr(self.prediction_service, "competition_id", None),
+            )
+
+        def save_evidence(fixture_id: str, context: dict[str, Any]) -> None:
+            self.repository.save_fixture_evidence(fixture_id, context)
+
+        return await notify_due_fixtures(
+            webhook_url,
+            deduplicate_fixtures(self.repository.list_fixtures()),
+            latest_prediction,
+            save_evidence,
+        )
 
     async def _sync_dongqiudi_schedule(self) -> dict[str, Any]:
         result = await self.dongqiudi_sync_service.sync_schedule()
