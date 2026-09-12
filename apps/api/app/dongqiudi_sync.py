@@ -191,7 +191,7 @@ class DongqiudiSyncService:
                 enriched = await self.provider.enrich_match(match_id)
                 fixture = self._apply_match_data(fixture, enriched, phase)
                 self.repository.upsert_fixture(fixture)
-                await self._sync_teams(fixture)
+                await self._sync_teams(fixture, match_id)
                 return {"status": "synced", "fixture_id": fixture_id, "match_id": match_id, "phase": phase}
             except Exception as error:
                 state = self._state(fixture)
@@ -241,16 +241,26 @@ class DongqiudiSyncService:
         _save_odds_snapshots(self.repository, fixture["id"], odds)
         return fixture
 
-    async def _sync_teams(self, fixture: dict[str, Any]) -> None:
+    async def _sync_teams(self, fixture: dict[str, Any], match_id: str | None = None) -> None:
         league_key = str(fixture.get("league_key") or "unknown")
         free_data = dict(fixture.get("free_team_data") or {})
         context = fixture.get("evidence") or unavailable_context()
+        # canonical 行的球队 provider_id 属于赛程源命名空间；懂球帝名单接口需要
+        # 数据域 ID，优先取 dongqiudi 孪生行携带的球队 ID，避免跨域串号。
+        twin = self.repository.fixture(f"dongqiudi-{match_id}") if match_id else None
+
+        def team_source_id(side: str):
+            twin_id = ((twin or {}).get(f"{side}_team") or {}).get("provider_id")
+            if twin_id:
+                return twin_id
+            return (fixture.get(f"{side}_team") or {}).get("provider_id")
+
         self._expected_team_names = {
             side: str(((fixture.get(f"{side}_team") or {}).get("name")) or "")
             for side in ("home", "away")
         }
         results = await asyncio.gather(
-            *(self._sync_one_team(league_key, side, (fixture.get(f"{side}_team") or {}).get("provider_id")) for side in ("home", "away")),
+            *(self._sync_one_team(league_key, side, team_source_id(side)) for side in ("home", "away")),
         )
         errors: list[str] = []
         for side, cached, error in results:
