@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     simulation_initial_bankroll: float = 5000.0
     # P2 deterministic portfolio policy. Fractions are relative to bankroll.
     notify_webhook_url: str = ""
+    notify_email_to: str = ""
+    notify_smtp_host: str = "smtp.qq.com"
+    notify_smtp_port: int = 465
+    notify_smtp_user: str = ""
+    notify_smtp_pass: str = ""
     automation_notify_interval_minutes: int = 5
     portfolio_min_edge: float = 0.05
     portfolio_min_ev: float = 0.05

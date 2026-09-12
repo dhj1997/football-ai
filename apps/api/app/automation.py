@@ -70,7 +70,7 @@ class AutomationRunner:
                 max(1, int(getattr(settings, "automation_dongqiudi_prematch_interval_minutes", 5))),
                 self._sync_dongqiudi_prematch,
             )
-            if bool(getattr(settings, "notify_webhook_url", "")):
+            if bool(getattr(settings, "notify_webhook_url", "")) or bool(getattr(settings, "notify_email_to", "")):
                 self._jobs["prediction_notify"] = (
                     max(1, int(getattr(settings, "automation_notify_interval_minutes", 5))),
                     self._notify_predictions,
@@ -281,8 +281,18 @@ class AutomationRunner:
         """Push the AI prediction summary one hour before kickoff."""
 
         webhook_url = str(getattr(self.settings, "notify_webhook_url", "") or "")
-        if not webhook_url:
+        email_to = str(getattr(self.settings, "notify_email_to", "") or "")
+        if not webhook_url and not email_to:
             return {"sent": 0, "skipped": 0}
+        email_config = None
+        if email_to:
+            email_config = {
+                "host": str(getattr(self.settings, "notify_smtp_host", "") or "smtp.qq.com"),
+                "port": int(getattr(self.settings, "notify_smtp_port", 465) or 465),
+                "user": str(getattr(self.settings, "notify_smtp_user", "") or ""),
+                "pass": str(getattr(self.settings, "notify_smtp_pass", "") or ""),
+                "to": email_to,
+            }
 
         def latest_prediction(fixture: dict[str, Any]) -> dict[str, Any] | None:
             return self.repository.latest_current(
@@ -300,6 +310,7 @@ class AutomationRunner:
             deduplicate_fixtures(self.repository.list_fixtures()),
             latest_prediction,
             save_evidence,
+            email_config,
         )
 
     async def _sync_dongqiudi_schedule(self) -> dict[str, Any]:
