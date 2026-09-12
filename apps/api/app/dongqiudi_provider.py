@@ -326,7 +326,7 @@ class DongqiudiProvider:
             return {"home": _number(state.get("homeWin")), "draw": _number(state.get("draw")), "away": _number(state.get("awayWin")), "updated_at": _epoch_iso(state.get("ts"))}
         if market == "over_under":
             # size market: homeWin = over water, awayWin = under water, draw = line.
-            return {"over_odd": _hongkong_water_to_decimal(state.get("homeWin")), "under_odd": _hongkong_water_to_decimal(state.get("awayWin")), "line": _number(state.get("draw_value")) or _number(state.get("draw")), "updated_at": _epoch_iso(state.get("ts"))}
+            return {"over_odd": _hongkong_water_to_decimal(state.get("homeWin")), "under_odd": _hongkong_water_to_decimal(state.get("awayWin")), "line": _over_under_line(state), "updated_at": _epoch_iso(state.get("ts"))}
         # Asian prices arrive as Hong Kong water (e.g. 0.93 = win pays 0.93 per
         # unit). The pipeline prices handicap rows in decimal odds, so convert.
         return {"home_odd": _hongkong_water_to_decimal(state.get("homeWin")), "away_odd": _hongkong_water_to_decimal(state.get("awayWin")), "label": state.get("draw"), "line": _number(state.get("draw_value")), "updated_at": _epoch_iso(state.get("ts"))}
@@ -351,6 +351,22 @@ def _integer(value: Any) -> int | None:
 def _hongkong_water_to_decimal(value: Any) -> float | None:
     number = _number(value)
     return round(number + 1, 4) if number is not None else None
+
+
+def _over_under_line(state: dict[str, Any]) -> float | None:
+    """Resolve the total-goals line: numeric field first, then the label,
+    which may be a compound goal line like "2.5/3" (= 2.75)."""
+
+    direct = _number(state.get("draw_value"))
+    if direct is not None:
+        return direct
+    raw = str(state.get("draw") or "").strip()
+    if "/" in raw:
+        parts = [_number(part) for part in raw.split("/")]
+        if parts and all(value is not None for value in parts):
+            return round(sum(parts) / len(parts), 4)
+        return None
+    return _number(raw)
 
 
 def _number(value: Any) -> float | None:

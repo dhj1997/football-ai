@@ -493,3 +493,10 @@ def test_dongqiudi_sync_persists_over_under_odds() -> None:
     ]
     assert ("over_under", "over", 1.85, 2.5) in ou_quotes
     assert ("over_under", "under", 1.95, 2.5) in ou_quotes
+
+
+def test_dongqiudi_over_under_line_parses_compound_goal_labels() -> None:
+    state = DongqiudiProvider._map_odds_state({"homeWin": "0.70", "awayWin": "0.92", "draw": "2.5/3"}, "over_under")
+
+    assert state["line"] == 2.75
+    assert state["over_odd"] == 1.70
