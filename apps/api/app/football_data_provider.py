@@ -107,6 +107,17 @@ def parse_season_csv(csv_text: str, season_year: int) -> list[dict[str, Any]]:
         }
         if any(ah.get(key) is not None for key in ("line", "b365_home", "avg_home")):
             odds["asian_handicap"] = ah
+        stats = {}
+        for key, home_col, away_col in (
+            ("shots", "HS", "AS"),
+            ("shots_on_target", "HST", "AST"),
+            ("corners", "HC", "AC"),
+        ):
+            try:
+                stats[f"home_{key}"] = int(row.get(home_col))
+                stats[f"away_{key}"] = int(row.get(away_col))
+            except (TypeError, ValueError):
+                continue
         matches.append(
             {
                 "date": date,
@@ -120,6 +131,7 @@ def parse_season_csv(csv_text: str, season_year: int) -> list[dict[str, Any]]:
                     if str(row.get("HTHG") or "").strip() and str(row.get("HTAG") or "").strip()
                     else None
                 ),
+                "stats": stats or None,
                 "odds": odds,
             }
         )
@@ -163,6 +175,7 @@ def sync_season(
                 "score": {"home": row["home_goals"], "away": row["away_goals"]},
                 "provider_status": row["result"],
                 "half_time_score": row["half_time"],
+                "match_stats": row.get("stats"),
                 "season": str(season_year),
                 "kickoff_date_only": True,
                 "is_demo": False,

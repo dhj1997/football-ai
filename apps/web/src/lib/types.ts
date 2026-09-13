@@ -236,7 +236,24 @@ export interface Fixture {
   has_prediction?: boolean;
 }
 
+export interface TeamStatProfile {
+  matches: number;
+  shots_for: number;
+  shots_against: number;
+  shots_on_target_for: number;
+  shots_on_target_against: number;
+  corners_for: number;
+  corners_against: number;
+  goals_for: number;
+  goals_against: number;
+}
+
 export interface EvidenceContext {
+  team_stats?: {
+    home: TeamStatProfile;
+    away: TeamStatProfile;
+    as_of: string;
+  };
   recent_form: {
     home: Array<RecentMatch | string>;
     away: Array<RecentMatch | string>;

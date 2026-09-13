@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.database import PredictionRepository
 from app.football_data_provider import parse_season_csv, sync_season
 from app.prediction_service import PredictionService
+from app.team_stats import attach_team_stats, team_stat_profiles
 
 SAMPLE_FD_CSV = """Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HTHG,HTAG,B365H,B365D,B365A,AvgH,AvgD,AvgA,AHh,B365AHH,B365AHA,PSCH,PSCD,PSCA
 E0,13/09/2026,Arsenal,Nottingham,2,1,H,1,0,1.5,4.2,6.5,1.52,4.1,6.2,-1.0,2.05,1.85,1.48,4.3,6.8
@@ -85,6 +86,65 @@ def test_schedule_window_replace_keeps_football_data_rows(tmp_path) -> None:
 
     surviving = [row for row in repository.list_fixtures() if str(row.get("id", "")).startswith("fd-")]
     assert len(surviving) == 2
+
+
+SAMPLE_FD_CSV_WITH_STATS = """Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HTHG,HTAG,HS,AS,HST,AST,HC,AC,B365H,B365D,B365A
+E0,13/09/2026,Arsenal,Nottingham,2,1,H,1,0,15,8,6,2,7,3,1.5,4.2,6.5
+E0,20/09/2026,Nottingham,Arsenal,0,3,A,0,1,9,14,3,8,4,6,4.5,3.6,1.8
+"""
+
+
+def test_team_stat_profiles_average_only_prior_matches(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "stats.db"))
+    repository.initialize()
+    sync_season(repository, SAMPLE_FD_CSV_WITH_STATS, "epl", 2026)
+
+    profiles = team_stat_profiles(repository, before_iso="2026-09-20T00:00:00+00:00", min_matches=1)
+    arsenal = profiles["Arsenal"]
+
+    assert arsenal["matches"] == 1
+    assert arsenal["shots_for"] == 15 and arsenal["shots_against"] == 8
+    assert arsenal["corners_for"] == 7 and arsenal["goals_for"] == 2
+
+    # as-of 在比赛前：没有任何画像（不用未来数据）。
+    assert team_stat_profiles(repository, before_iso="2026-09-01T00:00:00+00:00", min_matches=1) == {}
+
+
+def test_attach_team_stats_injects_context_for_supported_league(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "stats-inject.db"))
+    repository.initialize()
+    sync_season(repository, SAMPLE_FD_CSV_WITH_STATS, "epl", 2026)
+    fixture = {
+        "id": "upcoming-1",
+        "league_key": "epl",
+        "is_demo": False,
+        "home_team": {"name": "Arsenal"},
+        "away_team": {"name": "Nottingham"},
+    }
+    context: dict = {}
+
+    attach_team_stats(
+        repository,
+        fixture,
+        context,
+        prediction_timestamp="2026-09-25T00:00:00+00:00",
+        min_matches=1,
+    )
+
+    assert context["team_stats"]["home"]["shots_for"] == pytest.approx((15 + 14) / 2)
+    assert context["team_stats"]["away"]["corners_against"] == pytest.approx((7 + 6) / 2)
+
+    # 非支持联赛不注入。
+    other = {**fixture, "league_key": "csl", "home_team": {"name": "Arsenal"}, "away_team": {"name": "Nottingham"}}
+    other_context: dict = {}
+    attach_team_stats(
+        repository,
+        other,
+        other_context,
+        prediction_timestamp="2026-09-25T00:00:00+00:00",
+        min_matches=1,
+    )
+    assert "team_stats" not in other_context
 
 
 def test_clubeelo_parse_and_store_ratings(tmp_path) -> None:

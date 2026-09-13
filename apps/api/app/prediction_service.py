@@ -76,6 +76,17 @@ class PredictionService:
                 prediction_timestamp=prediction_timestamp,
             )
         context.setdefault("elo", self._elo_ratings())
+        try:
+            from .team_stats import attach_team_stats
+
+            attach_team_stats(
+                self.repository,
+                fixture,
+                context,
+                prediction_timestamp=prediction_timestamp,
+            )
+        except Exception:
+            pass
         baseline = predict(fixture, context)
         historical_at = parse_timestamp(prediction_timestamp)
         if historical_at:

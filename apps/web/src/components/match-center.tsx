@@ -15,6 +15,7 @@ import Link from "next/link";
 
 import { RecentFormCompare } from "@/components/recent-form-compare";
 import { MarketsDetailPanel } from "@/components/markets-detail-panel";
+import type { TeamStatProfile } from "@/lib/types";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -537,6 +538,8 @@ function DecisionReport({
             />
           </Card>
         ) : null}
+
+        <TeamStatsCard teamStats={detail.context.team_stats} />
 
         <Card
           className="p-5"
@@ -1497,5 +1500,58 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
         )}
       </div>
     </main>
+  );
+}
+
+function TeamStatsCard({ teamStats }: { teamStats: FixtureDetail["context"]["team_stats"] }) {
+  if (!teamStats) {
+    return null;
+  }
+  const metrics: Array<{ label: string; key: "shots_for" | "shots_on_target_for" | "corners_for" | "goals_for" }> = [
+    { label: "场均射门", key: "shots_for" },
+    { label: "场均射正", key: "shots_on_target_for" },
+    { label: "场均角球", key: "corners_for" },
+    { label: "场均进球", key: "goals_for" },
+  ];
+  return (
+    <Card className="p-5" aria-labelledby="team-stats-title">
+      <SectionTitle
+        className="mb-4"
+        eyebrow="02C / TEAM PROFILE"
+        title="球队统计画像"
+        titleId="team-stats-title"
+        meta={`football-data 历史 · 截至 ${teamStats.as_of.slice(0, 10)}`}
+      />
+      <div className="space-y-3 text-xs">
+        {metrics.map((metric) => {
+          const home = teamStats.home[metric.key] ?? 0;
+          const away = teamStats.away[metric.key] ?? 0;
+          const total = home + away || 1;
+          return (
+            <div key={metric.label}>
+              <div className="flex items-baseline justify-between font-mono tabular-nums">
+                <span className="font-bold text-slate-200">{home.toFixed(1)}</span>
+                <span className="text-[11px] text-slate-500">{metric.label}</span>
+                <span className="font-bold text-slate-200">{away.toFixed(1)}</span>
+              </div>
+              <div className="mt-1 flex h-1.5 gap-0.5" aria-hidden="true">
+                <div
+                  className="h-1.5 rounded-l-full bg-amber-500/80"
+                  style={{ width: `${(home / total) * 100}%` }}
+                />
+                <div
+                  className="h-1.5 flex-1 rounded-r-full bg-sky-500/80"
+                  style={{ width: `${(away / total) * 100}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+        <p className="text-[11px] text-slate-500">
+          主队样本 {teamStats.home.matches} 场 · 客队样本 {teamStats.away.matches} 场
+          （football-data 历史场均，仅统计开球前数据）
+        </p>
+      </div>
+    </Card>
   );
 }
