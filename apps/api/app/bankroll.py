@@ -256,7 +256,12 @@ class BankrollService:
         return self._place_portfolio_candidate(working_prediction, fixture)
 
     def execution_for_prediction(self, prediction: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
-        """Describe portfolio execution without mutating the immutable prediction."""
+        """Describe portfolio execution without mutating the immutable prediction.
+
+        The decision was frozen when the prediction was generated; this read
+        view reports the stable outcome (bet placed, or the frozen decision)
+        instead of re-simulating gates against live data on every request.
+        """
 
         decision = prediction.get("decision") or {}
         linked = self.repository.bet_for_prediction(prediction["id"])
@@ -281,65 +286,13 @@ class BankrollService:
                 "execution_status": "REJECTED",
             }
 
-        fixtures = self._league_day_fixtures(fixture)
-        candidates = self._league_day_candidates(
-            prediction,
-            fixture,
-            fixtures,
-            fixture.get("evidence") or {},
-        )
-        current = next((item for item in candidates if item[0].get("id") == prediction.get("id")), None)
-        if current is None:
-            diagnosis = _candidate_gate_diagnosis(
-                prediction,
-                fixture,
-                self.portfolio_config,
-                self.repository,
-            )
-            return {
-                "status": "no_bet",
-                "reason_codes": diagnosis["reason_codes"],
-                "reason": diagnosis["reason"],
-                "bet_id": None,
-                "execution_id": None,
-                "execution_status": "REJECTED",
-            }
-        all_bets = self.repository.bets(competition_id=self.competition_id)
-        account_bets = [item for item in all_bets if item.get("model_key") == self.model_key]
-        transactions = self.repository.bankroll_transactions(self.model_key, self.competition_id)
-        snapshot = exposure_snapshot(
-            account_bets,
-            transactions,
-            fixture_date=fixture.get("fixture_date"),
-            league_key=fixture.get("league_key"),
-        )
-        selected = select_portfolio(
-            [current[0].get("portfolio_candidate") or {}],
-            account_snapshot=snapshot,
-            existing_bets=account_bets,
-            correlation_bets=all_bets,
-            config=self.portfolio_config,
-            drawdown=float(self.summary().get("max_drawdown") or 0),
-        )
-        if selected:
-            return {
-                "status": "candidate",
-                "reason_codes": [],
-                "reason": "候选已通过 Portfolio 风险门禁，等待 Paper Execution",
-                "bet_id": None,
-                "execution_id": None,
-                "execution_status": "PENDING",
-                "risk_gate": selected[0].get("risk_gate"),
-                "candidate": current[0].get("portfolio_candidate"),
-                "portfolio_candidate": current[0].get("portfolio_candidate"),
-            }
         return {
-            "status": "no_bet",
-            "reason_codes": ["risk_limit"],
-            "reason": "Portfolio 风险门禁未通过，未执行 Paper Execution",
+            "status": "candidate",
+            "reason_codes": [],
+            "reason": "决策为下注，等待模拟执行窗口",
             "bet_id": None,
             "execution_id": None,
-            "execution_status": "REJECTED",
+            "execution_status": "PENDING",
         }
 
     def _league_day_fixtures(self, fixture: dict[str, Any]) -> list[dict[str, Any]]:

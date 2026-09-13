@@ -2748,7 +2748,8 @@ function executionStatusLabel(
   )
     return "数据不足";
   if (modelRecommendationStatus === "no_bet") return "AI 不建议下注";
-  return status === "insufficient_data" ? "数据不足" : "暂不执行";
+  if (status === "candidate") return "等待模拟执行";
+  return status === "insufficient_data" ? "数据不足" : "暂不下注";
 }
 
 function DongqiudiAnalysisSummary({

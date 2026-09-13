@@ -329,7 +329,7 @@ def test_execution_is_single_model_and_ignores_sibling_disagreement(tmp_path) ->
     assert "model_disagreement" not in execution["reason_codes"]
 
 
-def test_execution_reports_specific_gate_failures(tmp_path) -> None:
+def test_execution_read_view_is_frozen_while_gates_run_at_placement(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "gate-reasons.db"))
     repository.initialize()
     service = BankrollService(repository).configure("deepseek", "legacy")
@@ -339,9 +339,14 @@ def test_execution_reports_specific_gate_failures(tmp_path) -> None:
 
     execution = service.execution_for_prediction(prediction(), weak_fixture)
 
-    assert execution["status"] == "no_bet"
-    assert "edge_below_threshold" in execution["reason_codes"]
-    assert "Edge" in execution["reason"]
+    # The read view is frozen to the persisted decision: drifting live odds
+    # must not flip it between page views.
+    assert execution["status"] == "candidate"
+    assert execution["execution_status"] == "PENDING"
+    assert "等待模拟执行" in execution["reason"]
+
+    # Gate evaluation happens once at placement time, not per page view.
+    assert service.place_for_prediction(prediction(), weak_fixture, {"odds": weak_odds}) is None
 
 
 def test_fixed_stake_placement_still_respects_league_cap(tmp_path) -> None:

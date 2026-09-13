@@ -1055,7 +1055,9 @@ async def fixture_detail(fixture_id: str) -> dict:
     await player_value_service.enrich(context, str(fixture.get("league_key") or ""))
     apply_player_impact(context)
     for key, item in list(predictions.items()):
-        if item:
+        if item and not item.get("decision"):
+            # 决策在预测生成时已持久化并随版本冻结；只有缺失决策快照的
+            # 历史行才回填，避免每次打开页面用实时数据重算。
             predictions[key] = apply_market_decision(item, context)
     prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
     model_bets = {}
@@ -1790,7 +1792,8 @@ def latest_prediction(fixture_id: str) -> dict:
         raise HTTPException(status_code=404, detail="这场比赛暂无当前版本预测")
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
     apply_player_impact(context)
-    result = apply_market_decision(result, context)
+    if not result.get("decision"):
+        result = apply_market_decision(result, context)
     result["execution"] = bankroll_service.execution_for_prediction(result, fixture)
     return public_payload(result)
 
