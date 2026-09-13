@@ -46,6 +46,15 @@ from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
 from .market_decision import apply_market_decision
 from .market_intelligence import MarketIntelligenceService
+from .observability import (
+    ALERT_RULES,
+    MetricsRegistry,
+    SLO_CATALOG,
+    emit_observability_log,
+    evaluate_alerts,
+    new_correlation_id,
+    observe_system_state,
+)
 from .model_platform import (
     BASELINE_VERSION,
     DIXON_COLES_VERSION,
@@ -152,6 +161,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="足球赛前分析 API", version="0.1.0", lifespan=lifespan)
 settings = get_settings()
+request_metrics = MetricsRegistry(window_size=500)
 repository = PredictionRepository(
     settings.database_url,
     settings.simulation_competition_id,
@@ -402,6 +412,30 @@ def require_admin(
 
     if x_admin_key != runtime.admin_api_key:
         raise HTTPException(status_code=401, detail="管理员凭证无效")
+
+
+@app.middleware("http")
+async def correlation_middleware(request, call_next):
+    """Attach a correlation id to every request and record bounded metrics."""
+
+    import time
+
+    correlation_id = request.headers.get("x-correlation-id") or new_correlation_id("req")
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Correlation-ID"] = correlation_id
+    request_metrics.record_request(duration_ms, response.status_code)
+    emit_observability_log(
+        "http_request",
+        correlation_id=correlation_id,
+        component="api",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=round(duration_ms, 2),
+    )
+    return response
 
 
 def _fixture_or_404(fixture_id: str) -> dict:
@@ -1586,6 +1620,20 @@ def production_smoke() -> dict:
     """Run the automated production smoke checks."""
 
     return run_smoke_checks(repository, settings)
+
+
+@app.get("/api/admin/observability", dependencies=[Depends(require_admin)])
+def admin_observability() -> dict:
+    """P16 observability: SLO catalog, live state, alerts and request metrics."""
+
+    state = observe_system_state(repository, settings, request_metrics=request_metrics)
+    return {
+        **state,
+        "slo_catalog": list(SLO_CATALOG),
+        "alerts": evaluate_alerts(state),
+        "alert_rules": list(ALERT_RULES),
+        "runbook": "docs/RUNBOOKS.md",
+    }
 
 
 @app.get("/api/data-quality")
