@@ -1,6 +1,7 @@
 """外部数据源测试：football-data.co.uk 回填与 ClubElo 评级。"""
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 
@@ -61,6 +62,29 @@ def test_sync_season_ingests_fixtures_and_closing_odds(tmp_path) -> None:
     assert "1x2:home" in all_selections and "asian_handicap:away" in all_selections
     snapshots = repository.odds_snapshots(fixtures[0]["id"])
     assert snapshots[0]["captured_at"] == fixtures[0]["kickoff"]
+
+
+def test_schedule_window_replace_keeps_football_data_rows(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "fd-protect.db"))
+    repository.initialize()
+    sync_season(repository, SAMPLE_FD_CSV, "epl", 2026, chinese_name=lambda name: name)
+
+    # 当日窗口的赛程同步不得清掉 football-data 历史行。
+    dummy = {
+        "id": "sportsdb-dummy",
+        "provider_id": 1,
+        "league_key": "epl",
+        "fixture_date": "2026-09-13",
+        "kickoff": "2026-09-13T15:00:00+00:00",
+        "status": "scheduled",
+        "home_team": {"name": "X"},
+        "away_team": {"name": "Y"},
+        "is_demo": False,
+    }
+    repository.replace_fixtures("2026-09-13", "2026-09-14", [dummy], datetime.now(UTC).isoformat())
+
+    surviving = [row for row in repository.list_fixtures() if str(row.get("id", "")).startswith("fd-")]
+    assert len(surviving) == 2
 
 
 def test_clubeelo_parse_and_store_ratings(tmp_path) -> None:

@@ -2612,7 +2612,13 @@ class PredictionRepository:
             protected_fixtures = []
             for row in window_rows:
                 previous = json.loads(row["payload"])
-                if previous.get("source") == "dongqiudi" or (previous.get("external_ids") or {}).get("dongqiudi"):
+                source = previous.get("source")
+                if (
+                    source == "dongqiudi"
+                    or (previous.get("external_ids") or {}).get("dongqiudi")
+                    # football-data 历史库行不参与赛程窗口替换，防止被每日同步清掉。
+                    or source == "football-data"
+                ):
                     protected_fixtures.append(previous)
             if unique_fixtures:
                 ids = {f"id_{index}": fixture["id"] for index, fixture in enumerate(unique_fixtures)}
