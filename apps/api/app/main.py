@@ -24,6 +24,7 @@ from .dongqiudi_provider import DongqiudiProvider
 from .dongqiudi_sync import DongqiudiSyncService
 from .dual_prediction_service import DualPredictionService
 from .evidence_provider import ApiFootballEvidenceProvider
+from .explainability import build_explanation_graph
 from .evidence_chain import (
     EvidenceProviderChain,
     localize_evidence_players,
@@ -66,6 +67,7 @@ from .player_name_provider import (
 from .player_value_provider import NullPlayerValueProvider, PlayerValueService
 from .portfolio import PortfolioConfig
 from .prediction_intelligence import (
+    build_feature_snapshot,
     build_performance_profiles,
     run_backtest,
     weighted_ensemble,
@@ -1610,6 +1612,41 @@ def latest_prediction(fixture_id: str) -> dict:
     result = apply_market_decision(result, context)
     result["execution"] = bankroll_service.execution_for_prediction(result, fixture)
     return public_payload(result)
+
+
+@app.get("/api/fixtures/{fixture_id}/explanation")
+def fixture_explanation(fixture_id: str) -> dict:
+    """Return the P13 grounded explanation graph for the current prediction."""
+
+    fixture = _fixture_or_404(fixture_id)
+    prediction = repository.latest_current(
+        fixture_id,
+        DEFAULT_PROMPT_CONTRACT.version,
+        competition_id=settings.simulation_competition_id,
+    )
+    if not prediction:
+        raise HTTPException(status_code=404, detail="这场比赛暂无当前版本预测，无法生成解释")
+    model_outputs = {
+        str(item.get("model_key") or "unknown"): (item.get("probabilities") or item.get("model_probabilities") or {})
+        for item in repository.current_predictions_for_fixture(
+            fixture_id,
+            DEFAULT_PROMPT_CONTRACT.version,
+            competition_id=settings.simulation_competition_id,
+        )
+    }
+    evidence = fixture.get("evidence") or unavailable_context()
+    feature_snapshot = build_feature_snapshot(
+        fixture,
+        evidence,
+        prediction.get("created_at") or prediction.get("prediction_timestamp"),
+    )
+    graph = build_explanation_graph(
+        prediction,
+        feature_snapshot=feature_snapshot,
+        evidence=evidence,
+        model_outputs=model_outputs,
+    )
+    return serialize_public(graph)
 
 
 @app.get("/api/fixtures/{fixture_id}/market")
