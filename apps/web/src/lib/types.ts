@@ -84,6 +84,15 @@ export interface Team {
   logo?: string | null;
 }
 
+export interface MarketsDetail {
+  totals_lines: Record<string, { over: number; push: number; under: number }>;
+  btts: { yes: number; no: number };
+  handicap_lines: Record<string, { home_cover: number; push: number; away_cover: number }>;
+  half_time: { home: number; draw: number; away: number; method: string };
+  score_matrix_top: Array<{ score: string; probability: number }>;
+  is_derived: boolean;
+}
+
 export interface RecentMatch {
   date: string;
   home: string;
@@ -342,6 +351,7 @@ export interface Prediction {
   probabilities: { home: number; draw: number; away: number };
   expected_goals: { home: number; away: number };
   top_scores: Array<{ score: string; probability: number }>;
+  markets_detail?: MarketsDetail;
   asian_handicap: {
     line: number;
     home_settlement: Record<
@@ -360,6 +370,11 @@ export interface Prediction {
   baseline?: {
     model_version: string;
     probabilities: { home: number; draw: number; away: number };
+    markets_detail?: MarketsDetail;
+    asian_handicap?: {
+      line: number;
+      home_settlement: Record<string, number>;
+    } | null;
   };
   evidence_snapshot_id?: string;
   evidence_hash?: string;

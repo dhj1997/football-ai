@@ -74,3 +74,24 @@ def test_dixon_coles_negative_rho_shifts_mass_into_draws_and_unders(monkeypatch)
     # the correction redistributes inside the low-score region.
     assert abs(adjusted["totals_forecast"]["over"] - plain["totals_forecast"]["over"]) < 0.01
     assert adjusted["probabilities"]["home"] + adjusted["probabilities"]["draw"] + adjusted["probabilities"]["away"] == pytest.approx(1.0, abs=0.001)
+
+def test_markets_detail_dimensions_are_consistent() -> None:
+    fixture = {"id": "f1", "league_key": "epl", "is_demo": False}
+    context = {
+        "recent_form": {"home": [], "away": [], "updated_at": "2026-09-01T00:00:00+00:00"},
+        "lineup": {"confirmed": True, "home_strength": None, "away_strength": None, "updated_at": "2026-09-01T00:00:00+00:00"},
+        "availability": {"updated_at": "2026-09-01T00:00:00+00:00"},
+        "player_impact": {},
+        "odds": {"asian_handicap": -0.5, "updated_at": "2026-09-01T00:00:00+00:00"},
+    }
+
+    detail = predict(fixture, context)["markets_detail"]
+
+    assert abs(sum(detail["btts"].values()) - 1.0) < 1e-3
+    for block in detail["totals_lines"].values():
+        assert abs(block["over"] + block["push"] + block["under"] - 1.0) < 1e-3
+    for block in detail["handicap_lines"].values():
+        assert abs(block["home_cover"] + block["push"] + block["away_cover"] - 1.0) < 1e-3
+    assert abs(sum(detail["half_time"][key] for key in ("home", "draw", "away")) - 1.0) < 1e-3
+    # 2.5 线与既有 totals_forecast 完全一致（同一矩阵派生）。
+    assert abs(detail["totals_lines"]["2.5"]["over"] - predict(fixture, context)["totals_forecast"]["over"]) < 1e-3

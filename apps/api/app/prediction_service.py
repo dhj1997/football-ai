@@ -115,6 +115,7 @@ class PredictionService:
             "probabilities": deepcopy(baseline["probabilities"]),
             "expected_goals": baseline["expected_goals"],
             "top_scores": baseline["top_scores"],
+            "markets_detail": deepcopy(baseline.get("markets_detail")),
             "asian_handicap": baseline["asian_handicap"],
         }
         baseline["baseline"] = baseline_summary

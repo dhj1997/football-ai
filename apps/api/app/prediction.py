@@ -201,10 +201,77 @@ def predict(fixture: dict, context: dict) -> dict:
                 handicap_result[key] += probability * weight
         handicap_result = {key: round(value, 4) for key, value in handicap_result.items()}
 
-    top_scores = sorted(score_matrix, key=lambda item: item[2], reverse=True)[:3]
+    top_scores = sorted(score_matrix, key=lambda item: item[2], reverse=True)[:6]
     over_probability = sum(probability for home, away, probability in score_matrix if home + away > 2.5)
     evidence_count = 4 + int(bool(odds)) + int(lineup["confirmed"])
     created_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+
+    # 进球数/双方进球/让球多线/半场维度：全部由同一比分矩阵确定性派生。
+    totals_lines: dict[str, dict[str, float]] = {}
+    for line in (0.5, 1.5, 2.5, 3.5, 4.5):
+        over = sum(probability for home, away, probability in score_matrix if home + away > line)
+        push = sum(probability for home, away, probability in score_matrix if home + away == line)
+        totals_lines[str(line)] = {
+            "over": round(over, 4),
+            "push": round(push, 4),
+            "under": round(1.0 - over - push, 4),
+        }
+    p_home_zero = sum(probability for home, _, probability in score_matrix if home == 0)
+    p_away_zero = sum(probability for _, away, probability in score_matrix if away == 0)
+    p_both_zero = sum(probability for home, away, probability in score_matrix if home == 0 and away == 0)
+    btts_yes = max(0.0, 1.0 - p_home_zero - p_away_zero + p_both_zero)
+    handicap_lines: dict[str, dict[str, float]] = {}
+    for line in (-1.5, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.5):
+        line_result = {key: 0.0 for key in ("full_win", "half_win", "push", "half_loss", "full_loss")}
+        for home, away, probability in score_matrix:
+            settlement = settle_asian_handicap(home - away, line)
+            for key, weight in settlement.items():
+                line_result[key] += probability * weight
+        # 让球胜率口径：赢半也算覆盖（三元恒和为 1）。
+        handicap_lines[str(line)] = {
+            "home_cover": round(line_result["full_win"] + line_result["half_win"], 4),
+            "push": round(line_result["push"], 4),
+            "away_cover": round(line_result["full_loss"] + line_result["half_loss"], 4),
+        }
+
+    # 半场近似：半场 xG 约为全场的 45%，独立泊松（明确标注估算口径）。
+    ht_lambda_scale = 0.45
+    ht_home_xg = home_xg * ht_lambda_scale
+    ht_away_xg = away_xg * ht_lambda_scale
+    ht_grid_total = sum(
+        _poisson(ht_home_xg, h) * _poisson(ht_away_xg, a)
+        for h in range(6)
+        for a in range(6)
+    )
+    ht_home_win = sum(
+        _poisson(ht_home_xg, h) * _poisson(ht_away_xg, a)
+        for h in range(6)
+        for a in range(6)
+        if h > a
+    ) / ht_grid_total
+    ht_draw = sum(
+        _poisson(ht_home_xg, h) * _poisson(ht_away_xg, a)
+        for h in range(6)
+        for a in range(6)
+        if h == a
+    ) / ht_grid_total
+    half_time_market = {
+        "home": round(ht_home_win, 4),
+        "draw": round(ht_draw, 4),
+        "away": round(max(0.0, 1.0 - ht_home_win - ht_draw), 4),
+        "method": "independent_poisson_45pct_xg_estimate",
+    }
+    markets_detail = {
+        "totals_lines": totals_lines,
+        "btts": {"yes": round(btts_yes, 4), "no": round(1.0 - btts_yes, 4)},
+        "handicap_lines": handicap_lines,
+        "half_time": half_time_market,
+        "score_matrix_top": [
+            {"score": f"{home}-{away}", "probability": round(probability, 4)}
+            for home, away, probability in top_scores
+        ],
+        "is_derived": True,
+    }
     return {
         "id": str(uuid.uuid4()),
         "fixture_id": fixture["id"],
@@ -231,6 +298,7 @@ def predict(fixture: dict, context: dict) -> dict:
             {"score": f"{home}-{away}", "probability": round(probability, 4)}
             for home, away, probability in top_scores
         ],
+        "markets_detail": markets_detail,
         "asian_handicap": {
             "line": handicap,
             "home_settlement": handicap_result,

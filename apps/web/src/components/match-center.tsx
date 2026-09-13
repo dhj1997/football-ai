@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 
 import { RecentFormCompare } from "@/components/recent-form-compare";
+import { MarketsDetailPanel } from "@/components/markets-detail-panel";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -516,6 +517,26 @@ function DecisionReport({
             recentForm={detail.context.recent_form}
           />
         </Card>
+
+        {detail.prediction?.baseline?.markets_detail ? (
+          <Card className="p-5" aria-labelledby="markets-detail-title">
+            <SectionTitle
+              className="mb-4"
+              eyebrow="02B / MARKETS"
+              title="进球与比分维度"
+              titleId="markets-detail-title"
+              meta="基线模型比分矩阵派生"
+            />
+            <MarketsDetailPanel
+              marketsDetail={detail.prediction.baseline.markets_detail}
+              currentLine={
+                detail.prediction.baseline.asian_handicap?.line != null
+                  ? String(detail.prediction.baseline.asian_handicap.line)
+                  : null
+              }
+            />
+          </Card>
+        ) : null}
 
         <Card
           className="p-5"
