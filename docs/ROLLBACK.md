@@ -24,8 +24,10 @@
 ## 3. 备份与恢复
 
 - 备份必须**验证可恢复**才算成功：`POST /api/admin/production/backup` 执行 SQLite backup API 备份 + 恢复到临时副本 + 行数指纹比对，返回 `status: verified`。
+- **MySQL（生产当前形态）**：在应用服务器上执行 `bash deploy/backup-verify.sh backup`——mysqldump（single-transaction）到 `/opt/football-ai/backups/`，恢复到临时库 `football_ai_restore_check`，逐表行数指纹比对（RESTORE_VERIFIED），验证后自动删除临时库。数据库凭据从 `/opt/football-ai/app/.env` 读取，不回显。
+- 已验证记录：2026-09-13，32/32 表行数一致，dump 文件 `/opt/football-ai/backups/db-20260913-190755.sql.gz`（27.7MB）。
+- 提示：运行中的系统在 dump 后会继续写入（job_runs/odds_snapshots 等），旧 dump 的指纹比对出现少量落后属正常漂移；严格验证用新 dump 立即比对。
 - 恢复测试记录时间、耗时、表行数指纹（`source_fingerprint` / `restore_fingerprint`）。
-- MySQL 部署时备份验证使用 staging 副本（迁移干跑同理，见下）。
 
 ## 4. Migration
 
