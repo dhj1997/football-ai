@@ -39,6 +39,7 @@ import {
 } from "@/lib/handicap";
 import { canCreatePrediction, deriveMatchReport } from "@/lib/match-report";
 import { OperationsPanel } from "@/components/operations-panel";
+import { RecentFormCompare } from "@/components/recent-form-compare";
 import { ModelConfigPanel } from "@/components/model-config-panel";
 import {
   Card,
@@ -874,63 +875,6 @@ function isRecentMatch(value: RecentMatch | string): value is RecentMatch {
   return typeof value !== "string";
 }
 
-function RecentFormColumn({
-  teamName,
-  matches,
-  pointsPerGame,
-}: {
-  teamName: string;
-  matches: Array<RecentMatch | string>;
-  pointsPerGame: number;
-}) {
-  const rows = matches.filter(isRecentMatch);
-  const summary = matches.find(
-    (match): match is string => typeof match === "string",
-  );
-  return (
-    <div className="min-w-0">
-      <div className="flex items-baseline justify-between gap-2">
-        <strong className="truncate text-sm font-semibold text-slate-100">
-          {teamName}
-        </strong>
-        <span className="shrink-0 font-mono text-xs tabular-nums text-slate-400">
-          {pointsPerGame.toFixed(2)} 分/场
-        </span>
-      </div>
-      {rows.length > 0 ? (
-        <ul className="mt-2 divide-y divide-slate-800/60">
-          {rows.slice(0, 10).map((match) => (
-            <li
-              key={`${match.date}-${match.home}-${match.away}`}
-              className="flex items-center gap-2 py-1.5 text-xs"
-            >
-              <time className="shrink-0 font-mono tabular-nums text-slate-500">
-                {match.date.slice(5)}
-              </time>
-              <span className="min-w-0 flex-1 truncate text-slate-300">
-                {match.home} <i className="not-italic text-slate-500">vs</i>{" "}
-                {match.away}
-              </span>
-              <b
-                className={`w-4 shrink-0 text-center font-bold ${recentResultToneClass[match.result.toLowerCase()]}`}
-              >
-                {match.result}
-              </b>
-              <ParsedScoreline score={match.score} />
-            </li>
-          ))}
-        </ul>
-      ) : summary ? (
-        <p className={`${mutedNoteClass} mt-2`}>
-          供应商只返回近况摘要：{summary}
-        </p>
-      ) : (
-        <p className={`${mutedNoteClass} mt-2`}>暂无可用的近 10 场比赛</p>
-      )}
-    </div>
-  );
-}
-
 function LineupColumn({
   teamName,
   formation,
@@ -1418,18 +1362,19 @@ export function EvidenceDetails({
             }
           />
           {hasEvidence ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <RecentFormColumn
-                teamName={fixture.home_team.name}
-                matches={homeForm}
-                pointsPerGame={context.recent_form.home_points_per_game ?? 0}
-              />
-              <RecentFormColumn
-                teamName={fixture.away_team.name}
-                matches={awayForm}
-                pointsPerGame={context.recent_form.away_points_per_game ?? 0}
-              />
-            </div>
+            <RecentFormCompare
+              homeTeam={{
+                name: fixture.home_team.name,
+                logo: fixture.home_team.logo ?? null,
+                side: "home",
+              }}
+              awayTeam={{
+                name: fixture.away_team.name,
+                logo: fixture.away_team.logo ?? null,
+                side: "away",
+              }}
+              recentForm={context.recent_form}
+            />
           ) : (
             <p className={mutedNoteClass}>请先同步这场比赛的赛前数据</p>
           )}

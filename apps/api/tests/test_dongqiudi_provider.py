@@ -270,7 +270,14 @@ def test_dongqiudi_analysis_populates_detail_evidence_without_overwriting_existi
     assert context["recent_form"]["home"][0] == {"result": "D"}
     assert context["recent_form"]["away"][0]["team_is_home"] is True
     assert context["recent_form"]["away_points_per_game"] == 3.0
-    assert context["head_to_head"][0] == {"date": "2019-04-18", "home": "那不勒斯", "away": "阿森纳", "score": "0 - 1"}
+    assert context["head_to_head"][0] == {
+        "date": "2019-04-18",
+        "home": "那不勒斯",
+        "away": "阿森纳",
+        "score": "0 - 1",
+        "competition": None,
+        "half_time": None,
+    }
     assert context["availability"]["home_missing"] == 1
     assert context["availability"]["away_missing"] == 1
     assert context["availability"]["players"][0]["name"] == "麦克托米奈"
@@ -327,7 +334,9 @@ def test_dongqiudi_recent_form_keeps_ten_rows_and_reads_h2h_fallback() -> None:
 
     updated = DongqiudiSyncService(object(), Repository())._apply_match_data(fixture, enriched, "initial")
 
-    assert updated["evidence"]["head_to_head"] == [{"date": "2024-01-01", "home": "主队", "away": "对手", "score": "2 - 1"}]
+    assert updated["evidence"]["head_to_head"] == [
+        {"date": "2024-01-01", "home": "主队", "away": "对手", "score": "2 - 1", "competition": None, "half_time": None}
+    ]
 
 
 def test_dongqiudi_sync_does_not_treat_other_sources_as_dongqiudi() -> None:

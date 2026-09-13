@@ -12,6 +12,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
+
+import { RecentFormCompare } from "@/components/recent-form-compare";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -500,51 +502,19 @@ function DecisionReport({
             titleId="form-evidence-title"
             meta="统一读取最近样本"
           />
-          <div className="grid gap-3 md:grid-cols-2">
-            {[
-              {
-                name: detail.fixture.home_team.name,
-                side: "主队",
-                ppg: detail.context.recent_form.home_points_per_game ?? 0,
-                matches: detail.context.recent_form.home,
-              },
-              {
-                name: detail.fixture.away_team.name,
-                side: "客队",
-                ppg: detail.context.recent_form.away_points_per_game ?? 0,
-                matches: detail.context.recent_form.away,
-              },
-            ].map((team) => (
-              <div key={team.side} className={innerPanelClass}>
-                <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                  <span className={labelClass}>{team.side}</span>
-                  <strong className="text-sm font-semibold text-white">
-                    {team.name}
-                  </strong>
-                  <small className="text-[11px] text-slate-500">
-                    {team.matches.length} 场样本
-                  </small>
-                </header>
-                <div className="mt-3">
-                  <b className="font-mono text-2xl font-black tabular-nums text-amber-400">
-                    {team.ppg.toFixed(2)}
-                  </b>
-                  <span className="ml-2 text-xs text-slate-400">场均积分</span>
-                  <div
-                    className="mt-2 h-1.5 rounded-full bg-slate-800"
-                    aria-hidden="true"
-                  >
-                    <div
-                      className="h-1.5 rounded-full bg-emerald-500"
-                      style={{
-                        width: `${Math.min(100, (team.ppg / 3) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <RecentFormCompare
+            homeTeam={{
+              name: detail.fixture.home_team.name,
+              logo: detail.fixture.home_team.logo ?? null,
+              side: "home",
+            }}
+            awayTeam={{
+              name: detail.fixture.away_team.name,
+              logo: detail.fixture.away_team.logo ?? null,
+              side: "away",
+            }}
+            recentForm={detail.context.recent_form}
+          />
         </Card>
 
         <Card

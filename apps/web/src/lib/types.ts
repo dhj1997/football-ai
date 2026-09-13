@@ -91,6 +91,8 @@ export interface RecentMatch {
   score: string;
   result: "W" | "D" | "L";
   team_is_home?: boolean;
+  competition?: string | null;
+  half_time?: string | null;
 }
 
 export interface AvailabilityPlayer {

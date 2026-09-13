@@ -471,6 +471,8 @@ def _dongqiudi_recent_matches(rows: list[dict[str, Any]], tracked_side: str) -> 
                 "score": score,
                 "result": result,
                 "team_is_home": team_is_home,
+                "competition": str(row.get("competition") or "").strip() or None,
+                "half_time": _normalize_score(row.get("ht_score")),
             }
         )
     return matches
@@ -490,6 +492,8 @@ def _dongqiudi_head_to_head(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
                 "home": to_chinese_team_name(row.get("team_A_name") or "未知球队"),
                 "away": to_chinese_team_name(row.get("team_B_name") or "未知球队"),
                 "score": score,
+                "competition": str(row.get("competition") or "").strip() or None,
+                "half_time": _normalize_score(row.get("ht_score")),
             }
         )
     return matches
