@@ -1,0 +1,11 @@
+# P10 Acceptance
+- [ ] Every model has immutable version/provenance.
+- [ ] Same dataset+version reproduces same result within documented stochastic tolerance.
+- [ ] Ensemble weights never use test labels.
+- [ ] Calibration is validation-only.
+- [ ] LLM schema failure is explicit.
+- [ ] Champion/Challenger promotion requires evaluation and leakage gates.
+- [ ] P3/P6/P7 historical results remain readable.
+- [ ] No model silently falls back to another model.
+- [ ] API exposes model/version/provenance.
+- [ ] Backend/frontend tests and builds pass.
