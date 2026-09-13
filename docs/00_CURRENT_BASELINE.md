@@ -7,6 +7,8 @@ P9 已建立 Competition Registry（六赛事 capability matrix）、canonical f
 
 P10 已建立 Model Registry（版本化产物 + draft/candidate/champion/retired 生命周期 + 四门禁晋升）、统一模型接口（Baseline/Elo/Poisson/Dixon-Coles/LLM/Ensemble/CalibratedEnsemble，显式 readiness/failure）、train/validation/test 协议执行器与 `GET /api/models`。
 
+P11-P17 已建立：市场智能层（P11 赔率时间线/去水共识/CLV）、可复现回测引擎（P12 六模式 + manifest）、有据解释图（P13）、自动研究引擎（P14 幂等 ResearchRun）、生产门禁（P15 环境契约/版本化迁移/备份验证/CI）、可观测性（P16 关联ID/脱敏日志/SLO/告警）、平台整合（P17 扩展测试套件 + season 一等对象 + ADR-013/014 + 发布清单）。
+
 ## 历史数据基线
 - CSL：100 fixtures
 - EPL：79 fixtures

@@ -1636,6 +1636,32 @@ def admin_observability() -> dict:
     }
 
 
+@app.get("/api/platform")
+def platform() -> dict:
+    """P17 platform map: domain boundaries, surfaces and season binding."""
+
+    from .platform_kit import (
+        DOMAIN_MAP,
+        PLATFORM_VERSION,
+        PRODUCT_SURFACES,
+        audit_season_binding,
+    )
+
+    snapshots = repository.historical_snapshots(limit=200) if callable(getattr(repository, "historical_snapshots", None)) else []
+    return {
+        "platform_version": PLATFORM_VERSION,
+        "domain_map": list(DOMAIN_MAP),
+        "surfaces": list(PRODUCT_SURFACES),
+        "season_binding_audit": audit_season_binding(snapshots),
+        "governance": {
+            "adrs": "docs/adr/",
+            "point_in_time": "prediction_timestamp < kickoff; captured_at <= prediction_timestamp",
+            "extension_rule": "new competition = registry definition + provider + platform kit checks; new semantics require an ADR",
+            "release_checklist": "docs/RELEASE_CHECKLIST.md",
+        },
+    }
+
+
 @app.get("/api/data-quality")
 def historical_data_quality(
     fixture_id: str | None = None,
