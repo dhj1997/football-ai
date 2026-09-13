@@ -1,4 +1,8 @@
-# 足球赛前分析台
+<p align="center">
+  <img src="brand/dist/lockup-horizontal.png" alt="绿茵罗盘 Pitch Compass" width="520">
+</p>
+
+# 绿茵罗盘 Pitch Compass
 
 面向中超、西甲和英超的持续赛前分析与模拟资金系统。系统自动同步赛程、积分榜和赛前证据，并行使用 DeepSeek 与 GPT-5.6 Sol 生成两套可审计赛果预测；赔率价值、`no_bet` 原因和模拟仓位由后端确定性规则统一计算。
 
