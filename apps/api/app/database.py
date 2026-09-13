@@ -575,6 +575,26 @@ class PredictionRepository:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS model_registry (
+                        model_key VARCHAR(64) NOT NULL,
+                        model_version VARCHAR(128) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        competition_scope VARCHAR(64) NULL,
+                        feature_version VARCHAR(128) NULL,
+                        dataset_fingerprint VARCHAR(255) NULL,
+                        training_cutoff VARCHAR(64) NULL,
+                        calibration_version VARCHAR(128) NULL,
+                        artifact_hash VARCHAR(64) NOT NULL,
+                        created_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL,
+                        PRIMARY KEY (model_key, model_version)
+                    )
+                    """
+                )
+            )
             if not self.is_sqlite:
                 for table in (
                     "predictions",
@@ -604,6 +624,7 @@ class PredictionRepository:
                     "job_runs",
                     "competition_registry",
                     "fixture_conflicts",
+                    "model_registry",
                     "simulation_competitions",
                     "simulation_accounts",
                 ):
@@ -1847,6 +1868,56 @@ class PredictionRepository:
                 parameters,
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
+
+    def save_model_registry(self, item: dict[str, Any]) -> None:
+        """Upsert one model artifact; its artifact hash is immutable."""
+
+        required = ("model_key", "model_version", "artifact_hash")
+        if any(not item.get(key) for key in required):
+            raise ValueError("Model registry identity fields are required")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT artifact_hash FROM model_registry WHERE model_key = :model_key AND model_version = :model_version"),
+                {"model_key": item["model_key"], "model_version": item["model_version"]},
+            ).first()
+            if existing and existing[0] != item["artifact_hash"]:
+                raise ValueError(f"Model {item['model_key']}:{item['model_version']} is immutable")
+            values = {
+                **item,
+                "payload": json.dumps(item, ensure_ascii=False),
+            }
+            if existing:
+                connection.execute(
+                    text("UPDATE model_registry SET status = :status, payload = :payload WHERE model_key = :model_key AND model_version = :model_version"),
+                    values,
+                )
+            else:
+                connection.execute(
+                    text(
+                        "INSERT INTO model_registry (model_key, model_version, status, competition_scope, feature_version, "
+                        "dataset_fingerprint, training_cutoff, calibration_version, artifact_hash, created_at, payload) "
+                        "VALUES (:model_key, :model_version, :status, :competition_scope, :feature_version, "
+                        ":dataset_fingerprint, :training_cutoff, :calibration_version, :artifact_hash, :created_at, :payload)"
+                    ),
+                    values,
+                )
+
+    def model_registry(self, model_key: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+        """List model registry records, newest version first."""
+
+        clauses = []
+        parameters: dict[str, Any] = {}
+        for column, value in (("model_key", model_key), ("status", status)):
+            if value:
+                clauses.append(f"{column} = :{column}")
+                parameters[column] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT payload FROM model_registry" f"{where} ORDER BY model_key, created_at DESC"),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
 
     def upsert_fixture(self, fixture: dict[str, Any], synced_at: str | None = None) -> None:
         """Upsert one fixture without replacing another historical date window."""

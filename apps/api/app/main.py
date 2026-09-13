@@ -43,6 +43,13 @@ from .espn_evidence_provider import EspnEvidenceProvider
 from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
 from .market_decision import apply_market_decision
+from .model_platform import (
+    BASELINE_VERSION,
+    DIXON_COLES_VERSION,
+    ELO_PRIOR_VERSION,
+    POISSON_V2_VERSION,
+)
+from .model_registry import ModelRegistry, ModelRegistryError
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
@@ -239,6 +246,7 @@ bankroll_service = DualBankrollService(
 settlement_service = SettlementService(repository, settings.simulation_competition_id)
 p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
+model_registry_service = ModelRegistry(repository)
 recent_form_service = RecentFormService(repository)
 model_evaluation_service = ModelEvaluationService(repository)
 historical_accumulation_service = HistoricalOOSAccumulationService(
@@ -690,6 +698,51 @@ def data_sources() -> dict:
     """Return the configured P5 providers and their declared capabilities."""
 
     return public_payload(public_registry(p5_provider_registry))
+
+
+@app.get("/api/models")
+def models() -> dict:
+    """Return the P10 model families and the versioned registry records."""
+
+    families = [
+        {"model_key": "baseline", "family": "Baseline", "model_version": BASELINE_VERSION},
+        {"model_key": "elo", "family": "Elo", "model_version": ELO_PRIOR_VERSION},
+        {"model_key": "poisson", "family": "Poisson", "model_version": POISSON_V2_VERSION},
+        {"model_key": "dixon_coles", "family": "Dixon-Coles", "model_version": DIXON_COLES_VERSION},
+        {"model_key": "deepseek", "family": "LLM", "model_version": f"deepseek:{deepseek_provider.model}"},
+        {"model_key": "chatgpt", "family": "LLM", "model_version": f"chatgpt:{chatgpt_provider.model}"},
+        {"model_key": "ensemble", "family": "Ensemble", "model_version": None},
+        {"model_key": "calibrated_ensemble", "family": "Calibrated Ensemble", "model_version": None},
+    ]
+    records = model_registry_service.list()
+    return {
+        "families": families,
+        "records": [record.as_dict() for record in records],
+        "record_count": len(records),
+        "champions": {
+            record.model_key: record.as_dict()
+            for record in {item.model_key: item for item in records if item.status in {"champion", "active"}}.values()
+        }
+        if records
+        else {},
+    }
+
+
+@app.post("/api/admin/models/{model_key}/{model_version}/status", dependencies=[Depends(require_admin)])
+def update_model_status(model_key: str, model_version: str, payload: dict) -> dict:
+    """Transition a registered model through its lifecycle with gate evidence."""
+
+    target_status = str(payload.get("status") or "")
+    try:
+        record = model_registry_service.transition(
+            model_key,
+            model_version,
+            target_status,
+            promotion_evidence=payload.get("promotion_evidence"),
+        )
+    except ModelRegistryError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"updated": record.as_dict()}
 
 
 @app.get("/api/competitions")
