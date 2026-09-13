@@ -411,6 +411,17 @@ def run_model_protocol(
         probability_reader=lambda row: _ensemble_row_probabilities(row, weights),
     )
     temperature = temperature_result.get("temperature")
+    counts = {key: 0 for key in PROBABILITY_KEYS}
+    for row in train:
+        outcome = row.get("actual_outcome")
+        if outcome in counts:
+            counts[outcome] += 1
+    naive_total = sum(counts.values())
+    naive_probabilities = (
+        {key: round(value / naive_total, 6) for key, value in counts.items()}
+        if naive_total
+        else {key: round(1 / 3, 6) for key in PROBABILITY_KEYS}
+    )
     metrics: dict[str, Any] = {}
     for model_key in model_keys:
         metrics[model_key] = evaluate_probabilities(
@@ -418,7 +429,11 @@ def run_model_protocol(
             lambda row, key=model_key: normalize_probabilities((row.get("models") or {}).get(key)),
         )
     ensemble_metrics = evaluate_probabilities(test, lambda row: _ensemble_row_probabilities(row, weights))
+    naive_metrics = evaluate_probabilities(test, lambda row: naive_probabilities)
+    ensemble_brier = ensemble_metrics.get("brier")
+    naive_brier = naive_metrics.get("brier")
     metrics["ensemble"] = ensemble_metrics
+    metrics["naive_baseline"] = naive_metrics
     if temperature:
         metrics["calibrated_ensemble"] = evaluate_probabilities(
             test,
@@ -439,6 +454,15 @@ def run_model_protocol(
         "calibration_version": CALIBRATION_VERSION,
         "weights": weights,
         "temperature": temperature,
+        "improvement": {
+            "naive_baseline": {
+                "brier_improvement": (
+                    round(naive_brier - ensemble_brier, 6)
+                    if ensemble_brier is not None and naive_brier is not None
+                    else None
+                )
+            }
+        },
         "temperature_fit": {
             "sample_size": temperature_result.get("sample_size"),
             "status": temperature_result.get("status"),

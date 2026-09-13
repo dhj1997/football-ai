@@ -1,6 +1,8 @@
 """Database-backed recurring jobs for sync, prediction, and settlement."""
 
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable
 
@@ -34,6 +36,8 @@ class AutomationRunner:
         settlement_service: Any,
         historical_accumulation_service: Any | None = None,
         dongqiudi_sync_service: Any | None = None,
+        historical_data_service: Any | None = None,
+        model_registry_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -45,6 +49,8 @@ class AutomationRunner:
         self.settlement_service = settlement_service
         self.historical_accumulation_service = historical_accumulation_service
         self.dongqiudi_sync_service = dongqiudi_sync_service
+        self.historical_data_service = historical_data_service
+        self.model_registry_service = model_registry_service
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._jobs: dict[str, tuple[int, Callable[[], Awaitable[dict[str, Any]]]]] = {
@@ -59,6 +65,16 @@ class AutomationRunner:
             self._jobs["historical_accumulation"] = (
                 max(1, int(getattr(settings, "automation_historical_accumulation_interval_minutes", 1440))),
                 self._accumulate_historical,
+            )
+        if historical_data_service is not None:
+            self._jobs["historical_backfill"] = (
+                max(10, int(getattr(settings, "automation_historical_backfill_interval_minutes", 60))),
+                self._backfill_historical_season,
+            )
+        if model_registry_service is not None:
+            self._jobs["ensemble_learning"] = (
+                max(60, int(getattr(settings, "automation_ensemble_learning_interval_minutes", 10080))),
+                self._learn_ensemble_weights,
             )
         if dongqiudi_sync_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
             self._jobs["dongqiudi_schedule"] = (
@@ -284,6 +300,122 @@ class AutomationRunner:
     async def _sync_standings(self) -> dict[str, Any]:
         result = await self.league_sync.force_refresh()
         return {**result, "item_count": int(result.get("item_count", 0))}
+
+    def _historical_season_targets(self) -> list[tuple[str, int, int]]:
+        """List (league, season, existing) pairs below the per-season cap."""
+
+        from .competition_registry import season_for
+
+        seasons_per_league = max(1, int(getattr(self.settings, "historical_seasons_per_league", 3)))
+        cap = max(1, int(getattr(self.settings, "historical_max_per_league_season", 100)))
+        today = datetime.now(UTC).date()
+        targets: list[tuple[str, int, int]] = []
+        for code in ("csl", "epl", "laliga"):
+            current = season_for(code, today)
+            for step in range(seasons_per_league):
+                season = current - step
+                targets.append((code, season, self.historical_data_service.season_existing(code, season)))
+        return [(code, season, existing) for code, season, existing in targets if existing < cap]
+
+    async def _backfill_historical_season(self) -> dict[str, Any]:
+        """Fill the least-stocked league season (one pair per run; rate-limit friendly)."""
+
+        provider_descriptor = self.historical_data_service.registry.get("api-football")
+        if provider_descriptor is None or not provider_descriptor.configured:
+            return {"status": "unavailable", "reason": "api-football 未配置", "item_count": 0}
+        targets = self._historical_season_targets()
+        if not targets:
+            return {"status": "complete", "reason": "所有联赛赛季均达到上限", "item_count": 0}
+        code, season, existing = min(targets, key=lambda item: item[2])
+        cap = max(1, int(getattr(self.settings, "historical_max_per_league_season", 100)))
+        result = await self.historical_data_service.sync_league_history("api-football", code, season, limit=cap)
+        return {
+            "status": result.get("status", "completed"),
+            "league": code,
+            "season": season,
+            "existing_before": existing,
+            "snapshots": result.get("historical_snapshots"),
+            "fixtures_result": {
+                key: result.get(key)
+                for key in ("fixtures", "results", "odds")
+                if isinstance(result.get(key), dict)
+            },
+            "coverage": result.get("coverage"),
+            "item_count": int((result.get("fixtures") or {}).get("records_inserted") or 0),
+        }
+
+    async def _learn_ensemble_weights(self) -> dict[str, Any]:
+        """Learn ensemble weights via the P10 protocol and register the artifact.
+
+        Sample gates apply: below the P6 policy threshold the artifact is
+        registered as draft (never promoted), and no metrics are invented.
+        """
+
+        from .model_platform import run_model_protocol
+        from .model_registry import ModelRecord, artifact_hash, dataset_fingerprint
+        from .prediction_intelligence import build_backtest_rows
+
+        settlements = self.repository.fixture_settlements(
+            competition_id=getattr(self.settings, "simulation_competition_id", None)
+        )
+        rows = build_backtest_rows(settlements)
+        rows = [
+            dict(row, models=dict(row.get("base_predictions") or {}))
+            for row in rows
+            if row.get("base_predictions") and row.get("actual_outcome") in {"home", "draw", "away"}
+        ]
+        model_keys = tuple(sorted({key for row in rows for key in row["models"]}))
+        if not rows or len(model_keys) < 2:
+            return {"status": "insufficient_sample", "reason": "少于两个模型有可评估样本", "item_count": 0}
+        protocol = run_model_protocol(rows, model_keys)
+        weights = protocol.get("weights") or {}
+        fingerprint = protocol.get("dataset_fingerprint") or dataset_fingerprint(rows)
+        version = f"ensemble-learned-{hashlib.sha256(json.dumps(weights, sort_keys=True).encode()).hexdigest()[:12]}"
+        metrics = protocol.get("metrics") or {}
+        test_samples = int((metrics.get("ensemble") or {}).get("samples") or 0)
+        improvement = ((protocol.get("improvement") or {}).get("naive_baseline") or {}).get("brier_improvement")
+        promoted = (
+            protocol.get("status") == "ok"
+            and test_samples >= 30
+            and improvement is not None
+            and improvement > 0
+        )
+        record = ModelRecord(
+            model_key="ensemble",
+            model_version=version,
+            artifact_hash=artifact_hash({"weights": weights, "dataset": fingerprint}),
+            # 本次运行即评估记录：注册为 candidate，凭门禁证据晋升。
+            status="candidate",
+            competition_scope="all",
+            feature_version=protocol.get("feature_version"),
+            dataset_fingerprint=fingerprint,
+            training_cutoff=max((str(row.get("prediction_created_at") or "") for row in rows), default=None),
+            calibration_version=protocol.get("calibration_version"),
+            payload={
+                "weights": weights,
+                "metrics": metrics,
+                "splits": protocol.get("splits"),
+                "improvement": protocol.get("improvement"),
+                "temperature": protocol.get("temperature"),
+                "sample_status": "adequate" if promoted else "low_confidence",
+            },
+        )
+        self.model_registry_service.register(record)
+        if promoted:
+            self.model_registry_service.transition(
+                "ensemble",
+                version,
+                "champion",
+                promotion_evidence={"promoted": True},
+            )
+        return {
+            "status": "promoted" if promoted else "registered_draft",
+            "version": version,
+            "weights": weights,
+            "test_samples": test_samples,
+            "improvement": improvement,
+            "item_count": 1,
+        }
 
     async def _notify_predictions(self) -> dict[str, Any]:
         """Push the AI prediction summary one hour before kickoff."""

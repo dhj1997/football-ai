@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import uuid
 from datetime import UTC, datetime
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
 
 MODEL_VERSION = "poisson-pure-v0.2"
@@ -13,17 +13,42 @@ MAX_GOALS = 8
 # Dixon-Coles low-score correlation. Negative rho shifts probability mass
 # from 1-0/0-1 into 0-0/1-1 (independent Poisson underestimates draws).
 POISSON_DC_RHO = -0.10
+# 每联赛 xG 基线系数：历史赛果拟合值优先（model_fitting），无拟合时用内置常量。
+DEFAULT_HOME_XG_BASELINE = 1.38
+DEFAULT_AWAY_XG_BASELINE = 1.08
+
+_FITTED_PARAMS_PROVIDER: Callable[[], dict | None] | None = None
 
 
-def _dixon_coles_tau(home_goals: int, away_goals: int, home_xg: float, away_xg: float) -> float:
+def set_fitted_params_provider(provider: Callable[[], dict | None] | None) -> None:
+    """Inject the fitted-parameter source (model registry) at startup."""
+
+    global _FITTED_PARAMS_PROVIDER
+    _FITTED_PARAMS_PROVIDER = provider
+
+
+def _league_fitted_params(league_key: Any) -> dict | None:
+    if _FITTED_PARAMS_PROVIDER is None:
+        return None
+    try:
+        data = _FITTED_PARAMS_PROVIDER() or {}
+        entry = (data.get("leagues") or {}).get(str(league_key or "").casefold())
+        if not entry:
+            return None
+        return {**entry, "fitted_version": data.get("fitted_version")}
+    except Exception:
+        return None
+
+
+def _dixon_coles_tau(home_goals: int, away_goals: int, home_xg: float, away_xg: float, rho: float = POISSON_DC_RHO) -> float:
     if home_goals == 0 and away_goals == 0:
-        return 1.0 - home_xg * away_xg * POISSON_DC_RHO
+        return 1.0 - home_xg * away_xg * rho
     if home_goals == 0 and away_goals == 1:
-        return 1.0 + home_xg * POISSON_DC_RHO
+        return 1.0 + home_xg * rho
     if home_goals == 1 and away_goals == 0:
-        return 1.0 + away_xg * POISSON_DC_RHO
+        return 1.0 + away_xg * rho
     if home_goals == 1 and away_goals == 1:
-        return 1.0 - POISSON_DC_RHO
+        return 1.0 - rho
     return 1.0
 
 
@@ -122,8 +147,12 @@ def predict(fixture: dict, context: dict) -> dict:
     impact = context.get("player_impact") or {}
     home_retention = _attack_retention(impact.get("home"), lineup.get("home_strength"))
     away_retention = _attack_retention(impact.get("away"), lineup.get("away_strength"))
-    home_xg = min(2.8, max(0.45, 1.38 * home_form * home_retention + 0.22))
-    away_xg = min(2.5, max(0.35, 1.08 * away_form * away_retention + 0.12))
+    fitted = _league_fitted_params(fixture.get("league_key"))
+    baseline_home = float(fitted.get("home_xg")) if fitted and fitted.get("home_xg") else DEFAULT_HOME_XG_BASELINE
+    baseline_away = float(fitted.get("away_xg")) if fitted and fitted.get("away_xg") else DEFAULT_AWAY_XG_BASELINE
+    rho = max(-0.2, min(0.0, float(fitted.get("rho")))) if fitted and fitted.get("rho") is not None else POISSON_DC_RHO
+    home_xg = min(2.8, max(0.45, baseline_home * home_form * home_retention + 0.22))
+    away_xg = min(2.5, max(0.35, baseline_away * away_form * away_retention + 0.12))
     # Elo 先验：历史交锋演化出的实力差微调预期进球（数据缺失时不生效）。
     elo = context.get("elo") or {}
     home_elo = elo.get(str((fixture.get("home_team") or {}).get("name") or ""))
@@ -146,9 +175,9 @@ def predict(fixture: dict, context: dict) -> dict:
 
     # Dixon-Coles low-score correction: independent Poisson underestimates
     # 0-0/1-1 and overstates 1-0/0-1. Negative rho moves mass accordingly.
-    matrix_total = sum(probability * max(0.0, _dixon_coles_tau(home, away, home_xg, away_xg)) for home, away, probability in score_matrix)
+    matrix_total = sum(probability * max(0.0, _dixon_coles_tau(home, away, home_xg, away_xg, rho)) for home, away, probability in score_matrix)
     score_matrix = [
-        (home, away, probability * max(0.0, _dixon_coles_tau(home, away, home_xg, away_xg)) / matrix_total)
+        (home, away, probability * max(0.0, _dixon_coles_tau(home, away, home_xg, away_xg, rho)) / matrix_total)
         for home, away, probability in score_matrix
     ]
 
@@ -180,7 +209,7 @@ def predict(fixture: dict, context: dict) -> dict:
         "fixture_id": fixture["id"],
         "created_at": created_at,
         "phase": "confirmed_lineup" if lineup["confirmed"] else "preliminary",
-        "model_version": MODEL_VERSION,
+        "model_version": f"{MODEL_VERSION}+{fitted['fitted_version']}" if fitted else MODEL_VERSION,
         "probabilities": {
             "home": round(forecast_probabilities[0], 4),
             "draw": round(forecast_probabilities[1], 4),

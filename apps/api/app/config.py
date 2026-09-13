@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     automation_analysis_interval_minutes: int = 5
     automation_settlement_interval_minutes: int = 15
     automation_historical_accumulation_interval_minutes: int = 1440
+    # 模型质量三件套（P17 治理）：多赛季历史回填 + 周度集成权重学习。
+    historical_seasons_per_league: int = 3
+    historical_max_per_league_season: int = 100
+    historical_max_total: int = 2400
+    automation_historical_backfill_interval_minutes: int = 60
+    automation_ensemble_learning_interval_minutes: int = 10080
     automation_failure_backoff_minutes: int = 15
     prediction_lead_hours: int = 24
     evidence_refresh_minutes: int = 180

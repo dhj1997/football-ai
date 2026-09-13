@@ -406,6 +406,17 @@ class HistoricalLeagueDataService:
             "within_limits": all(value <= self.max_per_league for value in counts.values()) and sum(counts.values()) <= self.max_total,
         }
 
+    def season_existing(self, code: str, season: Any) -> int:
+        """Count canonical fixtures already stored for one league season.
+
+        多赛季扩充后，上限按（联赛, 赛季）计算而不是按联赛累计。
+        """
+
+        reader = getattr(self.repository, "fixture_identities", None)
+        rows = reader(code, 10000) if callable(reader) else []
+        identities = {str(row.get("canonical_fixture_id")) for row in rows if row.get("canonical_fixture_id") and str(row.get("season") or "") == str(season)}
+        return len(identities)
+
     def _start_run(self, provider: str, league: str | None, entity_type: str, config: Mapping[str, Any]) -> dict[str, Any]:
         run = {
             "run_id": f"sync:{uuid.uuid4()}",
@@ -631,7 +642,11 @@ class HistoricalLeagueDataService:
         end_date = end_date or until
         requested = min(int(limit or self.max_per_league), self.max_per_league)
         coverage = self.coverage()
-        remaining = min(requested, max(0, self.max_per_league - coverage["leagues"].get(code, 0)), max(0, self.max_total - coverage["total"]))
+        remaining = min(
+            requested,
+            max(0, self.max_per_league - self.season_existing(code, season)),
+            max(0, self.max_total - coverage["total"]),
+        )
         run = self._start_run(provider_name, code, "fixture", {"season": season, "start_date": start_date, "end_date": end_date, "limit": requested, "remaining": remaining})
         if descriptor is None or not descriptor.capabilities.supports_fixtures:
             return self._finish_run(run, status="unavailable", error_category="permanent_error", errors=["fixture provider unavailable"], records_rejected=0)

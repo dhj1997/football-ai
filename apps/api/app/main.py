@@ -61,6 +61,8 @@ from .model_platform import (
     ELO_PRIOR_VERSION,
     POISSON_V2_VERSION,
 )
+from .model_fitting import fit_from_repository, fitted_record, load_fitted_params
+from .prediction import set_fitted_params_provider
 from .model_registry import ModelRegistry, ModelRegistryError
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
@@ -269,6 +271,7 @@ settlement_service = SettlementService(repository, settings.simulation_competiti
 p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
 model_registry_service = ModelRegistry(repository)
+set_fitted_params_provider(lambda: load_fitted_params(repository))
 recent_form_service = RecentFormService(repository)
 market_intelligence_service = MarketIntelligenceService(repository)
 model_evaluation_service = ModelEvaluationService(repository)
@@ -314,6 +317,8 @@ automation_runner = AutomationRunner(
     settlement_service,
     historical_accumulation_service,
     dongqiudi_sync,
+    historical_data_service=historical_data_service,
+    model_registry_service=model_registry_service,
 )
 runtime_config_updated_at: str | None = None
 
@@ -1408,12 +1413,19 @@ def fixture_ensemble(fixture_id: str) -> dict:
     if baseline:
         base_predictions["poisson"] = baseline
     rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    champion = model_registry_service.champion("ensemble")
+    learned_weights = (champion.payload or {}).get("weights") if champion else None
     ensemble = weighted_ensemble(
         base_predictions,
+        weights=learned_weights,
         profiles=build_performance_profiles(rows),
         league_key=(predictions[0].get("league_key") or "") if predictions else None,
     )
-    return public_payload({"fixture_id": fixture_id, "ensemble": ensemble})
+    return public_payload({
+        "fixture_id": fixture_id,
+        "ensemble": ensemble,
+        "weights_source": "model_registry" if learned_weights else "defaults",
+    })
 
 
 @app.get("/api/ensemble")
@@ -1571,6 +1583,24 @@ def research_run(run_id: str) -> dict:
     if item is None:
         raise HTTPException(status_code=404, detail="Research run was not found")
     return serialize_public({"item": item, "is_simulated": False})
+
+
+@app.post("/api/admin/model-fitting/run", dependencies=[Depends(require_admin)])
+def run_model_fitting(min_matches: int = 30) -> dict:
+    """Fit Dixon-Coles rho and league xG baselines; register the artifact."""
+
+    fitted = fit_from_repository(repository, min_matches=min_matches)
+    if not fitted.get("fitted_version"):
+        raise HTTPException(status_code=400, detail="历史样本不足，无法拟合")
+    repository.save_model_registry(fitted_record(fitted))
+    return fitted
+
+
+@app.get("/api/admin/model-fitting/active", dependencies=[Depends(require_admin)])
+def active_fitted_params() -> dict:
+    """Return the fitted parameters currently injected into predictions."""
+
+    return {"active": load_fitted_params(repository)}
 
 
 @app.get("/api/production/readiness", dependencies=[Depends(require_admin)])
