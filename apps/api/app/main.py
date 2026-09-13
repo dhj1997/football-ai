@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from .automation import AutomationRunner
+from .backtest_engine import run_backtest_engine
 from .config import Settings, get_settings
 from .bankroll import BankrollService, DualBankrollService
 from .chatgpt_provider import ChatGptProvider
@@ -1413,6 +1414,56 @@ def historical_backtest_run(run_id: str) -> dict:
     if item is None:
         raise HTTPException(status_code=404, detail="Backtest run was not found")
     return serialize_public({"item": item, "is_simulated": True})
+
+
+@app.post("/api/admin/backtest/runs", dependencies=[Depends(require_admin)])
+def run_advanced_backtest(payload: dict) -> dict:
+    """Run one reproducible P12 backtest and persist its immutable manifest."""
+
+    settlements = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    try:
+        result = run_backtest_engine(
+            settlements,
+            mode=str(payload.get("mode") or "rolling"),
+            start=payload.get("start"),
+            end=payload.get("end"),
+            initial_train_days=int(payload.get("initial_train_days") or 180),
+            train_days=int(payload.get("train_days") or 180),
+            test_days=int(payload.get("test_days") or 30),
+            step_days=int(payload.get("step_days") or 30),
+            seed=int(payload.get("seed") or 20260913),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    result.pop("_test_probabilities", None)
+    manifest = result.get("manifest") or {}
+    if not manifest:
+        return {"run_id": None, "status": result.get("status"), "reason": result.get("reason"), "result": result}
+    run_id = f"backtest:{str(manifest['manifest_fingerprint']).removeprefix('manifest:')}"
+    existing = next(
+        (row for row in repository.backtest_runs(limit=200) if row["run_id"] == run_id),
+        None,
+    )
+    if existing:
+        return {"run_id": run_id, "reused": True, "run": existing}
+    now = datetime.now(UTC).replace(microsecond=0).isoformat()
+    run = {
+        "run_id": run_id,
+        "name": f"p12-{manifest['mode']}",
+        "started_at": now,
+        "finished_at": now,
+        "dataset_version": manifest.get("dataset_fingerprint"),
+        "run_config": manifest.get("params") or {},
+        "code_version": manifest.get("engine_version"),
+        "model_version": manifest.get("model_version"),
+        "feature_version": manifest.get("feature_version"),
+        "ensemble_version": manifest.get("ensemble_version"),
+        "calibration_version": manifest.get("calibration_version"),
+        "status": result.get("status") or "completed",
+        "payload": result,
+    }
+    repository.save_backtest_run(run)
+    return {"run_id": run_id, "reused": False, "run": run}
 
 
 @app.get("/api/historical-snapshots")
