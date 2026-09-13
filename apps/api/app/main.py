@@ -1065,6 +1065,12 @@ async def fixture_detail(fixture_id: str) -> dict:
     await player_name_service.enrich(context, resolve_missing=False)
     await player_value_service.enrich(context, str(fixture.get("league_key") or ""))
     apply_player_impact(context)
+    try:
+        from .team_stats import attach_team_stats
+
+        attach_team_stats(repository, fixture, context, prediction_timestamp=fixture.get("kickoff"))
+    except Exception:
+        pass
     for key, item in list(predictions.items()):
         if item and not item.get("decision"):
             # 决策在预测生成时已持久化并随版本冻结；只有缺失决策快照的
