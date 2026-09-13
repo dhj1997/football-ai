@@ -10,11 +10,17 @@ export interface SectionHeaderProps extends Omit<HTMLAttributes<HTMLElement>, "t
 }
 
 export function SectionHeader({ eyebrow, title, meta, level = 2, titleId, className, ...props }: SectionHeaderProps) {
-  const heading = level === 3 ? <h3 id={titleId}>{title}</h3> : <h2 id={titleId}>{title}</h2>;
+  const headingClass = "mt-0.5 text-base font-bold text-white";
+  const heading = level === 3
+    ? <h3 id={titleId} className={headingClass}>{title}</h3>
+    : <h2 id={titleId} className={headingClass}>{title}</h2>;
   return (
-    <div className={cx("ui-section-header", className)} {...props}>
-      <div><span>{eyebrow}</span>{heading}</div>
-      {meta ? <small>{meta}</small> : null}
+    <div className={cx("flex flex-wrap items-end justify-between gap-x-4 gap-y-1", className)} {...props}>
+      <div>
+        <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-blue-400">{eyebrow}</span>
+        {heading}
+      </div>
+      {meta ? <small className="shrink-0 font-mono text-[11px] text-slate-500">{meta}</small> : null}
     </div>
   );
 }

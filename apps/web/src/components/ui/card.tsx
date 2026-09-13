@@ -9,5 +9,5 @@ export type CardProps<T extends ElementType = "section"> = {
 
 export function Card<T extends ElementType = "section">({ as, children, className, ...props }: CardProps<T>) {
   const Component = as ?? "section";
-  return <Component className={cx("ui-card", className)} {...props}>{children}</Component>;
+  return <Component className={cx("rounded-2xl border border-slate-800 bg-pitch-900 shadow-xl", className)} {...props}>{children}</Component>;
 }

@@ -20,7 +20,24 @@ export interface TabsProps<T extends string = string> {
   itemClassName?: string;
   activeItemClassName?: string;
   orientation?: "horizontal" | "vertical";
+  /** pill: 深色胶囊组（次级筛选）；solid: 蓝色实心胶囊（主分类切换） */
+  variant?: "pill" | "solid";
 }
+
+const containerByVariant = {
+  pill: "inline-flex flex-wrap items-center gap-1 bg-pitch-950 p-1 rounded-xl border border-slate-800",
+  solid: "flex flex-wrap items-center gap-2",
+} as const;
+
+const itemByVariant = {
+  pill: "px-3.5 py-1.5 text-xs font-medium rounded-lg border border-transparent text-slate-400 transition-colors hover:text-slate-200 disabled:opacity-40 whitespace-nowrap",
+  solid: "px-4 py-2 text-xs font-semibold rounded-xl border border-slate-800 bg-pitch-950 text-slate-400 transition-colors hover:text-white disabled:opacity-40 whitespace-nowrap",
+} as const;
+
+const activeByVariant = {
+  pill: "bg-slate-800 text-blue-400 font-semibold border-slate-700",
+  solid: "bg-blue-600 text-white font-bold border-transparent shadow-md shadow-blue-600/30",
+} as const;
 
 export function Tabs<T extends string>({
   items,
@@ -29,8 +46,9 @@ export function Tabs<T extends string>({
   ariaLabel,
   className,
   itemClassName,
-  activeItemClassName = "active",
+  activeItemClassName,
   orientation = "horizontal",
+  variant = "pill",
 }: TabsProps<T>) {
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -60,7 +78,7 @@ export function Tabs<T extends string>({
   }
 
   return (
-    <div className={cx("ui-tabs", className)} role="tablist" aria-label={ariaLabel} aria-orientation={orientation}>
+    <div className={cx(containerByVariant[variant], className)} role="tablist" aria-label={ariaLabel} aria-orientation={orientation}>
       {items.map((item, index) => {
         const active = item.value === value;
         return (
@@ -72,12 +90,20 @@ export function Tabs<T extends string>({
             aria-selected={active}
             tabIndex={active ? 0 : -1}
             disabled={item.disabled}
-            className={cx(itemClassName, active && activeItemClassName)}
+            className={cx(
+              itemByVariant[variant],
+              itemClassName,
+              active && (activeItemClassName ?? activeByVariant[variant]),
+            )}
             onClick={() => onChange(item.value)}
             onKeyDown={(event) => handleKeyDown(event, index)}
           >
             {item.label}
-            {item.badge !== undefined ? <small>{item.badge}</small> : null}
+            {item.badge !== undefined ? (
+              <small className={cx("rounded-sm px-1.5 py-px font-mono text-[10px] tabular-nums", active ? "bg-blue-500/20 text-blue-300" : "bg-pitch-800 text-slate-400")}>
+                {item.badge}
+              </small>
+            ) : null}
           </button>
         );
       })}

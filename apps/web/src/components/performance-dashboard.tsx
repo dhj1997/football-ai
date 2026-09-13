@@ -1,16 +1,15 @@
 "use client";
 
-import { Filter, RefreshCw } from "lucide-react";
+import { Cpu, Filter, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import {
+  Card,
   DataFreshness,
   EmptyState,
   ErrorState,
   LoadingState,
-  PageHeader,
   SectionHeader,
-  StatCard,
   StatusBadge,
   Tabs,
 } from "@/components/ui";
@@ -45,6 +44,34 @@ const leagues: Array<{ key: LeagueFilter; label: string }> = [
   { key: "ucl", label: "欧冠" },
   { key: "acl", label: "亚冠" },
 ];
+
+const inputClasses =
+  "w-full bg-pitch-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500";
+
+const insetPanelClasses = "rounded-xl border border-slate-800 bg-pitch-950 p-3.5";
+const insetLabelClasses = "block text-[11px] text-slate-400";
+const insetHintClasses = "mt-1 block text-xs text-slate-500";
+
+const tableSectionClasses = "space-y-3";
+const tableWrapClasses =
+  "overflow-hidden rounded-2xl border border-slate-800 bg-pitch-900 shadow-xl";
+const tableClasses = "w-full min-w-[900px] text-left text-xs font-mono";
+const headRowClasses =
+  "bg-pitch-950 text-slate-400 border-b border-slate-800 uppercase text-[11px]";
+const headCellClasses = "px-4 py-3 text-left font-medium whitespace-nowrap";
+const rowClasses = "transition-colors hover:bg-slate-800/30";
+const tbodyClasses = "divide-y divide-slate-800/60";
+const cellClasses = "px-4 py-3 whitespace-nowrap text-slate-300";
+const numberCellClasses =
+  "px-4 py-3 font-mono tabular-nums whitespace-nowrap text-slate-300";
+const rowHeadClasses = "px-4 py-3 font-normal";
+const moneyPositive = "font-mono font-semibold tabular-nums text-emerald-400";
+const moneyNegative = "font-mono font-semibold tabular-nums text-rose-400";
+const moneyNeutral = "font-mono tabular-nums text-slate-300";
+
+function moneyClass(value: number) {
+  return value > 0 ? moneyPositive : value < 0 ? moneyNegative : moneyNeutral;
+}
 
 export function PerformanceDashboard() {
   const [bankroll, setBankroll] = useState<BankrollSummary | null>(null);
@@ -158,125 +185,145 @@ export function PerformanceDashboard() {
   }
 
   return (
-    <main className="performance-page">
+    <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 pb-16 pt-6">
       <DataFreshness
-        className="status-strip"
         status="fresh"
         label="仅模拟资金 · 不连接真实投注平台"
         source="初始资金 1000 · 结算后自动更新"
         action={
           <button
-            className="sync-action"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-mono text-xs text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
             type="button"
             onClick={() => void load()}
             disabled={loading}
           >
-            <RefreshCw size={13} className={loading ? "spin" : ""} />
+            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
             刷新
           </button>
         }
       />
-      <PageHeader
-        className="workspace-title"
-        eyebrow="MODEL PERFORMANCE"
-        title="模拟资金与预测绩效"
-        description="逐笔追踪下注、结算、盈利与概率质量。"
-      />
-      <Tabs
-        className="performance-filter"
-        ariaLabel="绩效联赛筛选"
-        value={draft.league}
-        onChange={(league) => setDraft((current) => ({ ...current, league }))}
-        items={leagues.map((item) => ({ value: item.key, label: item.label }))}
-      />
-      <form className="metric-filter-row" onSubmit={applyFilters}>
-        <label>
-          <span>赛季</span>
-          <input
-            value={draft.season}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                season: event.target.value,
-              }))
-            }
-            placeholder="2026-27"
-          />
-        </label>
-        <label>
-          <span>开始日期</span>
-          <input
-            type="date"
-            value={draft.startDate}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                startDate: event.target.value,
-              }))
-            }
-          />
-        </label>
-        <label>
-          <span>结束日期</span>
-          <input
-            type="date"
-            value={draft.endDate}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                endDate: event.target.value,
-              }))
-            }
-          />
-        </label>
-        <label className="model-filter">
-          <span>模型版本</span>
-          <input
-            value={draft.modelVersion}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                modelVersion: event.target.value,
-              }))
-            }
-            placeholder="deepseek:deepseek-v4-flash"
-          />
-        </label>
-        <button type="submit">
-          <Filter size={14} aria-hidden="true" />
-          应用
-        </button>
-      </form>
-      {error && (
-        <ErrorState className="error-banner performance-error">
-          {error}
-        </ErrorState>
-      )}
-      {loading && !bankroll ? (
-        <LoadingState className="team-loading">正在读取模拟账本</LoadingState>
-      ) : bankroll && metrics ? (
-        <>
+      <Card className="p-5" aria-label="绩效筛选">
+        <div className="flex flex-wrap gap-2 border-b border-slate-800/80 pb-3">
           <Tabs
-            className="model-performance-tabs"
-            ariaLabel="选择模型资金账户"
-            value={selectedModel}
-            onChange={setSelectedModel}
-            items={(["chatgpt"] as ModelKey[]).map((key) => ({
-              value: key,
-              label: "GPT-5.6 Sol",
+            variant="solid"
+            ariaLabel="绩效联赛筛选"
+            value={draft.league}
+            onChange={(league) =>
+              setDraft((current) => ({ ...current, league }))
+            }
+            items={leagues.map((item) => ({
+              value: item.key,
+              label: item.label,
             }))}
           />
-          <SummaryStrip
+        </div>
+        <form
+          className="grid grid-cols-1 gap-3 pt-4 md:grid-cols-12 md:items-end"
+          onSubmit={applyFilters}
+        >
+          <label className="block md:col-span-2">
+            <span className="mb-1 block text-[11px] text-slate-400">赛季</span>
+            <input
+              className={inputClasses}
+              value={draft.season}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  season: event.target.value,
+                }))
+              }
+              placeholder="2026-27"
+            />
+          </label>
+          <label className="block md:col-span-2">
+            <span className="mb-1 block text-[11px] text-slate-400">
+              开始日期
+            </span>
+            <input
+              className={inputClasses}
+              type="date"
+              value={draft.startDate}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  startDate: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="block md:col-span-2">
+            <span className="mb-1 block text-[11px] text-slate-400">
+              结束日期
+            </span>
+            <input
+              className={inputClasses}
+              type="date"
+              value={draft.endDate}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  endDate: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="block md:col-span-4">
+            <span className="mb-1 block text-[11px] text-slate-400">
+              模型版本
+            </span>
+            <input
+              className={inputClasses}
+              value={draft.modelVersion}
+              list="model-version-options"
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  modelVersion: event.target.value,
+                }))
+              }
+              placeholder="deepseek:deepseek-v4-flash"
+            />
+            <datalist id="model-version-options">
+              <option value="deepseek:deepseek-v4-flash" />
+              <option value="chatgpt:gpt-5.6-sol" />
+            </datalist>
+          </label>
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-600/30 transition-colors hover:bg-blue-500"
+            >
+              <Filter size={14} aria-hidden="true" />
+              应用
+            </button>
+          </div>
+        </form>
+      </Card>
+      {error && <ErrorState>{error}</ErrorState>}
+      {loading && !bankroll ? (
+        <LoadingState>正在读取模拟账本</LoadingState>
+      ) : bankroll && metrics ? (
+        <>
+          <div
+            className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 shadow-lg shadow-blue-600/20"
+          >
+            <Cpu size={15} className="text-blue-200" aria-hidden="true" />
+            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-blue-200">
+              EVALUATION MODEL
+            </span>
+            <strong className="font-mono text-base font-bold tracking-wide text-white">
+              {modelLabel(selectedModel)}
+            </strong>
+          </div>
+          <CoreMetricsCard
             bankroll={bankroll.accounts?.[selectedModel] ?? bankroll}
             metrics={metrics}
-          />
-          <ProfitabilityCallout
-            bankroll={bankroll.accounts?.[selectedModel] ?? bankroll}
             modelKey={selectedModel}
           />
           <ModelComparisonStrip
             bankroll={bankroll}
             selectedModel={selectedModel}
+            onSelect={setSelectedModel}
           />
           <StrategyLeaderboard strategies={strategies} />
           <EvaluationSummary metrics={metrics} />
@@ -294,6 +341,103 @@ export function PerformanceDashboard() {
         </>
       ) : null}
     </main>
+  );
+}
+
+function CoreMetricsCard({
+  bankroll,
+  metrics,
+  modelKey,
+}: {
+  bankroll: BankrollSummary;
+  metrics: PredictionMetrics;
+  modelKey: ModelKey;
+}) {
+  const facts = [
+    ["账户权益", bankroll.equity.toFixed(2)],
+    ["可用现金", bankroll.balance.toFixed(2)],
+    ["已实现利润", signedMoney(bankroll.net_profit)],
+    ["未结敞口", bankroll.open_exposure.toFixed(2)],
+    ["ROI", percent(bankroll.roi)],
+    ["命中率", percent(metrics.accuracy)],
+    ["Brier", metrics.average_brier_score?.toFixed(3) ?? "-"],
+    [
+      "数据完整度",
+      metrics.average_data_completeness === null
+        ? "-"
+        : percent(metrics.average_data_completeness),
+    ],
+    ["最大回撤", percent(bankroll.max_drawdown)],
+  ];
+  const pnl = bankroll.net_profit;
+  const state =
+    pnl > 0
+      ? "盈利"
+      : pnl < 0
+        ? "亏损"
+        : bankroll.settled_count
+          ? "盈亏平衡"
+          : "尚未产生已实现盈亏";
+  const pnlToneClass =
+    pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-rose-400" : "text-white";
+  return (
+    <Card className="p-5" aria-label="绩效摘要与盈利状态">
+      <div className="grid grid-cols-2 gap-4 text-center font-mono sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+        {facts.map(([label, value]) => (
+          <div key={label}>
+            <span className={`mb-1 ${insetLabelClasses}`}>{label}</span>
+            <strong
+              className={`block text-xl font-black tabular-nums ${
+                label === "已实现利润"
+                  ? bankroll.net_profit >= 0
+                    ? "text-emerald-400"
+                    : "text-rose-400"
+                  : "text-white"
+              }`}
+            >
+              {value}
+            </strong>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 grid items-center gap-4 border-t border-slate-800/80 pt-4 md:grid-cols-4">
+        <div>
+          <span className={`mb-1 ${insetLabelClasses}`}>
+            当前模型累计结果
+          </span>
+          <strong className={`block text-lg font-bold ${pnlToneClass}`}>
+            {modelLabel(modelKey)} · {state}
+          </strong>
+          <small className="block font-mono text-xs tabular-nums text-slate-500">
+            {bankroll.settled_count} 笔已结算 · {bankroll.open_count} 笔未结算
+          </small>
+        </div>
+        <div className="text-center">
+          <span className={`mb-1 ${insetLabelClasses}`}>已实现净盈亏</span>
+          <strong
+            className={`block font-mono text-lg font-bold tabular-nums ${pnlToneClass}`}
+          >
+            {signedMoney(pnl)}
+          </strong>
+        </div>
+        <div className="text-center">
+          <span className={`mb-1 ${insetLabelClasses}`}>账户权益</span>
+          <strong
+            className={`block font-mono text-lg font-bold tabular-nums ${pnlToneClass}`}
+          >
+            {bankroll.equity.toFixed(2)}
+          </strong>
+        </div>
+        <div className="text-center">
+          <span className={`mb-1 ${insetLabelClasses}`}>ROI</span>
+          <strong
+            className={`block font-mono text-lg font-bold tabular-nums ${pnlToneClass}`}
+          >
+            {percent(bankroll.roi)}
+          </strong>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -361,10 +505,10 @@ function BacktestPanel() {
       .join(" ");
   const avg = (values: number[]) =>
     values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  const leakage = Boolean(current?.leakage_check?.passed);
   return (
-    <section className="performance-section" aria-label="历史回测">
+    <section className={tableSectionClasses} aria-label="历史回测">
       <SectionHeader
-        className="team-section-heading"
         eyebrow="ROLLING BACKTEST"
         title="历史滚动回测"
         meta={
@@ -380,7 +524,6 @@ function BacktestPanel() {
       ) : (
         <>
           <Tabs
-            className="league-filter backtest-league-tabs"
             ariaLabel="回测联赛"
             value={league}
             onChange={(key) => setLeague(key)}
@@ -391,56 +534,72 @@ function BacktestPanel() {
           />
           {windows.length ? (
             <>
-              <div className="backtest-stats">
-                <div>
-                  <small>平均 Brier（基线）</small>
-                  <strong>{avg(brierValues)?.toFixed(3) ?? "-"}</strong>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div className={insetPanelClasses}>
+                  <small className={insetLabelClasses}>平均 Brier（基线）</small>
+                  <strong className="mt-1 block font-mono text-lg font-bold tabular-nums text-white">
+                    {avg(brierValues)?.toFixed(3) ?? "-"}
+                  </strong>
                 </div>
-                <div>
-                  <small>平均 Brier（集成）</small>
-                  <strong>{avg(ensembleValues)?.toFixed(3) ?? "-"}</strong>
+                <div className={insetPanelClasses}>
+                  <small className={insetLabelClasses}>平均 Brier（集成）</small>
+                  <strong className="mt-1 block font-mono text-lg font-bold tabular-nums text-white">
+                    {avg(ensembleValues)?.toFixed(3) ?? "-"}
+                  </strong>
                 </div>
-                <div>
-                  <small>有效样本窗口</small>
-                  <strong>
+                <div className={insetPanelClasses}>
+                  <small className={insetLabelClasses}>有效样本窗口</small>
+                  <strong className="mt-1 block font-mono text-lg font-bold tabular-nums text-white">
                     {windows.length} / {current?.runs ?? 0}
                   </strong>
                 </div>
-                <div>
-                  <small>泄漏检查</small>
-                  <strong>
-                    {current?.leakage_check?.passed ? "通过" : "未通过"}
+                <div className={insetPanelClasses}>
+                  <small className={insetLabelClasses}>泄漏检查</small>
+                  <strong
+                    className={`mt-1 block font-mono text-lg font-bold tabular-nums ${leakage ? "text-emerald-400" : "text-rose-400"}`}
+                  >
+                    {leakage ? "通过" : "未通过"}
                   </strong>
                 </div>
               </div>
-              <div className="equity-chart backtest-chart">
+              <div className="rounded-xl border border-slate-800 bg-pitch-950 p-4">
                 <svg
                   viewBox={`0 0 ${width} ${height}`}
                   role="img"
                   aria-label="滚动回测 Brier 曲线"
                   preserveAspectRatio="none"
+                  className="h-36 w-full"
                 >
                   <line
                     x1={pad}
                     y1={height - pad}
                     x2={width - pad}
                     y2={height - pad}
+                    className="stroke-slate-700"
+                    strokeWidth="1"
                   />
                   {brierValues.length > 1 && (
-                    <polyline points={points(brierValues)} />
+                    <polyline
+                      points={points(brierValues)}
+                      className="fill-none stroke-amber-400"
+                      strokeWidth="2"
+                    />
                   )}
                   {ensembleValues.length > 1 && (
                     <polyline
-                      className="ensemble-line"
                       points={points(ensembleValues)}
+                      className="fill-none stroke-emerald-400"
+                      strokeWidth="2"
                     />
                   )}
                 </svg>
-                <span>基线 · 集成 双线对比，越低越好</span>
+                <span className="mt-2 block text-xs text-slate-500">
+                  基线 · 集成 双线对比，越低越好
+                </span>
               </div>
             </>
           ) : (
-            <EmptyState className="performance-empty">
+            <EmptyState>
               结算样本不足，暂无可回测窗口
             </EmptyState>
           )}
@@ -488,14 +647,16 @@ function ExportButton({
   label: string;
 }) {
   return (
-    <button
-      className="table-export"
-      type="button"
-      onClick={() => exportCsv(filename, rows)}
-      disabled={!rows.length}
-    >
-      导出{label}
-    </button>
+    <div className="flex justify-end">
+      <button
+        className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 font-mono text-xs text-white transition-colors hover:bg-slate-700 disabled:opacity-50"
+        type="button"
+        onClick={() => exportCsv(filename, rows)}
+        disabled={!rows.length}
+      >
+        导出{label}
+      </button>
+    </div>
   );
 }
 
@@ -525,11 +686,10 @@ function ModelEvaluationPanel() {
   const reportKeys = ["CSL", "EPL", "LAL", "GLOBAL"];
   return (
     <section
-      className="performance-section model-evaluation-section"
+      className={tableSectionClasses}
       aria-label="Model Evaluation"
     >
       <SectionHeader
-        className="team-section-heading"
         eyebrow="MODEL EVALUATION"
         title="历史模型评估"
         meta={evaluation ? `实验 ${evaluation.experiment_id.slice(-8)}` : "P6"}
@@ -541,21 +701,27 @@ function ModelEvaluationPanel() {
       ) : (
         <>
           <div
-            className="model-evaluation-overview"
+            className="grid grid-cols-2 gap-3 md:grid-cols-4"
             aria-label="历史模型评估摘要"
           >
             {reportKeys.map((key) => {
               const report = evaluation.reports[key];
               return (
-                <div key={key}>
-                  <strong>{key}</strong>
-                  <span>{report?.sample_count ?? 0} 个样本</span>
-                  <small>{report?.confidence ?? "暂无评估"}</small>
+                <div key={key} className={insetPanelClasses}>
+                  <strong className="block font-mono text-sm font-bold text-blue-400">
+                    {key}
+                  </strong>
+                  <span className="mt-1 block font-mono text-xs tabular-nums text-slate-300">
+                    {report?.sample_count ?? 0} 个样本
+                  </span>
+                  <small className="mt-0.5 block text-xs text-slate-500">
+                    {report?.confidence ?? "暂无评估"}
+                  </small>
                 </div>
               );
             })}
           </div>
-          <div className="model-evaluation-footnote">
+          <div className="font-mono text-xs tabular-nums text-slate-500">
             Leakage violations {evaluation.leakage_audit.violations} ·{" "}
             {evaluation.status}
           </div>
@@ -571,101 +737,87 @@ function StrategyLeaderboard({
   strategies: StrategyPerformance[];
 }) {
   return (
-    <section className="performance-section">
+    <section className={tableSectionClasses}>
       <SectionHeader
-        className="team-section-heading"
         eyebrow="STRATEGY LEADERBOARD"
         title="模型策略表现榜"
         meta="ROI · 盈亏 · 样本门禁"
       />
       {strategies.length ? (
-        <div className="team-table-scroll">
-          <table className="performance-table strategy-leaderboard">
-            <thead>
-              <tr>
-                <th>排名</th>
-                <th>模型 / 策略</th>
-                <th>ROI</th>
-                <th>盈亏</th>
-                <th>预测样本</th>
-                <th>Brier</th>
-                <th>Log Loss</th>
-                <th>市场改善</th>
-                <th>回撤</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              {strategies.map((item) => (
-                <tr
-                  key={`${item.model_key}-${item.strategy_id}-${item.strategy_version}`}
-                >
-                  <td>
-                    <strong>#{item.rank}</strong>
-                  </td>
-                  <th scope="row">
-                    <b>
-                      {item.model_key === "deepseek"
-                        ? "DeepSeek"
-                        : item.model_key === "chatgpt"
-                          ? "GPT-5.6 Sol"
-                          : item.model_key}
-                    </b>
-                    <small>
-                      {item.strategy_name} · {item.strategy_version}
-                    </small>
-                  </th>
-                  <td
-                    className={
-                      item.roi > 0
-                        ? "positive"
-                        : item.roi < 0
-                          ? "negative"
-                          : undefined
-                    }
-                  >
-                    {percent(item.roi)}
-                  </td>
-                  <td
-                    className={
-                      item.realized_pnl > 0
-                        ? "positive"
-                        : item.realized_pnl < 0
-                          ? "negative"
-                          : undefined
-                    }
-                  >
-                    {signedMoney(item.realized_pnl)}
-                  </td>
-                  <td>{item.prediction_samples}</td>
-                  <td>{item.average_brier?.toFixed(3) ?? "-"}</td>
-                  <td>{item.average_log_loss?.toFixed(3) ?? "-"}</td>
-                  <td>{signedMetric(item.brier_improvement)}</td>
-                  <td>{percent(item.max_drawdown)}</td>
-                  <td>
-                    <StatusBadge
-                      variant={
-                        item.gate_status === "READY"
-                          ? "ready"
-                          : item.gate_status === "QUALITY_FAILED"
-                            ? "danger"
-                            : "partial"
-                      }
-                    >
-                      {item.gate_status === "READY"
-                        ? "通过"
-                        : item.gate_status === "QUALITY_FAILED"
-                          ? "未通过"
-                          : "影子模式"}
-                    </StatusBadge>
-                  </td>
+        <div className={tableWrapClasses}>
+          <div className="overflow-x-auto">
+            <table className={tableClasses}>
+              <thead>
+                <tr className={headRowClasses}>
+                  <th className={headCellClasses}>排名</th>
+                  <th className={headCellClasses}>模型 / 策略</th>
+                  <th className={headCellClasses}>ROI</th>
+                  <th className={headCellClasses}>盈亏</th>
+                  <th className={headCellClasses}>预测样本</th>
+                  <th className={headCellClasses}>Brier</th>
+                  <th className={headCellClasses}>Log Loss</th>
+                  <th className={headCellClasses}>市场改善</th>
+                  <th className={headCellClasses}>回撤</th>
+                  <th className={headCellClasses}>状态</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className={tbodyClasses}>
+                {strategies.map((item) => (
+                  <tr
+                    key={`${item.model_key}-${item.strategy_id}-${item.strategy_version}`}
+                    className={rowClasses}
+                  >
+                    <td className={numberCellClasses}>
+                      <strong className="font-black text-slate-100">#{item.rank}</strong>
+                    </td>
+                    <th scope="row" className={rowHeadClasses}>
+                      <b className="block text-xs font-semibold text-slate-100">
+                        {item.model_key === "deepseek"
+                          ? "DeepSeek"
+                          : item.model_key === "chatgpt"
+                            ? "GPT-5.6 Sol"
+                            : item.model_key}
+                      </b>
+                      <small className="block text-[11px] text-slate-500">
+                        {item.strategy_name} · {item.strategy_version}
+                      </small>
+                    </th>
+                    <td className={moneyClass(item.roi)}>
+                      {percent(item.roi)}
+                    </td>
+                    <td className={moneyClass(item.realized_pnl)}>
+                      {signedMoney(item.realized_pnl)}
+                    </td>
+                    <td className={numberCellClasses}>{item.prediction_samples}</td>
+                    <td className={numberCellClasses}>{item.average_brier?.toFixed(3) ?? "-"}</td>
+                    <td className={numberCellClasses}>{item.average_log_loss?.toFixed(3) ?? "-"}</td>
+                    <td className={numberCellClasses}>{signedMetric(item.brier_improvement)}</td>
+                    <td className={numberCellClasses}>{percent(item.max_drawdown)}</td>
+                    <td className={cellClasses}>
+                      <StatusBadge
+                        variant={
+                          item.gate_status === "READY"
+                            ? "ready"
+                            : item.gate_status === "QUALITY_FAILED"
+                              ? "danger"
+                              : "partial"
+                        }
+                      >
+                        {item.gate_status === "READY"
+                          ? "通过"
+                          : item.gate_status === "QUALITY_FAILED"
+                            ? "未通过"
+                            : "影子模式"}
+                      </StatusBadge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
-        <EmptyState className="performance-empty">暂无策略表现样本</EmptyState>
+        <EmptyState>暂无策略表现样本</EmptyState>
       )}
     </section>
   );
@@ -677,9 +829,8 @@ function DecisionAuditTable({ decisions }: { decisions: DecisionAudit[] }) {
     byDateDesc<DecisionAudit>((item) => item.fixture_date ?? item.created_at),
   );
   return (
-    <section className="performance-section">
+    <section className={tableSectionClasses}>
       <SectionHeader
-        className="team-section-heading"
         eyebrow="DECISION AUDIT"
         title="逐场策略决策"
         meta={`${decisions.length} 场`}
@@ -704,85 +855,112 @@ function DecisionAuditTable({ decisions }: { decisions: DecisionAudit[] }) {
       />
       {decisions.length ? (
         <>
-          <div className="team-table-scroll">
-            <table className="performance-table decision-audit-table">
-              <thead>
-                <tr>
-                  <th>比赛</th>
-                  <th>下注模型</th>
-                  <th>策略</th>
-                  <th>模型建议</th>
-                  <th>候选方向</th>
-                  <th>后端状态</th>
-                  <th>赔率 / 优势</th>
-                  <th>理论仓位</th>
-                  <th>原因</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((item) => (
-                  <tr key={item.id}>
-                    <th scope="row">
-                      <b>
-                        {item.home_team ?? "主队"} vs {item.away_team ?? "客队"}
-                      </b>
-                      <small>
-                        {leagueName(item.league_key)} ·{" "}
-                        {item.fixture_date ?? "-"}
-                      </small>
-                    </th>
-                    <td className="model-cell">
-                      <b>{modelLabel(item.model_key, item.model_version)}</b>
-                      <small>{item.model_version ?? "版本未知"}</small>
-                    </td>
-                    <td>
-                      {item.strategy_name} · {item.strategy_version}
-                    </td>
-                    <td>
-                      {item.model_recommendation_status === "bet"
-                        ? "建议下注"
-                        : item.model_recommendation_status === "no_bet"
-                          ? "建议不下注"
-                          : "未记录"}
-                    </td>
-                    <td>
-                      {(item.considered_selection ?? item.selection) === "none"
-                        ? "-"
-                        : selectionLabel(
-                            item.considered_selection ?? item.selection,
-                            null,
-                          )}
-                    </td>
-                    <td>
-                      <StatusBadge
-                        className={`ledger-status ${item.execution_status}`}
-                        variant={
-                          item.execution_status === "bet"
-                            ? "ready"
-                            : item.execution_status === "unknown"
-                              ? "partial"
-                              : "danger"
-                        }
-                      >
-                        {executionLabel(item.execution_status)}
-                      </StatusBadge>
-                    </td>
-                    <td>
-                      {item.price
-                        ? `${item.price.toFixed(2)} · ${signedMetric(item.expected_edge)}`
-                        : "-"}
-                    </td>
-                    <td>{percent(item.stake_fraction)}</td>
-                    <td className="decision-reason">{item.execution_reason}</td>
+          <div className={tableWrapClasses}>
+            <div className="overflow-x-auto">
+              <table className={tableClasses}>
+                <thead>
+                  <tr className={headRowClasses}>
+                    <th className={headCellClasses}>比赛</th>
+                    <th className={headCellClasses}>下注模型</th>
+                    <th className={headCellClasses}>策略</th>
+                    <th className={headCellClasses}>模型建议</th>
+                    <th className={headCellClasses}>候选方向</th>
+                    <th className={headCellClasses}>后端状态</th>
+                    <th className={headCellClasses}>赔率 / 优势</th>
+                    <th className={headCellClasses}>理论仓位</th>
+                    <th className={headCellClasses}>原因</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className={tbodyClasses}>
+                  {visible.map((item) => (
+                    <tr key={item.id} className={rowClasses}>
+                      <th scope="row" className={rowHeadClasses}>
+                        <b className="block text-xs font-semibold text-slate-100">
+                          {item.home_team ?? "主队"} vs {item.away_team ?? "客队"}
+                        </b>
+                        <small className="block text-[11px] text-slate-500">
+                          {leagueName(item.league_key)} ·{" "}
+                          {item.fixture_date ?? "-"}
+                        </small>
+                      </th>
+                      <th scope="row" className={rowHeadClasses}>
+                        <b className="block text-xs font-semibold text-slate-100">{modelLabel(item.model_key, item.model_version)}</b>
+                        <small className="block text-[11px] text-slate-500">{item.model_version ?? "版本未知"}</small>
+                      </th>
+                      <td className={cellClasses}>
+                        {item.strategy_name} · {item.strategy_version}
+                      </td>
+                      <td className={cellClasses}>
+                        {item.model_recommendation_status === "bet" ? (
+                          <span className="font-semibold text-blue-400">
+                            建议下注
+                          </span>
+                        ) : item.model_recommendation_status === "no_bet" ? (
+                          <span className="text-slate-500">建议不下注</span>
+                        ) : (
+                          "未记录"
+                        )}
+                      </td>
+                      <td className={cellClasses}>
+                        {(item.considered_selection ?? item.selection) === "none"
+                          ? "-"
+                          : selectionLabel(
+                              item.considered_selection ?? item.selection,
+                              null,
+                            )}
+                      </td>
+                      <td className={cellClasses}>
+                        <StatusBadge
+                          variant={
+                            item.execution_status === "bet"
+                              ? "info"
+                              : item.execution_status === "no_bet"
+                                ? "neutral"
+                                : "partial"
+                          }
+                        >
+                          {executionLabel(item.execution_status)}
+                        </StatusBadge>
+                      </td>
+                      <td className={numberCellClasses}>
+                        {item.price ? (
+                          <>
+                            {item.price.toFixed(2)} ·{" "}
+                            <span
+                              className={
+                                item.expected_edge == null
+                                  ? ""
+                                  : item.expected_edge > 0
+                                    ? "font-semibold text-emerald-400"
+                                    : item.expected_edge < 0
+                                      ? "text-rose-400"
+                                      : ""
+                              }
+                            >
+                              {signedMetric(item.expected_edge)}
+                            </span>
+                          </>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td className={numberCellClasses}>{percent(item.stake_fraction)}</td>
+                      <td className="max-w-60 px-4 py-3 text-xs text-slate-500">{item.execution_reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <Pagination page={page} pageCount={pageCount} onChange={setPage} />
+          <Pagination
+            page={page}
+            pageCount={pageCount}
+            onChange={setPage}
+            total={decisions.length}
+          />
         </>
       ) : (
-        <EmptyState className="performance-empty">
+        <EmptyState>
           暂无可审计的策略决策
         </EmptyState>
       )}
@@ -793,7 +971,6 @@ function DecisionAuditTable({ decisions }: { decisions: DecisionAudit[] }) {
 function EvaluationSummary({ metrics }: { metrics: PredictionMetrics }) {
   const gate = metrics.quality_gate;
   const comparison = metrics.market_comparison;
-  const decisions = metrics.decision_counts;
   const portfolio = metrics.portfolio;
   const gateLabel =
     gate?.status === "READY"
@@ -801,6 +978,12 @@ function EvaluationSummary({ metrics }: { metrics: PredictionMetrics }) {
       : gate?.status === "QUALITY_FAILED"
         ? "质量未通过"
         : "样本不足 · 影子模式";
+  const gateToneClass =
+    gate?.status === "READY"
+      ? "text-emerald-400"
+      : gate?.status === "QUALITY_FAILED"
+        ? "text-amber-400"
+        : "text-white";
   const failureLabels = (gate?.failures ?? []).map(
     (failure) =>
       (
@@ -818,64 +1001,73 @@ function EvaluationSummary({ metrics }: { metrics: PredictionMetrics }) {
   );
   return (
     <section
-      className="performance-section evaluation-summary"
+      className={tableSectionClasses}
       aria-label="策略评估摘要"
     >
       <SectionHeader
-        className="team-section-heading"
         eyebrow="STRATEGY EVALUATION"
         title="策略质量门禁"
         meta={metrics.experiment?.strategy_name ?? "基准策略"}
       />
-      <div className="evaluation-grid">
-        <div
-          className={`evaluation-gate ${gate?.status === "READY" ? "ready" : "shadow"}`}
-        >
-          <small>当前状态</small>
-          <strong>{gateLabel}</strong>
-          <span>
+      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <div className={insetPanelClasses}>
+          <small className={insetLabelClasses}>当前状态</small>
+          <strong className={`mt-1 block text-lg font-bold ${gateToneClass}`}>
+            {gateLabel}
+          </strong>
+          <span className={insetHintClasses}>
             {failureLabels.length
               ? failureLabels.join(" · ")
               : "所有评估条件已满足"}
           </span>
         </div>
-        <div>
-          <small>CLV 相对收盘价（北极星）</small>
-          <strong>
+        <div className={insetPanelClasses}>
+          <small className={insetLabelClasses}>CLV 相对收盘价（北极星）</small>
+          <strong className="mt-1 block font-mono text-lg font-bold tabular-nums text-white">
             {portfolio?.average_clv != null
               ? percent(portfolio.average_clv)
               : "-"}
           </strong>
-          <span>
+          <span className={insetHintClasses}>
             {portfolio?.clv_samples ?? 0} 样本 · 长期跑赢收盘价 = 真实优势
           </span>
         </div>
-        <div>
-          <small>预测样本</small>
-          <strong>
+        <div className={insetPanelClasses}>
+          <small className={insetLabelClasses}>预测样本</small>
+          <strong className="mt-1 block font-mono text-lg font-bold tabular-nums text-white">
             {gate?.counts.prediction_samples ?? metrics.sample_size}
           </strong>
-          <span>
+          <span className={insetHintClasses}>
             命中 {percent(metrics.accuracy)} · Brier{" "}
             {metrics.average_brier_score?.toFixed(3) ?? "-"}
           </span>
         </div>
-        <div>
-          <small>概率质量</small>
-          <strong>{metrics.average_log_loss?.toFixed(3) ?? "-"}</strong>
-          <span>Log Loss · RPS {metrics.average_rps?.toFixed(3) ?? "-"}</span>
+        <div className={insetPanelClasses}>
+          <small className={insetLabelClasses}>概率质量</small>
+          <strong className="mt-1 block font-mono text-lg font-bold tabular-nums text-white">
+            {metrics.average_log_loss?.toFixed(3) ?? "-"}
+          </strong>
+          <span className={insetHintClasses}>
+            Log Loss · RPS {metrics.average_rps?.toFixed(3) ?? "-"}
+          </span>
         </div>
-        <div>
-          <small>市场对照</small>
-          <strong>{comparison?.sample_size ?? 0}</strong>
-          <span>Brier 改善 {signedMetric(comparison?.brier_improvement)}</span>
+        <div className={insetPanelClasses}>
+          <small className={insetLabelClasses}>市场对照</small>
+          <strong className="mt-1 block font-mono text-lg font-bold tabular-nums text-white">
+            {comparison?.sample_size ?? 0}
+          </strong>
+          <span className={insetHintClasses}>
+            Brier 改善 {signedMetric(comparison?.brier_improvement)}
+          </span>
         </div>
-        <div>
-          <small>组合表现</small>
-          <strong>
+        <div className={insetPanelClasses}>
+          <small className={insetLabelClasses}>组合表现</small>
+          <strong
+            className={`mt-1 block font-mono text-lg font-bold tabular-nums ${portfolio ? moneyClass(portfolio.realized_pnl) : "text-white"}`}
+          >
             {portfolio ? signedMoney(portfolio.realized_pnl) : "-"}
           </strong>
-          <span>
+          <span className={insetHintClasses}>
             ROI {portfolio ? percent(portfolio.roi) : "-"} · 回撤{" "}
             {portfolio ? percent(portfolio.max_drawdown) : "-"}
           </span>
@@ -885,131 +1077,105 @@ function EvaluationSummary({ metrics }: { metrics: PredictionMetrics }) {
   );
 }
 
-function ProfitabilityCallout({
-  bankroll,
-  modelKey,
-}: {
-  bankroll: BankrollSummary;
-  modelKey: ModelKey;
-}) {
-  const pnl = bankroll.net_profit;
-  const state =
-    pnl > 0
-      ? "盈利"
-      : pnl < 0
-        ? "亏损"
-        : bankroll.settled_count
-          ? "盈亏平衡"
-          : "尚未产生已实现盈亏";
-  return (
-    <section
-      className={`profitability-callout ${pnl > 0 ? "positive" : pnl < 0 ? "negative" : "neutral"}`}
-      aria-label="当前模型盈利状态"
-    >
-      <div>
-        <span>当前模型累计结果</span>
-        <strong>
-          {modelLabel(modelKey)} · {state}
-        </strong>
-        <small>
-          {bankroll.settled_count} 笔已结算 · {bankroll.open_count} 笔未结算
-        </small>
-      </div>
-      <div>
-        <small>已实现净盈亏</small>
-        <strong>{signedMoney(pnl)}</strong>
-      </div>
-      <div>
-        <small>账户权益</small>
-        <strong>{bankroll.equity.toFixed(2)}</strong>
-      </div>
-      <div>
-        <small>ROI</small>
-        <strong>{percent(bankroll.roi)}</strong>
-      </div>
-    </section>
-  );
-}
-
 function ModelComparisonStrip({
   bankroll,
   selectedModel,
+  onSelect,
 }: {
   bankroll: BankrollSummary;
   selectedModel: ModelKey;
+  onSelect: (key: ModelKey) => void;
 }) {
   const accounts: Partial<Record<ModelKey, BankrollSummary>> =
     bankroll.accounts ?? {};
   return (
-    <section className="model-comparison-strip" aria-label="模型资金归因">
-      <div className="model-comparison-heading">
-        <div>
-          <span>MODEL ATTRIBUTION</span>
-          <strong>模型账户对比</strong>
-        </div>
-        <small>每个模型独立模拟账户，盈亏不会混算</small>
-      </div>
-      {(["deepseek", "chatgpt"] as ModelKey[]).map((key) => {
-        const account = accounts[key];
-        return (
-          <article
-            className={key === selectedModel ? "selected" : ""}
-            key={key}
-          >
-            <div className="model-account-heading">
-              <span>{modelLabel(key)}</span>
-              <StatusBadge
-                variant={
-                  account?.net_profit && account.net_profit > 0
-                    ? "ready"
-                    : account?.net_profit && account.net_profit < 0
-                      ? "danger"
-                      : "neutral"
-                }
-              >
-                {account
-                  ? account.settled_count
-                    ? account.net_profit > 0
-                      ? "盈利"
-                      : account.net_profit < 0
-                        ? "亏损"
-                        : "持平"
-                    : "未结算"
-                  : "无数据"}
-              </StatusBadge>
-            </div>
-            <strong
-              className={
-                account && account.net_profit > 0
-                  ? "positive"
-                  : account && account.net_profit < 0
-                    ? "negative"
-                    : undefined
-              }
+    <section className={tableSectionClasses} aria-label="模型资金归因">
+      <SectionHeader
+        eyebrow="MODEL ATTRIBUTION"
+        title="模型账户对比"
+        meta="点击模型名切换复盘账户 · 盈亏不会混算"
+      />
+      <div className="grid gap-3 md:grid-cols-2">
+        {(["deepseek", "chatgpt"] as ModelKey[]).map((key) => {
+          const account = accounts[key];
+          const profitable = Boolean(account && account.net_profit > 0);
+          return (
+            <article
+              className={`rounded-2xl border bg-pitch-900 p-4 shadow-xl transition-colors ${
+                key === selectedModel
+                  ? "border-blue-500/50"
+                  : "border-slate-800"
+              } ${profitable ? "ring-1 ring-emerald-500/40" : ""}`}
+              key={key}
             >
-              {account ? signedMoney(account.net_profit) : "-"}
-            </strong>
-            <small>
-              已实现净盈亏 ·{" "}
-              {account ? `${account.bet_count} 笔下注` : "尚未开始"}
-            </small>
-            <dl>
-              <div>
-                <dt>ROI</dt>
-                <dd>{account ? percent(account.roi) : "-"}</dd>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => onSelect(key)}
+                  aria-pressed={key === selectedModel}
+                  title="切换到该模型的复盘数据"
+                  className={`flex items-center gap-1.5 text-sm font-bold transition-colors ${
+                    key === selectedModel
+                      ? "text-blue-400"
+                      : "text-slate-100 hover:text-blue-400"
+                  }`}
+                >
+                  {modelLabel(key)}
+                  {key === selectedModel ? (
+                    <Cpu size={13} aria-hidden="true" />
+                  ) : null}
+                </button>
+                <StatusBadge
+                  variant={
+                    account?.net_profit && account.net_profit > 0
+                      ? "ready"
+                      : account?.net_profit && account.net_profit < 0
+                        ? "danger"
+                        : "neutral"
+                  }
+                >
+                  {account
+                    ? account.settled_count
+                      ? account.net_profit > 0
+                        ? "盈利"
+                        : account.net_profit < 0
+                          ? "亏损"
+                          : "持平"
+                      : "未结算"
+                    : "无数据"}
+                </StatusBadge>
               </div>
-              <div>
-                <dt>权益</dt>
-                <dd>{account ? account.equity.toFixed(2) : "-"}</dd>
-              </div>
-              <div>
-                <dt>未结</dt>
-                <dd>{account?.open_count ?? 0}</dd>
-              </div>
-            </dl>
-          </article>
-        );
-      })}
+              <strong
+                className={`mt-2 block font-mono text-2xl font-black tabular-nums ${
+                  account
+                    ? moneyClass(account.net_profit)
+                    : "text-slate-300"
+                }`}
+              >
+                {account ? signedMoney(account.net_profit) : "-"}
+              </strong>
+              <small className="mt-0.5 block text-xs text-slate-500">
+                已实现净盈亏 ·{" "}
+                {account ? `${account.bet_count} 笔下注` : "尚未开始"}
+              </small>
+              <dl className="mt-3 grid grid-cols-3 gap-3 border-t border-slate-800/70 pt-3">
+                <div>
+                  <dt className={insetLabelClasses}>ROI</dt>
+                  <dd className={`mt-0.5 font-mono text-sm font-bold tabular-nums ${account ? moneyClass(account.roi) : "text-slate-400"}`}>{account ? percent(account.roi) : "-"}</dd>
+                </div>
+                <div>
+                  <dt className={insetLabelClasses}>权益</dt>
+                  <dd className="mt-0.5 font-mono text-sm font-bold tabular-nums text-slate-200">{account ? account.equity.toFixed(2) : "-"}</dd>
+                </div>
+                <div>
+                  <dt className={insetLabelClasses}>未结</dt>
+                  <dd className="mt-0.5 font-mono text-sm font-bold tabular-nums text-slate-200">{account?.open_count ?? 0}</dd>
+                </div>
+              </dl>
+            </article>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -1024,59 +1190,35 @@ function AsianOutcomeStrip({ metrics }: { metrics: PredictionMetrics }) {
     ["half_loss", "半输"],
     ["full_loss", "全输"],
   ];
+  const toneByKey: Record<
+    keyof PredictionMetrics["asian_handicap_results"],
+    string
+  > = {
+    full_win: "text-emerald-400",
+    half_win: "text-emerald-400",
+    push: "text-white",
+    half_loss: "text-rose-400",
+    full_loss: "text-rose-400",
+  };
   return (
-    <section className="asian-outcome-strip" aria-label="亚洲盘结算分类">
-      <span>亚洲盘结算</span>
+    <Card
+      className="flex flex-wrap items-center gap-x-8 gap-y-3 p-5"
+      aria-label="亚洲盘结算分类"
+    >
+      <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-blue-400">
+        亚洲盘结算
+      </span>
       {labels.map(([key, label]) => (
         <div key={key}>
-          <small>{label}</small>
-          <strong>{metrics.asian_handicap_results[key]}</strong>
+          <small className={insetLabelClasses}>{label}</small>
+          <strong
+            className={`mt-0.5 block font-mono text-lg font-black tabular-nums ${toneByKey[key]}`}
+          >
+            {metrics.asian_handicap_results[key]}
+          </strong>
         </div>
       ))}
-    </section>
-  );
-}
-
-function SummaryStrip({
-  bankroll,
-  metrics,
-}: {
-  bankroll: BankrollSummary;
-  metrics: PredictionMetrics;
-}) {
-  const facts = [
-    ["账户权益", bankroll.equity.toFixed(2)],
-    ["可用现金", bankroll.balance.toFixed(2)],
-    ["已实现利润", signedMoney(bankroll.net_profit)],
-    ["未结敞口", bankroll.open_exposure.toFixed(2)],
-    ["ROI", percent(bankroll.roi)],
-    ["命中率", percent(metrics.accuracy)],
-    ["Brier", metrics.average_brier_score?.toFixed(3) ?? "-"],
-    [
-      "数据完整度",
-      metrics.average_data_completeness === null
-        ? "-"
-        : percent(metrics.average_data_completeness),
-    ],
-    ["最大回撤", percent(bankroll.max_drawdown)],
-  ];
-  return (
-    <section className="performance-summary" aria-label="绩效摘要">
-      {facts.map(([label, value]) => (
-        <StatCard
-          key={label}
-          label={label}
-          value={value}
-          valueClassName={
-            label === "已实现利润"
-              ? bankroll.net_profit >= 0
-                ? "positive"
-                : "negative"
-              : undefined
-          }
-        />
-      ))}
-    </section>
+    </Card>
   );
 }
 
@@ -1102,30 +1244,34 @@ function EquityCurve({ points }: { points: BankrollSummary["equity_curve"] }) {
     return { x, y };
   });
   return (
-    <section className="performance-section equity-curve-section">
+    <section className={tableSectionClasses}>
       <SectionHeader
-        className="team-section-heading"
         eyebrow="BANKROLL CURVE"
         title="已实现权益曲线"
         meta={`${points.length} 个节点`}
       />
-      <div className="equity-chart">
+      <Card className="p-5">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           role="img"
           aria-label="模拟资金已实现权益曲线"
           preserveAspectRatio="none"
+          className="h-40 w-full"
         >
           <line
             x1={padding}
             y1={height - padding}
             x2={width - padding}
             y2={height - padding}
+            className="stroke-slate-700"
+            strokeWidth="1"
           />
           <polyline
             points={coordinates
               .map((point) => `${point.x},${point.y}`)
               .join(" ")}
+            className="fill-none stroke-emerald-400"
+            strokeWidth="2"
           />
           {coordinates.map((point, index) => (
             <circle
@@ -1133,21 +1279,23 @@ function EquityCurve({ points }: { points: BankrollSummary["equity_curve"] }) {
               cx={point.x}
               cy={point.y}
               r="4"
+              className="fill-emerald-400"
             />
           ))}
         </svg>
-        <span>{minimum.toFixed(2)}</span>
-        <strong>{values.at(-1)?.toFixed(2)}</strong>
-      </div>
+        <div className="mt-2 flex items-center justify-between">
+          <span className="font-mono text-xs tabular-nums text-slate-500">{minimum.toFixed(2)}</span>
+          <strong className="font-mono text-sm font-black tabular-nums text-emerald-400">{values.at(-1)?.toFixed(2)}</strong>
+        </div>
+      </Card>
     </section>
   );
 }
 
 function BetHistory({ bets }: { bets: SimulatedBet[] }) {
   return (
-    <section className="performance-section">
+    <section className={tableSectionClasses}>
       <SectionHeader
-        className="team-section-heading"
         eyebrow="SIMULATED LEDGER"
         title="模拟下注明细"
         meta={`${bets.length} 笔`}
@@ -1171,71 +1319,74 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
         }))}
       />
       {bets.length ? (
-        <div className="team-table-scroll">
-          <table className="performance-table bet-ledger">
-            <thead>
-              <tr>
-                <th>比赛</th>
-                <th>下注模型</th>
-                <th>市场</th>
-                <th>选择</th>
-                <th>赔率</th>
-                <th>金额</th>
-                <th>状态</th>
-                <th>净盈亏</th>
-                <th>时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bets.map((bet) => (
-                <tr key={bet.id}>
-                  <th scope="row">
-                    <b>
-                      {bet.home_team} vs {bet.away_team}
-                    </b>
-                    <small>
-                      {leagueName(bet.league_key)} · {bet.fixture_date}
-                    </small>
-                  </th>
-                  <td className="model-cell">
-                    <b>{modelLabel(bet.model_key, bet.model_version)}</b>
-                    <small>{bet.model_version}</small>
-                  </td>
-                  <td>{bet.market === "1x2" ? "胜平负" : "亚洲盘"}</td>
-                  <td>{selectionLabel(bet.selection, bet.handicap_line)}</td>
-                  <td>{bet.odds.toFixed(2)}</td>
-                  <td>{bet.stake.toFixed(2)}</td>
-                  <td>
-                    <StatusBadge
-                      className={`ledger-status ${bet.status}`}
-                      variant={bet.status === "placed" ? "partial" : "ready"}
-                    >
-                      {bet.status === "placed"
-                        ? "未结"
-                        : settlementLabel(bet.settlement_result)}
-                    </StatusBadge>
-                  </td>
-                  <td
-                    className={
-                      (bet.net_profit ?? 0) > 0
-                        ? "positive"
-                        : (bet.net_profit ?? 0) < 0
-                          ? "negative"
-                          : undefined
-                    }
-                  >
-                    {bet.net_profit === null
-                      ? "-"
-                      : signedMoney(bet.net_profit)}
-                  </td>
-                  <td>{formatDate(bet.placed_at)}</td>
+        <div className={tableWrapClasses}>
+          <div className="overflow-x-auto">
+            <table className={tableClasses}>
+              <thead>
+                <tr className={headRowClasses}>
+                  <th className={headCellClasses}>比赛</th>
+                  <th className={headCellClasses}>下注模型</th>
+                  <th className={headCellClasses}>市场</th>
+                  <th className={headCellClasses}>选择</th>
+                  <th className={headCellClasses}>赔率</th>
+                  <th className={headCellClasses}>金额</th>
+                  <th className={headCellClasses}>状态</th>
+                  <th className={headCellClasses}>净盈亏</th>
+                  <th className={headCellClasses}>时间</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className={tbodyClasses}>
+                {bets.map((bet) => (
+                  <tr key={bet.id} className={rowClasses}>
+                    <th scope="row" className={rowHeadClasses}>
+                      <b className="block text-xs font-semibold text-slate-100">
+                        {bet.home_team} vs {bet.away_team}
+                      </b>
+                      <small className="block text-[11px] text-slate-500">
+                        {leagueName(bet.league_key)} · {bet.fixture_date}
+                      </small>
+                    </th>
+                    <th scope="row" className={rowHeadClasses}>
+                      <b className="block text-xs font-semibold text-slate-100">{modelLabel(bet.model_key, bet.model_version)}</b>
+                      <small className="block text-[11px] text-slate-500">{bet.model_version}</small>
+                    </th>
+                    <td className={cellClasses}>{bet.market === "1x2" ? "胜平负" : "亚洲盘"}</td>
+                    <td className={cellClasses}>{selectionLabel(bet.selection, bet.handicap_line)}</td>
+                    <td className={numberCellClasses}>{bet.odds.toFixed(2)}</td>
+                    <td className={numberCellClasses}>{bet.stake.toFixed(2)}</td>
+                    <td className={cellClasses}>
+                      <StatusBadge
+                        variant={
+                          bet.status === "placed"
+                            ? "partial"
+                            : bet.settlement_result === "full_win" ||
+                                bet.settlement_result === "half_win"
+                              ? "ready"
+                              : bet.settlement_result === "half_loss" ||
+                                  bet.settlement_result === "full_loss"
+                                ? "danger"
+                                : "neutral"
+                        }
+                      >
+                        {bet.status === "placed"
+                          ? "未结"
+                          : settlementLabel(bet.settlement_result)}
+                      </StatusBadge>
+                    </td>
+                    <td className={moneyClass(bet.net_profit ?? 0)}>
+                      {bet.net_profit === null
+                        ? "-"
+                        : signedMoney(bet.net_profit)}
+                    </td>
+                    <td className={numberCellClasses}>{formatDate(bet.placed_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
-        <EmptyState className="performance-empty">
+        <EmptyState>
           尚无符合规则的模拟下注
         </EmptyState>
       )}
@@ -1249,9 +1400,8 @@ function SettlementHistory({ metrics }: { metrics: PredictionMetrics }) {
     byDateDesc<PredictionSettlement>((item) => item.fixture_date),
   );
   return (
-    <section className="performance-section">
+    <section className={tableSectionClasses}>
       <SectionHeader
-        className="team-section-heading"
         eyebrow="PREDICTION EVALUATION"
         title="预测结算记录"
         meta={`${metrics.sample_size} 个样本`}
@@ -1275,70 +1425,84 @@ function SettlementHistory({ metrics }: { metrics: PredictionMetrics }) {
       />
       {metrics.items.length ? (
         <>
-          <div className="team-table-scroll">
-            <table className="performance-table settlement-ledger">
-              <thead>
-                <tr>
-                  <th>比赛</th>
-                  <th>日期</th>
-                  <th>联赛</th>
-                  <th>预测</th>
-                  <th>实际</th>
-                  <th>比分</th>
-                  <th>正确</th>
-                  <th>Brier</th>
-                  <th>Log Loss</th>
-                  <th>RPS</th>
-                  <th>完整度</th>
-                  <th>模型 / 版本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((item) => (
-                  <tr key={item.id}>
-                    <th scope="row">
-                      <b>
-                        {item.home_team ?? "主队"} vs {item.away_team ?? "客队"}
-                      </b>
-                    </th>
-                    <td>{item.fixture_date}</td>
-                    <td>{leagueName(item.league_key)}</td>
-                    <td>{outcomeLabel(item.predicted_outcome)}</td>
-                    <td>{outcomeLabel(item.actual_outcome)}</td>
-                    <td>
-                      {item.score.home} : {item.score.away}
-                    </td>
-                    <td>
-                      <StatusBadge
-                        className={
-                          item.correct ? "result-correct" : "result-wrong"
-                        }
-                        variant={item.correct ? "ready" : "danger"}
-                      >
-                        {item.correct ? "命中" : "未中"}
-                      </StatusBadge>
-                    </td>
-                    <td>{item.brier_score.toFixed(3)}</td>
-                    <td>{item.log_loss?.toFixed(3) ?? "-"}</td>
-                    <td>{item.rps?.toFixed(3) ?? "-"}</td>
-                    <td>
-                      {item.data_completeness === null
-                        ? "-"
-                        : percent(item.data_completeness)}
-                    </td>
-                    <td className="model-cell">
-                      <b>{modelLabel(item.model_key, item.model_version)}</b>
-                      <small>{item.model_version}</small>
-                    </td>
+          <div className={tableWrapClasses}>
+            <div className="overflow-x-auto">
+              <table className={tableClasses}>
+                <thead>
+                  <tr className={headRowClasses}>
+                    <th className={headCellClasses}>比赛</th>
+                    <th className={headCellClasses}>日期</th>
+                    <th className={headCellClasses}>联赛</th>
+                    <th className={headCellClasses}>预测</th>
+                    <th className={headCellClasses}>实际</th>
+                    <th className={headCellClasses}>比分</th>
+                    <th className={headCellClasses}>正确</th>
+                    <th className={headCellClasses}>Brier</th>
+                    <th className={headCellClasses}>Log Loss</th>
+                    <th className={headCellClasses}>RPS</th>
+                    <th className={headCellClasses}>完整度</th>
+                    <th className={headCellClasses}>模型 / 版本</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className={tbodyClasses}>
+                  {visible.map((item) => (
+                    <tr key={item.id} className={rowClasses}>
+                      <th scope="row" className={rowHeadClasses}>
+                        <b className="block text-xs font-semibold text-slate-100">
+                          {item.home_team ?? "主队"} vs {item.away_team ?? "客队"}
+                        </b>
+                      </th>
+                      <td className={numberCellClasses}>{item.fixture_date}</td>
+                      <td className={cellClasses}>{leagueName(item.league_key)}</td>
+                      <td className={cellClasses}>{outcomeLabel(item.predicted_outcome)}</td>
+                      <td className={cellClasses}>{outcomeLabel(item.actual_outcome)}</td>
+                      <td className={numberCellClasses}>
+                        {item.score.home} : {item.score.away}
+                      </td>
+                      <td className={cellClasses}>
+                        <StatusBadge variant={item.correct ? "ready" : "danger"}>
+                          {item.correct ? "命中" : "未中"}
+                        </StatusBadge>
+                      </td>
+                      <td className={numberCellClasses}>{item.brier_score.toFixed(3)}</td>
+                      <td className={numberCellClasses}>{item.log_loss?.toFixed(3) ?? "-"}</td>
+                      <td className={numberCellClasses}>{item.rps?.toFixed(3) ?? "-"}</td>
+                      <td className={numberCellClasses}>
+                        {item.data_completeness === null ? (
+                          "-"
+                        ) : (
+                          <span
+                            className={
+                              item.data_completeness >= 0.9
+                                ? "text-emerald-400"
+                                : item.data_completeness >= 0.6
+                                  ? "text-amber-400"
+                                  : "text-rose-400"
+                            }
+                          >
+                            {percent(item.data_completeness)}
+                          </span>
+                        )}
+                      </td>
+                      <th scope="row" className={rowHeadClasses}>
+                        <b className="block text-xs font-semibold text-slate-100">{modelLabel(item.model_key, item.model_version)}</b>
+                        <small className="block text-[11px] text-slate-500">{item.model_version}</small>
+                      </th>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <Pagination page={page} pageCount={pageCount} onChange={setPage} />
+          <Pagination
+            page={page}
+            pageCount={pageCount}
+            onChange={setPage}
+            total={metrics.items.length}
+          />
         </>
       ) : (
-        <EmptyState className="performance-empty">
+        <EmptyState>
           比赛结束并完成结算后显示预测样本
         </EmptyState>
       )}
@@ -1346,7 +1510,7 @@ function SettlementHistory({ metrics }: { metrics: PredictionMetrics }) {
   );
 }
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 10;
 
 const LEAGUE_NAMES: Record<string, string> = {
   epl: "英超",
@@ -1373,31 +1537,44 @@ function Pagination({
   page,
   pageCount,
   onChange,
+  total,
 }: {
   page: number;
   pageCount: number;
   onChange: (page: number) => void;
+  total?: number;
 }) {
   if (pageCount <= 1) return null;
+  const start = (page - 1) * PAGE_SIZE + 1;
+  const end = total === undefined ? page * PAGE_SIZE : Math.min(page * PAGE_SIZE, total);
   return (
-    <div className="table-pagination">
-      <button
-        type="button"
-        disabled={page <= 1}
-        onClick={() => onChange(page - 1)}
-      >
-        上一页
-      </button>
+    <div className="flex justify-between items-center text-xs font-mono text-slate-500 pt-2">
       <span>
-        {page} / {pageCount}
+        {total === undefined
+          ? `第 ${page} / ${pageCount} 页`
+          : `显示第 ${start}-${end} 项，共 ${total} 项`}
       </span>
-      <button
-        type="button"
-        disabled={page >= pageCount}
-        onClick={() => onChange(page + 1)}
-      >
-        下一页
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onChange(page - 1)}
+          className="rounded bg-slate-800 px-2.5 py-1 text-slate-400 transition-colors hover:text-white disabled:opacity-40"
+        >
+          上一页
+        </button>
+        <span className="tabular-nums">
+          {page} / {pageCount}
+        </span>
+        <button
+          type="button"
+          disabled={page >= pageCount}
+          onClick={() => onChange(page + 1)}
+          className="rounded bg-slate-800 px-2.5 py-1 text-slate-400 transition-colors hover:text-white disabled:opacity-40"
+        >
+          下一页
+        </button>
+      </div>
     </div>
   );
 }

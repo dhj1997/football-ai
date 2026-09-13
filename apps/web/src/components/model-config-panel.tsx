@@ -1,8 +1,8 @@
 "use client";
 
-import { KeyRound, LoaderCircle, Save, Settings2 } from "lucide-react";
+import { KeyRound, Save, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ErrorState, SectionHeader, StatusBadge } from "@/components/ui";
+import { ErrorState, LoadingState, SectionHeader, StatusBadge } from "@/components/ui";
 import { fetchRuntimeConfig, updateRuntimeConfig } from "@/lib/api";
 import type { ModelKey, RuntimeConfigResponse } from "@/lib/types";
 
@@ -22,6 +22,9 @@ function draftFromConfig(config: RuntimeConfigResponse): ConfigDraft {
     portfolio: { ...config.portfolio },
   };
 }
+
+const inputClasses =
+  "w-full rounded-xl border border-slate-800 bg-pitch-950 px-3 py-2 font-mono text-xs text-slate-200 outline-none transition-colors placeholder:text-slate-600 focus:border-blue-500";
 
 export function ModelConfigPanel() {
   const [config, setConfig] = useState<RuntimeConfigResponse | null>(null);
@@ -75,35 +78,53 @@ export function ModelConfigPanel() {
     }
   }
 
-  return <section className="model-config-panel" aria-labelledby="model-config-title">
+  return <section className="space-y-4" aria-labelledby="model-config-title">
     <SectionHeader
-      className="team-section-heading"
       eyebrow="RUNTIME CONFIG"
       title="模型与下注配置"
       titleId="model-config-title"
       meta={config?.updated_at ? `最近更新 ${formatDate(config.updated_at)}` : "仅当前进程生效"}
     />
-    {error && <ErrorState className="error-banner">{error}</ErrorState>}
-    {message && <div className="sync-success model-config-success" role="status" aria-live="polite">{message}</div>}
-    {loading ? <div className="model-config-loading"><LoaderCircle className="spin" size={16} />正在读取运行配置</div> : draft && config ? <>
-      <div className="model-config-models">
+    {error && <ErrorState>{error}</ErrorState>}
+    {message && (
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-300" role="status" aria-live="polite">
+        {message}
+      </div>
+    )}
+    {loading ? <LoadingState>正在读取运行配置</LoadingState> : draft && config ? <>
+      <div className="grid gap-4 md:grid-cols-2">
         {modelKeys.map((key) => {
           const item = config.models[key];
           const current = draft.models[key];
-          return <article className="model-config-card" key={key}>
-            <div className="model-config-card-heading">
-              <div><Settings2 size={16} aria-hidden="true" /><strong>{item.label}</strong><small>{key}</small></div>
+          return <article className="rounded-2xl border border-slate-800 bg-pitch-900 p-4 shadow-xl" key={key}>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-white">
+                <Settings2 size={15} className="text-blue-400" aria-hidden="true" />
+                <strong className="text-xs font-bold">{item.label}</strong>
+                <small className="font-mono text-[11px] text-slate-500">{key}</small>
+              </div>
               <StatusBadge variant={!item.enabled ? "partial" : item.provider_ready ? "ready" : "partial"}>{!item.enabled ? "暂时停用" : item.provider_ready ? "可用" : item.api_key_configured ? "配置不完整" : "未配置 Key"}</StatusBadge>
             </div>
-            <label><span>模型名称</span><input value={current.model} onChange={(event) => updateModel(key, "model", event.target.value)} /></label>
-            <label><span>API 地址</span><input value={current.base_url} onChange={(event) => updateModel(key, "base_url", event.target.value)} /></label>
-            <label><span><KeyRound size={12} aria-hidden="true" />API Key <em>{item.api_key_hint ? `当前 ${item.api_key_hint}` : "未配置"}</em></span><input type="password" autoComplete="new-password" value={current.api_key} onChange={(event) => updateModel(key, "api_key", event.target.value)} placeholder="留空保持不变" /></label>
+            <div className="space-y-2.5">
+              <label className="block"><span className="mb-1 block text-[11px] text-slate-400">模型名称</span><input className={inputClasses} value={current.model} onChange={(event) => updateModel(key, "model", event.target.value)} /></label>
+              <label className="block"><span className="mb-1 block text-[11px] text-slate-400">API 地址</span><input className={inputClasses} value={current.base_url} onChange={(event) => updateModel(key, "base_url", event.target.value)} /></label>
+              <label className="block">
+                <span className="mb-1 flex items-center gap-1 text-[11px] text-slate-400"><KeyRound size={12} aria-hidden="true" />API Key <em className="not-italic text-slate-600">{item.api_key_hint ? `当前 ${item.api_key_hint}` : "未配置"}</em></span>
+                <input className={inputClasses} type="password" autoComplete="new-password" value={current.api_key} onChange={(event) => updateModel(key, "api_key", event.target.value)} placeholder="留空保持不变" />
+              </label>
+            </div>
           </article>;
         })}
       </div>
-      <div className="model-config-policy">
-        <div className="model-config-subheading"><div><span>PAPER PORTFOLIO</span><strong>模拟下注策略</strong></div><small>比例按账户权益计算</small></div>
-        <div className="model-config-policy-grid">
+      <div className="rounded-2xl border border-slate-800 bg-pitch-900 p-4 shadow-xl">
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-blue-400">PAPER PORTFOLIO</span>
+            <strong className="mt-0.5 block text-base font-bold text-white">模拟下注策略</strong>
+          </div>
+          <small className="text-[11px] text-slate-500">比例按账户权益计算</small>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <PercentField label="最小优势" value={draft.portfolio.min_edge} onChange={(value) => updatePercent("min_edge", value)} />
           <PercentField label="最小 EV" value={draft.portfolio.min_ev} onChange={(value) => updatePercent("min_ev", value)} />
           <PercentField label="单笔下注比例" value={draft.portfolio.stake_fraction} onChange={(value) => updatePercent("stake_fraction", value)} />
@@ -111,13 +132,39 @@ export function ModelConfigPanel() {
           <PercentField label="最大回撤" value={draft.portfolio.max_drawdown} onChange={(value) => updatePercent("max_drawdown", value)} />
         </div>
       </div>
-      <div className="model-config-actions"><small>API Key 不会回显；留空表示保持当前 Key。重启服务后恢复 .env 配置。</small><button type="button" onClick={() => void save()} disabled={saving}><Save size={15} aria-hidden="true" />{saving ? "应用中" : "应用配置"}</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <small className="text-[11px] text-slate-500">API Key 不会回显；留空表示保持当前 Key。重启服务后恢复 .env 配置。</small>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-600/30 transition-colors hover:bg-blue-500"
+        >
+          <Save size={14} aria-hidden="true" />{saving ? "应用中" : "应用配置"}
+        </button>
+      </div>
     </> : null}
   </section>;
 }
 
 function PercentField({ label, value, onChange }: { label: string; value: number; onChange: (value: string) => void }) {
-  return <label><span>{label}</span><div className="percent-input"><input type="number" min="0" max="100" step="0.1" value={(value * 100).toFixed(1)} onChange={(event) => onChange(event.target.value)} /><b>%</b></div></label>;
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] text-slate-400">{label}</span>
+      <div className="flex items-center rounded-xl border border-slate-800 bg-pitch-950 transition-colors focus-within:border-blue-500">
+        <input
+          type="number"
+          min="0"
+          max="100"
+          step="0.1"
+          value={(value * 100).toFixed(1)}
+          onChange={(event) => onChange(event.target.value)}
+          className="w-full bg-transparent px-3 py-2 font-mono text-xs tabular-nums text-slate-200 outline-none"
+        />
+        <b className="pr-3 font-mono text-xs text-slate-500">%</b>
+      </div>
+    </label>
+  );
 }
 
 function formatDate(value: string) {

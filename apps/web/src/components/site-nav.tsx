@@ -4,49 +4,29 @@ import Link from "next/link";
 import {
   ChartNoAxesCombined,
   LayoutList,
-  Moon,
   Settings2,
-  Sun,
   Table2,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
-function ThemeToggle() {
-  function toggle() {
-    const root = document.documentElement;
-    const next = root.dataset.theme === "light" ? "dark" : "light";
-    root.dataset.theme = next;
-    try {
-      localStorage.setItem("theme", next);
-    } catch {
-      /* 隐私模式下忽略 */
-    }
-  }
-  return (
-    <button
-      type="button"
-      className="theme-toggle"
-      onClick={toggle}
-      title="切换亮色 / 暗色主题"
-      aria-label="切换亮色或暗色主题"
-    >
-      <Sun className="icon-for-dark" size={16} aria-hidden="true" />
-      <Moon className="icon-for-light" size={16} aria-hidden="true" />
-    </button>
-  );
-}
+const linkClasses =
+  "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:text-slate-200 aria-[current=page]:bg-blue-600 aria-[current=page]:text-white aria-[current=page]:shadow-md aria-[current=page]:shadow-blue-600/30";
 
 export function SiteNav() {
   const pathname = usePathname();
   return (
-    <nav aria-label="主导航">
+    <nav
+      aria-label="主导航"
+      className="flex items-center gap-1 rounded-xl border border-slate-800 bg-pitch-950 p-1"
+    >
       <Link
         href="/"
         aria-label="赛程研究"
         aria-current={pathname === "/" ? "page" : undefined}
         title="赛程研究"
+        className={linkClasses}
       >
-        <LayoutList size={16} aria-hidden="true" />
+        <LayoutList size={14} aria-hidden="true" />
         <span>赛程研究</span>
       </Link>
       <Link
@@ -54,8 +34,9 @@ export function SiteNav() {
         aria-label="积分数据"
         aria-current={pathname === "/standings" ? "page" : undefined}
         title="积分数据"
+        className={linkClasses}
       >
-        <Table2 size={16} aria-hidden="true" />
+        <Table2 size={14} aria-hidden="true" />
         <span>积分数据</span>
       </Link>
       <Link
@@ -63,8 +44,9 @@ export function SiteNav() {
         aria-label="模型复盘"
         aria-current={pathname === "/performance" ? "page" : undefined}
         title="模型复盘"
+        className={linkClasses}
       >
-        <ChartNoAxesCombined size={16} aria-hidden="true" />
+        <ChartNoAxesCombined size={14} aria-hidden="true" />
         <span>模型复盘</span>
       </Link>
       <Link
@@ -72,11 +54,11 @@ export function SiteNav() {
         aria-label="系统管理"
         aria-current={pathname === "/admin" ? "page" : undefined}
         title="系统管理"
+        className={linkClasses}
       >
-        <Settings2 size={16} aria-hidden="true" />
+        <Settings2 size={14} aria-hidden="true" />
         <span>系统管理</span>
       </Link>
-      <ThemeToggle />
     </nav>
   );
 }

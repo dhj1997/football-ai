@@ -41,10 +41,15 @@ import { canCreatePrediction, deriveMatchReport } from "@/lib/match-report";
 import { OperationsPanel } from "@/components/operations-panel";
 import { ModelConfigPanel } from "@/components/model-config-panel";
 import {
+  Card,
   DataFreshness,
+  EmptyState,
+  LoadingState,
   PageHeader,
   SectionHeader,
+  StatusBadge,
   Tabs,
+  type StatusVariant,
 } from "@/components/ui";
 import type {
   DateFilter,
@@ -78,6 +83,67 @@ const evidenceMeta = [
   { key: "odds", label: "赛前赔率", icon: BarChart3 },
   { key: "model", label: "模型结果", icon: Gauge },
 ] as const;
+
+// Tailwind 工具类复用片段（替代原全局 CSS 类）。
+const eyebrowClass =
+  "text-[10px] font-bold uppercase tracking-wider font-mono text-blue-400";
+const mutedNoteClass =
+  "rounded-xl border border-dashed border-slate-700 px-3 py-2 text-xs leading-relaxed text-slate-500";
+const sourceNoteClass = "mt-3 text-[11px] leading-relaxed text-slate-500";
+const signalReadyClass =
+  "inline-flex items-center gap-1 rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400";
+const signalWaitingClass =
+  "inline-flex items-center gap-1 rounded border border-slate-500/20 bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-400";
+const signalPredictedClass =
+  "inline-flex items-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400";
+const manualPredictButtonClass =
+  "inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-400 transition-colors hover:bg-blue-500/20 disabled:opacity-60";
+const iconButtonSecondaryClass =
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-300 transition-colors hover:bg-slate-700 disabled:opacity-60";
+const syncActionClass =
+  "inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white shadow-md shadow-blue-600/30 transition-colors hover:bg-blue-500 disabled:opacity-60";
+const syncActionSecondaryClass =
+  "inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-700 disabled:opacity-60";
+const primaryButtonClass =
+  "inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3.5 text-xs font-bold text-white shadow-md shadow-blue-600/30 transition-colors hover:bg-blue-500 disabled:opacity-60";
+const ctaButtonClass =
+  "inline-flex w-full items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 py-3 text-xs font-bold text-white shadow-lg shadow-blue-500/20 transition-colors hover:from-blue-500 hover:to-indigo-500";
+const scoreToneClass = {
+  winner: "text-rose-400",
+  loser: "text-emerald-400",
+  draw: "text-slate-200",
+} as const;
+const rowResultToneClass: Record<string, string> = {
+  "home-win": "text-slate-200",
+  "away-win": "text-slate-200",
+  draw: "text-slate-400",
+  pending: "text-slate-500",
+};
+const recentResultToneClass: Record<string, string> = {
+  w: "text-rose-400",
+  d: "text-slate-400",
+  l: "text-emerald-400",
+};
+const factorToneClass: Record<string, string> = {
+  home: "text-rose-400",
+  away: "text-emerald-400",
+  neutral: "text-slate-400",
+  warning: "text-amber-400",
+};
+const riskToneVariant: Record<string, StatusVariant> = {
+  waiting: "neutral",
+  danger: "danger",
+  warning: "partial",
+  ready: "ready",
+};
+// 联赛分组头固定色点（设计稿：epl 蓝 / 西甲 amber / 中超 rose / 其他 slate）。
+const leagueDotClass: Record<string, string> = {
+  epl: "bg-blue-500",
+  laliga: "bg-amber-500",
+  csl: "bg-rose-500",
+};
+const leagueDotFallback = "bg-slate-500";
+const leagueDot = (key: string) => leagueDotClass[key] ?? leagueDotFallback;
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 function handicapRecommendation(
@@ -156,24 +222,35 @@ export function Scoreline({
   const awayScore = Number(away);
   const homeTone =
     homeScore > awayScore
-      ? "score-winner"
+      ? scoreToneClass.winner
       : homeScore < awayScore
-        ? "score-loser"
-        : "score-draw";
+        ? scoreToneClass.loser
+        : scoreToneClass.draw;
   const awayTone =
     awayScore > homeScore
-      ? "score-winner"
+      ? scoreToneClass.winner
       : awayScore < homeScore
-        ? "score-loser"
-        : "score-draw";
+        ? scoreToneClass.loser
+        : scoreToneClass.draw;
+  if (large)
+    return (
+      <span
+        className="inline-flex items-baseline gap-2 font-mono text-4xl font-black tabular-nums"
+        aria-label={`${home} 比 ${away}`}
+      >
+        <b className={homeTone}>{home}</b>
+        <i className="text-xl font-normal not-italic text-slate-500">:</i>
+        <b className={awayTone}>{away}</b>
+      </span>
+    );
   return (
     <span
-      className={`scoreline${large ? " scoreline-large" : ""}`}
+      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs font-bold tabular-nums text-amber-400"
       aria-label={`${home} 比 ${away}`}
     >
-      <b className={homeTone}>{home}</b>
-      <i>:</i>
-      <b className={awayTone}>{away}</b>
+      {home}
+      <i className="font-normal not-italic text-amber-400/60">:</i>
+      {away}
     </span>
   );
 }
@@ -183,7 +260,9 @@ function ParsedScoreline({ score }: { score: string }) {
   return match ? (
     <Scoreline home={match[1]} away={match[2]} />
   ) : (
-    <strong>{score}</strong>
+    <strong className="font-mono text-sm font-bold tabular-nums text-slate-200">
+      {score}
+    </strong>
   );
 }
 
@@ -197,7 +276,7 @@ function TeamMark({
   if (team.logo) {
     return (
       <Image
-        className={`team-mark team-badge ${tone}`}
+        className="h-7 w-7 shrink-0 rounded-full border border-slate-700 bg-pitch-800 object-contain p-0.5"
         src={team.logo}
         alt=""
         width={28}
@@ -207,7 +286,14 @@ function TeamMark({
     );
   }
   return (
-    <span className={`team-mark ${tone}`} aria-hidden="true">
+    <span
+      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-700 text-[11px] font-bold ${
+        tone === "home"
+          ? "bg-blue-500/10 text-blue-300"
+          : "bg-slate-500/10 text-slate-300"
+      }`}
+      aria-hidden="true"
+    >
       {team.code.slice(0, 3)}
     </span>
   );
@@ -266,33 +352,66 @@ function FixtureRow({
         ? "away-win"
         : "draw"
     : "pending";
+  const rowStatusVariant: StatusVariant =
+    fixture.status === "finished"
+      ? "neutral"
+      : fixture.status === "live"
+        ? "info"
+        : fixture.status === "postponed" || fixture.status === "cancelled"
+          ? "danger"
+          : kickoffHasPassed
+            ? "partial"
+            : fixture.lineup_confirmed
+              ? "ready"
+              : "neutral";
   const content = (
     <>
-      <span className="fixture-time">
-        <strong>
-          {fixture.status === "finished"
-            ? "完场"
-            : formatKickoff(fixture.kickoff)}
+      <span className="flex w-14 shrink-0 flex-col items-start gap-1.5">
+        <strong className="font-mono text-xs font-bold tabular-nums text-slate-300">
+          {formatKickoff(fixture.kickoff)}
         </strong>
-        <small>{fixture.league.name}</small>
+        <StatusBadge variant={rowStatusVariant}>{statusText}</StatusBadge>
       </span>
-      <span className="fixture-teams">
-        <span>
-          <TeamMark team={fixture.home_team} tone="home" />
-          <b>{fixture.home_team.name}</b>
-        </span>
-        <span>
-          <TeamMark team={fixture.away_team} tone="away" />
-          <b>{fixture.away_team.name}</b>
-        </span>
+      <span className="flex min-w-0 flex-1 items-center justify-center gap-2">
+        <TeamMark team={fixture.home_team} tone="home" />
+        <b
+          className={`min-w-0 truncate text-sm font-semibold ${
+            fixture.score ? "text-white" : "text-slate-300"
+          }`}
+        >
+          {fixture.home_team.name}
+        </b>
+        {fixture.score ? (
+          <span className="flex shrink-0 flex-col items-center gap-0.5">
+            <Scoreline home={fixture.score.home} away={fixture.score.away} />
+            <small className={`text-[10px] ${rowResultToneClass[resultTone]}`}>
+              {resultLabel}
+            </small>
+          </span>
+        ) : (
+          <i className="shrink-0 font-mono text-[11px] not-italic text-slate-500">
+            vs
+          </i>
+        )}
+        <b
+          className={`min-w-0 truncate text-sm font-semibold ${
+            fixture.score ? "text-white" : "text-slate-300"
+          }`}
+        >
+          {fixture.away_team.name}
+        </b>
+        <TeamMark team={fixture.away_team} tone="away" />
       </span>
-      <span className="fixture-research-signals" aria-label="研究状态">
+      <span
+        className="hidden shrink-0 flex-col items-end gap-1 sm:flex"
+        aria-label="研究状态"
+      >
         <span
           className={
             fixture.evidence_summary?.ready_count ===
             fixture.evidence_summary?.total_count
-              ? "ready"
-              : "waiting"
+              ? signalReadyClass
+              : signalWaitingClass
           }
           title={`证据 ${
             fixture.evidence_summary
@@ -307,16 +426,7 @@ function FixtureRow({
             : "0/4"}
         </span>
         <span
-          className={fixture.lineup_confirmed ? "ready" : "waiting"}
-          title={fixture.lineup_confirmed ? "首发已确认" : "首发待定"}
-        >
-          <Shirt size={13} aria-hidden="true" />
-          {fixture.lineup_confirmed ? "首发已确认" : "首发待定"}
-        </span>
-        <span
-          className={`${
-            fixture.has_prediction ? "ready signal-predicted" : "waiting"
-          }`}
+          className={fixture.has_prediction ? signalPredictedClass : signalWaitingClass}
           title={
             fixture.has_prediction
               ? "已有预测"
@@ -333,22 +443,14 @@ function FixtureRow({
               : "未预测"}
         </span>
       </span>
-      <span className={`fixture-state ${resultTone}`}>
-        {fixture.score ? (
-          <span className="fixture-score">
-            <Scoreline home={fixture.score.home} away={fixture.score.away} />
-            <small>{resultLabel}</small>
-          </span>
-        ) : (
-          <em className={fixture.lineup_confirmed ? "state-ready" : ""}>
-            {statusText}
-          </em>
-        )}
-        <ChevronRight size={18} aria-hidden="true" />
-      </span>
+      <ChevronRight size={16} aria-hidden="true" className="shrink-0 text-slate-600" />
     </>
   );
-  const className = `fixture-row ${selected ? "selected" : ""}`;
+  const className = `flex w-full items-center gap-3 border-l-4 p-4 text-left transition-colors ${
+    selected
+      ? "border-blue-500 bg-blue-500/5"
+      : "border-transparent hover:bg-slate-800/30"
+  }`;
   if (href)
     return (
       <Link
@@ -366,6 +468,73 @@ function FixtureRow({
   );
 }
 
+type FixtureLeagueGroup = {
+  league: Fixture["league"];
+  leagueKey: Fixture["league_key"];
+  fixtures: Fixture[];
+};
+
+function groupFixturesByLeague(items: Fixture[]): FixtureLeagueGroup[] {
+  return items.reduce<FixtureLeagueGroup[]>((result, fixture) => {
+    const current = result.find(
+      (group) => group.league.name === fixture.league.name,
+    );
+    if (current) current.fixtures.push(fixture);
+    else
+      result.push({
+        league: fixture.league,
+        leagueKey: fixture.league_key,
+        fixtures: [fixture],
+      });
+    return result;
+  }, []);
+}
+
+function FixtureGroupCard({
+  group,
+  selectedFixtureId,
+  onSelect,
+}: {
+  group: FixtureLeagueGroup;
+  selectedFixtureId: string | null;
+  onSelect?: (fixtureId: string) => void;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <header className="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-800/40 px-4 py-3">
+        <span className="flex min-w-0 items-center gap-2.5">
+          <i
+            aria-hidden="true"
+            className={`h-2 w-2 shrink-0 rounded-full ${leagueDot(group.leagueKey)}`}
+          />
+          <strong className="truncate text-xs font-bold text-white">
+            {group.league.name}
+          </strong>
+          <small className="truncate text-[11px] text-slate-500">
+            {group.league.country}
+          </small>
+        </span>
+        <b className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">
+          {group.fixtures.length} 场
+        </b>
+      </header>
+      <div className="divide-y divide-slate-800/60">
+        {group.fixtures.map((fixture) => (
+          <FixtureRow
+            key={fixture.id}
+            fixture={fixture}
+            selected={fixture.id === selectedFixtureId}
+            href={
+              onSelect ? undefined : `/matches/${encodeURIComponent(fixture.id)}`
+            }
+            onSelect={onSelect ? () => onSelect(fixture.id) : undefined}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function QuickResearchPanel({
   fixture,
   detail,
@@ -375,11 +544,15 @@ function QuickResearchPanel({
 }) {
   if (!fixture)
     return (
-      <aside className="quick-research-panel quick-research-empty">
-        <Database size={22} aria-hidden="true" />
-        <strong>选择一场比赛开始研究</strong>
-        <span>比赛摘要将在这里显示</span>
-      </aside>
+      <EmptyState
+        icon={<Database size={22} aria-hidden="true" />}
+        className="min-h-48"
+      >
+        <strong className="text-sm font-semibold text-slate-200">
+          选择一场比赛开始研究
+        </strong>
+        <span className="text-xs">比赛摘要将在这里显示</span>
+      </EmptyState>
     );
   const readyDetail = detail?.fixture.id === fixture.id ? detail : null;
   const report = readyDetail ? deriveMatchReport(readyDetail) : null;
@@ -397,30 +570,38 @@ function QuickResearchPanel({
           ? { label: "模型分歧", tone: "danger" }
           : { label: "可研究", tone: "ready" };
   const probability = report?.probabilities;
+  const maxProbability = probability
+    ? Math.max(probability.home, probability.draw, probability.away)
+    : 0;
   return (
-    <aside className="quick-research-panel" aria-label="快速研究摘要">
-      <header className="quick-research-heading">
-        <div>
-          <span>QUICK READOUT</span>
-          <h2>快速研究</h2>
+    <Card className="flex flex-col gap-5 p-6" aria-label="快速研究摘要">
+      <header className="space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className={eyebrowClass}>QUICK READOUT</span>
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
+            <i
+              aria-hidden="true"
+              className={`h-1.5 w-1.5 rounded-full ${leagueDot(fixture.league_key)}`}
+            />
+            {fixture.league.name}
+          </span>
         </div>
-        <em className={risk.tone}>{risk.label}</em>
-      </header>
-      <div className="quick-fixture-title">
-        <span>{fixture.league.name}</span>
-        <h3>
-          {fixture.home_team.name} <i>vs</i> {fixture.away_team.name}
+        <h2 className="text-lg font-bold text-white">快速研究</h2>
+        <h3 className="text-base font-bold text-white">
+          {fixture.home_team.name}{" "}
+          <i className="px-0.5 text-xs font-normal not-italic text-slate-500">vs</i>{" "}
+          {fixture.away_team.name}
         </h3>
-        <p>
+        <p className="font-mono text-xs tabular-nums text-slate-400">
           {formatKickoff(fixture.kickoff)} · {fixture.venue || "场地待定"}
         </p>
-      </div>
+      </header>
       {report ? (
         <>
-          <div className="quick-metrics">
-            <div>
-              <small>模型共识</small>
-              <strong>
+          <div className="grid grid-cols-3 gap-3 rounded-xl border border-slate-800 bg-pitch-950 p-3.5">
+            <div className="min-w-0 text-center">
+              <small className="block text-[11px] text-slate-500">模型共识</small>
+              <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
                 {report.consensusOutcome === "home"
                   ? "主胜"
                   : report.consensusOutcome === "draw"
@@ -429,7 +610,7 @@ function QuickResearchPanel({
                       ? "客胜"
                       : "待生成"}
               </strong>
-              <span>
+              <span className="mt-0.5 block text-[11px] text-slate-400">
                 {report.models.length > 1
                   ? report.consensus.includes("一致")
                     ? "双模型同向"
@@ -439,76 +620,112 @@ function QuickResearchPanel({
                     : "无模型结果"}
               </span>
             </div>
-            <div>
-              <small>一致度</small>
-              <strong>
+            <div className="min-w-0 text-center">
+              <small className="block text-[11px] text-slate-500">一致度</small>
+              <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
                 {report.agreement === null ? "-" : percent(report.agreement)}
               </strong>
-              <span>模型概率差</span>
+              <span className="mt-0.5 block text-[11px] text-slate-400">模型概率差</span>
             </div>
-            <div>
-              <small>证据质量</small>
-              <strong>
+            <div className="min-w-0 text-center">
+              <small className="block text-[11px] text-slate-500">证据质量</small>
+              <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
                 {evidenceReady}/{evidenceTotal}
               </strong>
-              <span>{percent(report.evidenceQuality)} 已就绪</span>
+              <span className="mt-0.5 block text-[11px] text-slate-400">
+                {percent(report.evidenceQuality)} 已就绪
+              </span>
             </div>
           </div>
           {probability && (
-            <div className="quick-probability">
-              <div>
-                <span>胜平负概率</span>
-                <b>
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
+                <span className="text-slate-400">胜平负概率</span>
+                <b className="font-mono font-bold tabular-nums text-slate-200">
                   主胜 {Math.round(probability.home * 100)} · 平{" "}
                   {Math.round(probability.draw * 100)} · 客胜{" "}
                   {Math.round(probability.away * 100)}
                 </b>
               </div>
-              <div className="quick-probability-bar" aria-hidden="true">
-                <i style={{ width: `${probability.home * 100}%` }} />
-                <i style={{ width: `${probability.draw * 100}%` }} />
-                <i style={{ width: `${probability.away * 100}%` }} />
+              <div
+                className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800"
+                aria-hidden="true"
+              >
+                <i
+                  className={`h-full ${probability.home === maxProbability ? "bg-rose-500" : "bg-slate-600"}`}
+                  style={{ width: `${probability.home * 100}%` }}
+                />
+                <i
+                  className={`h-full ${probability.draw === maxProbability ? "bg-rose-500" : "bg-slate-700"}`}
+                  style={{ width: `${probability.draw * 100}%` }}
+                />
+                <i
+                  className={`h-full ${probability.away === maxProbability ? "bg-rose-500" : "bg-slate-600"}`}
+                  style={{ width: `${probability.away * 100}%` }}
+                />
               </div>
             </div>
           )}
-          <div className="quick-facts">
+          <div className="grid gap-3 sm:grid-cols-2">
             {report.factors.slice(0, 3).map((factor) => (
-              <div key={factor.label}>
-                <small>{factor.label}</small>
-                <strong>{factor.value}</strong>
-                <span className={factor.tone}>{factor.conclusion}</span>
+              <div key={factor.label} className="min-w-0">
+                <small className="block text-[11px] text-slate-500">{factor.label}</small>
+                <strong className="mt-0.5 block truncate text-sm font-semibold text-white">
+                  {factor.value}
+                </strong>
+                <span className={`mt-0.5 block text-[11px] ${factorToneClass[factor.tone]}`}>
+                  {factor.conclusion}
+                </span>
               </div>
             ))}
-            <div>
-              <small>市场观察</small>
-              <strong>{report.marketWatch}</strong>
+            <div className="min-w-0">
+              <small className="block text-[11px] text-slate-500">市场观察</small>
+              <strong className="mt-0.5 block text-sm font-semibold text-white">
+                {report.marketWatch}
+              </strong>
               <span
-                className={readyDetail?.context.odds ? "neutral" : "warning"}
+                className={`mt-0.5 block text-[11px] ${readyDetail?.context.odds ? "text-slate-400" : "text-amber-400"}`}
               >
                 {readyDetail?.context.odds ? "已纳入判断" : "不使用估算"}
               </span>
             </div>
           </div>
+          <div
+            className={`flex items-center justify-center rounded-xl border p-4 ${
+              risk.tone === "danger"
+                ? "border-rose-500/20 bg-rose-500/10"
+                : risk.tone === "warning"
+                  ? "border-amber-500/20 bg-amber-500/10"
+                  : risk.tone === "ready"
+                    ? "border-emerald-500/20 bg-emerald-500/10"
+                    : "border-slate-700 bg-slate-800/30"
+            }`}
+          >
+            <StatusBadge variant={riskToneVariant[risk.tone]}>{risk.label}</StatusBadge>
+          </div>
         </>
       ) : (
-        <div className="quick-panel-skeleton" aria-label="正在读取比赛摘要">
-          <i />
-          <i />
-          <i />
-          <i />
+        <div className="grid grid-cols-2 gap-2" aria-label="正在读取比赛摘要">
+          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
+          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
+          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
+          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
         </div>
       )}
-      <footer>
-        <span>
+      <footer className="mt-auto space-y-3 border-t border-slate-800 pt-4">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
           <Database size={13} aria-hidden="true" />
           TheSportsDB · 懂球帝
         </span>
-        <Link href={`/matches/${encodeURIComponent(fixture.id)}`}>
+        <Link
+          href={`/matches/${encodeURIComponent(fixture.id)}`}
+          className={ctaButtonClass}
+        >
           打开完整分析
           <ChevronRight size={16} aria-hidden="true" />
         </Link>
       </footer>
-    </aside>
+    </Card>
   );
 }
 
@@ -538,16 +755,7 @@ function ScoreCenterHome({
       new Date(left.kickoff).getTime() - new Date(right.kickoff).getTime()
     );
   });
-  const groups = orderedFixtures.reduce<
-    Array<{ league: Fixture["league"]; fixtures: Fixture[] }>
-  >((result, fixture) => {
-    const current = result.find(
-      (group) => group.league.name === fixture.league.name,
-    );
-    if (current) current.fixtures.push(fixture);
-    else result.push({ league: fixture.league, fixtures: [fixture] });
-    return result;
-  }, []);
+  const groups = groupFixturesByLeague(orderedFixtures);
   const emptyMessage =
     dataMode === "unconfigured"
       ? "请先配置赛程数据源"
@@ -559,54 +767,34 @@ function ScoreCenterHome({
     fixtures[0] ??
     null;
   return (
-    <div className="score-center-layout research-home-layout">
-      <section
-        className="score-center-list research-fixture-list"
-        aria-live="polite"
-      >
-        <div className="research-list-heading">
-          <div>
-            <span>FIXTURE QUEUE</span>
-            <h2>比赛列表</h2>
-          </div>
-          <small>{fixtures.length} 场 · 按状态与时间排序</small>
-        </div>
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+      <section className="flex flex-col gap-4 lg:col-span-7" aria-live="polite">
+        <SectionHeader
+          eyebrow="FIXTURE QUEUE"
+          title="比赛列表"
+          meta={`${fixtures.length} 场 · 按状态与时间排序`}
+        />
         {loading ? (
-          <div className="score-center-loading">
-            <LoaderCircle className="spin" size={20} aria-hidden="true" />
+          <LoadingState className="border-0 bg-transparent">
             正在读取比赛
-          </div>
+          </LoadingState>
         ) : groups.length ? (
           groups.map((group) => (
-            <section className="competition-group" key={group.league.id}>
-              <header>
-                <span className="competition-mark">{group.league.mark}</span>
-                <div>
-                  <strong>{group.league.name}</strong>
-                  <small>{group.league.country}</small>
-                </div>
-                <b>{group.fixtures.length} 场</b>
-              </header>
-              <div>
-                {group.fixtures.map((fixture) => (
-                  <FixtureRow
-                    key={fixture.id}
-                    fixture={fixture}
-                    selected={fixture.id === selectedFixture?.id}
-                    href={`/matches/${encodeURIComponent(fixture.id)}`}
-                  />
-                ))}
-              </div>
-            </section>
+            <FixtureGroupCard
+              key={group.league.id}
+              group={group}
+              selectedFixtureId={selectedFixture?.id ?? null}
+            />
           ))
         ) : (
-          <div className="score-center-loading">
-            <CalendarDays size={20} aria-hidden="true" />
+          <EmptyState icon={<CalendarDays size={20} aria-hidden="true" />}>
             {emptyMessage}
-          </div>
+          </EmptyState>
         )}
       </section>
-      <QuickResearchPanel fixture={selectedFixture} detail={detail} />
+      <div className="lg:col-span-5">
+        <QuickResearchPanel fixture={selectedFixture} detail={detail} />
+      </div>
     </div>
   );
 }
@@ -624,27 +812,42 @@ function EvidenceRail({ detail }: { detail: FixtureDetail }) {
     model: Boolean(detail.prediction),
   };
   return (
-    <section className="evidence-section" aria-labelledby="evidence-title">
+    <Card className="p-4" aria-labelledby="evidence-title">
       <SectionHeader
-        className="section-heading"
+        className="mb-3"
         eyebrow="INPUT READINESS"
         title="赛前证据轨道"
         titleId="evidence-title"
         level={3}
         meta={`${Object.values(readiness).filter(Boolean).length} / 6 就绪`}
       />
-      <ol className="evidence-rail">
+      <ol className="grid gap-2 sm:grid-cols-2">
         {evidenceMeta.map(({ key, label, icon: Icon }, index) => (
-          <li key={key} className={readiness[key] ? "ready" : "waiting"}>
-            <span className="rail-index">
+          <li
+            key={key}
+            className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-2 ${
+              readiness[key]
+                ? "border-emerald-500/30 bg-emerald-500/5"
+                : "border-slate-800 bg-pitch-950"
+            }`}
+          >
+            <span className="font-mono text-[11px] tabular-nums text-slate-500">
               {String(index + 1).padStart(2, "0")}
             </span>
-            <span className="rail-icon">
+            <span
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                readiness[key]
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : "bg-pitch-800 text-slate-500"
+              }`}
+            >
               <Icon size={17} aria-hidden="true" />
             </span>
-            <span className="rail-label">
-              <b>{label}</b>
-              <small>
+            <span className="min-w-0 flex-1">
+              <b className="block truncate text-xs font-semibold text-slate-200">
+                {label}
+              </b>
+              <small className="block text-[11px] text-slate-500">
                 {readiness[key]
                   ? "已纳入"
                   : key === "lineup"
@@ -653,14 +856,14 @@ function EvidenceRail({ detail }: { detail: FixtureDetail }) {
               </small>
             </span>
             {readiness[key] ? (
-              <Check size={16} aria-label="就绪" />
+              <Check size={16} aria-label="就绪" className="shrink-0 text-emerald-400" />
             ) : (
-              <CircleDot size={16} aria-label="等待" />
+              <CircleDot size={16} aria-label="等待" className="shrink-0 text-slate-600" />
             )}
           </li>
         ))}
       </ol>
-    </section>
+    </Card>
   );
 }
 
@@ -682,20 +885,32 @@ function RecentFormColumn({
     (match): match is string => typeof match === "string",
   );
   return (
-    <div className="recent-form-column">
-      <div className="data-column-heading">
-        <strong>{teamName}</strong>
-        <span>{pointsPerGame.toFixed(2)} 分/场</span>
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-2">
+        <strong className="truncate text-sm font-semibold text-slate-100">
+          {teamName}
+        </strong>
+        <span className="shrink-0 font-mono text-xs tabular-nums text-slate-400">
+          {pointsPerGame.toFixed(2)} 分/场
+        </span>
       </div>
       {rows.length > 0 ? (
-        <ul className="recent-match-list">
+        <ul className="mt-2 divide-y divide-slate-800/60">
           {rows.slice(0, 10).map((match) => (
-            <li key={`${match.date}-${match.home}-${match.away}`}>
-              <time>{match.date.slice(5)}</time>
-              <span>
-                {match.home} <i>vs</i> {match.away}
+            <li
+              key={`${match.date}-${match.home}-${match.away}`}
+              className="flex items-center gap-2 py-1.5 text-xs"
+            >
+              <time className="shrink-0 font-mono tabular-nums text-slate-500">
+                {match.date.slice(5)}
+              </time>
+              <span className="min-w-0 flex-1 truncate text-slate-300">
+                {match.home} <i className="not-italic text-slate-500">vs</i>{" "}
+                {match.away}
               </span>
-              <b className={`result-${match.result.toLowerCase()}`}>
+              <b
+                className={`w-4 shrink-0 text-center font-bold ${recentResultToneClass[match.result.toLowerCase()]}`}
+              >
                 {match.result}
               </b>
               <ParsedScoreline score={match.score} />
@@ -703,9 +918,11 @@ function RecentFormColumn({
           ))}
         </ul>
       ) : summary ? (
-        <p className="data-empty">供应商只返回近况摘要：{summary}</p>
+        <p className={`${mutedNoteClass} mt-2`}>
+          供应商只返回近况摘要：{summary}
+        </p>
       ) : (
-        <p className="data-empty">暂无可用的近 10 场比赛</p>
+        <p className={`${mutedNoteClass} mt-2`}>暂无可用的近 10 场比赛</p>
       )}
     </div>
   );
@@ -723,32 +940,58 @@ function LineupColumn({
   const starters = players.filter((player) => player.starter);
   const substitutes = players.filter((player) => !player.starter);
   return (
-    <div className="lineup-column">
-      <div className="data-column-heading">
-        <strong>{teamName}</strong>
-        <span>{formation ?? "阵型待确认"}</span>
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-2">
+        <strong className="truncate text-sm font-semibold text-slate-100">
+          {teamName}
+        </strong>
+        <span className="shrink-0 font-mono text-xs tabular-nums text-slate-400">
+          {formation ?? "阵型待确认"}
+        </span>
       </div>
       {starters.length > 0 ? (
         <>
-          <small className="list-label">首发</small>
-          <ul className="player-list">
+          <small className="mt-3 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            首发
+          </small>
+          <ul className="mt-1.5 space-y-1">
             {starters.map((player) => (
-              <li key={`${player.number}-${player.name}`}>
-                <b>{player.number ?? "-"}</b>
-                <span>{player.name}</span>
-                <small>{player.position}</small>
+              <li
+                key={`${player.number}-${player.name}`}
+                className="flex items-center gap-2 rounded-md bg-pitch-800/50 px-2 py-1 text-xs"
+              >
+                <b className="w-6 shrink-0 text-right font-mono tabular-nums text-slate-400">
+                  {player.number ?? "-"}
+                </b>
+                <span className="min-w-0 flex-1 truncate text-slate-200">
+                  {player.name}
+                </span>
+                <small className="shrink-0 text-[11px] text-slate-500">
+                  {player.position}
+                </small>
               </li>
             ))}
           </ul>
           {substitutes.length > 0 && (
             <>
-              <small className="list-label">替补</small>
-              <ul className="player-list substitutes">
+              <small className="mt-3 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                替补
+              </small>
+              <ul className="mt-1.5 space-y-1 opacity-80">
                 {substitutes.map((player) => (
-                  <li key={`${player.number}-${player.name}`}>
-                    <b>{player.number ?? "-"}</b>
-                    <span>{player.name}</span>
-                    <small>{player.position}</small>
+                  <li
+                    key={`${player.number}-${player.name}`}
+                    className="flex items-center gap-2 rounded-md bg-pitch-800/50 px-2 py-1 text-xs"
+                  >
+                    <b className="w-6 shrink-0 text-right font-mono tabular-nums text-slate-400">
+                      {player.number ?? "-"}
+                    </b>
+                    <span className="min-w-0 flex-1 truncate text-slate-200">
+                      {player.name}
+                    </span>
+                    <small className="shrink-0 text-[11px] text-slate-500">
+                      {player.position}
+                    </small>
                   </li>
                 ))}
               </ul>
@@ -756,7 +999,7 @@ function LineupColumn({
           )}
         </>
       ) : (
-        <p className="data-empty">首发名单尚未发布</p>
+        <p className={`${mutedNoteClass} mt-2`}>首发名单尚未发布</p>
       )}
     </div>
   );
@@ -774,7 +1017,7 @@ export function TeamLogo({
   const logo = profile.logo ?? team.logo;
   return logo ? (
     <Image
-      className={`team-logo ${tone}`}
+      className="h-11 w-11 shrink-0 rounded-lg border border-slate-700 bg-pitch-800 object-contain p-1"
       src={logo}
       alt={`${team.name}队徽`}
       width={46}
@@ -812,33 +1055,37 @@ function SquadTable({
     }))
     .filter((group) => group.rows.length > 0);
   return (
-    <details className="squad-column">
-      <summary className="squad-summary">
-        <span>
-          <strong>{teamName}</strong>
-          <small>完整注册名单 · {players.length} 人</small>
+    <details className="overflow-hidden rounded-xl border border-slate-800 bg-pitch-950">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-slate-800/30">
+        <span className="min-w-0">
+          <strong className="block truncate text-sm font-semibold text-slate-100">
+            {teamName}
+          </strong>
+          <small className="block text-[11px] text-slate-500">
+            完整注册名单 · {players.length} 人
+          </small>
         </span>
-        <span className="squad-count">
-          <b>查看</b>
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-pitch-800 px-2 py-1 text-[11px] text-slate-300">
+          <b className="font-semibold">查看</b>
           <ChevronDown size={15} aria-hidden="true" />
         </span>
       </summary>
-      <div className="squad-scroll">
+      <div className="max-h-72 space-y-3 overflow-y-auto border-t border-slate-800/70 px-3 py-3">
         {groups.length > 0 ? (
           groups.map((group) => (
-            <div className="squad-group" key={group.position}>
-              <div className="squad-group-label">
+            <div className="space-y-1.5" key={group.position}>
+              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 {positionLabels[group.position] ?? group.position}
-                <span>{group.rows.length}</span>
+                <span className="font-mono tabular-nums">{group.rows.length}</span>
               </div>
               <div
-                className="squad-table"
+                className="divide-y divide-slate-800/60 rounded-lg border border-slate-800/70"
                 role="table"
                 aria-label={`${teamName}${positionLabels[group.position] ?? group.position}名单`}
               >
                 {group.rows.map((player) => (
                   <div
-                    className="squad-row"
+                    className="grid grid-cols-[2rem_minmax(0,1fr)_2.5rem_4rem] items-center gap-2 px-2 py-1.5 text-xs"
                     role="row"
                     key={
                       player.canonical_player_id ??
@@ -847,20 +1094,24 @@ function SquadTable({
                       player.name
                     }
                   >
-                    <span className="squad-number">{player.number ?? "-"}</span>
-                    <span className="squad-player-name">
-                      <b>{player.name}</b>
-                      <small>
+                    <span className="font-mono tabular-nums text-slate-500">
+                      {player.number ?? "-"}
+                    </span>
+                    <span className="min-w-0">
+                      <b className="block truncate font-medium text-slate-200">
+                        {player.name}
+                      </b>
+                      <small className="block truncate text-[11px] text-slate-500">
                         {[player.nationality, playerNameStatus(player)]
                           .filter(Boolean)
                           .join(" · ")}
                       </small>
                     </span>
-                    <span className="squad-age">
+                    <span className="text-right font-mono tabular-nums text-slate-400">
                       {player.age ? `${player.age}岁` : "-"}
                     </span>
                     <span
-                      className="squad-value"
+                      className="truncate text-right font-mono tabular-nums text-slate-400"
                       title={
                         player.market_value_source
                           ? `${player.market_value_source} · ${player.market_value_as_of ? formatTimestamp(player.market_value_as_of) : "时间待确认"}`
@@ -877,7 +1128,7 @@ function SquadTable({
             </div>
           ))
         ) : (
-          <p className="data-empty">暂无完整阵容数据</p>
+          <p className={mutedNoteClass}>暂无完整阵容数据</p>
         )}
       </div>
     </details>
@@ -939,19 +1190,16 @@ export function AnalysisSnapshot({ detail }: { detail: FixtureDetail }) {
         ? `${fixture.home_team.name}已知伤停更多`
         : `${fixture.away_team.name}已知伤停更多`;
   return (
-    <section
-      className="analysis-snapshot"
-      aria-labelledby="analysis-snapshot-title"
-    >
+    <Card className="p-4" aria-labelledby="analysis-snapshot-title">
       <SectionHeader
-        className="section-heading"
+        className="mb-3"
         eyebrow="PRE-MATCH READOUT"
         title="赛前分析快照"
         titleId="analysis-snapshot-title"
         level={3}
         meta="只读取已同步证据"
       />
-      <div className="analysis-compare">
+      <div className="grid gap-2 sm:grid-cols-2">
         {[
           {
             team: fixture.home_team.name,
@@ -966,32 +1214,37 @@ export function AnalysisSnapshot({ detail }: { detail: FixtureDetail }) {
             side: "客队",
           },
         ].map(({ team, form, ppg, side }) => (
-          <div className="analysis-team" key={side}>
-            <div>
-              <strong>{team}</strong>
-              <small>{side}</small>
+          <div
+            className="rounded-xl border border-slate-800 bg-pitch-950 p-3"
+            key={side}
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <strong className="truncate text-sm font-semibold text-slate-100">
+                {team}
+              </strong>
+              <small className="shrink-0 text-[11px] text-slate-500">{side}</small>
             </div>
-            <b>
+            <b className="mt-1 block font-mono text-sm font-bold tabular-nums text-slate-100">
               {form.wins}胜 {form.draws}平 {form.losses}负
             </b>
-            <span>
+            <span className="mt-0.5 block font-mono text-xs tabular-nums text-slate-400">
               {(ppg ?? 0).toFixed(2)} 分/场 · {form.goalsFor}-
               {form.goalsAgainst}
             </span>
           </div>
         ))}
       </div>
-      <div className="analysis-facts">
-        <span>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs tabular-nums text-slate-400">
+        <span className="inline-flex items-center gap-1.5">
           <HeartPulse size={14} />
           伤停 {context.availability.home_missing} :{" "}
           {context.availability.away_missing}
         </span>
-        <span>
+        <span className="inline-flex items-center gap-1.5">
           <Shirt size={14} />
           首发 {context.lineup.confirmed ? "已确认" : "待发布"}
         </span>
-        <span>
+        <span className="inline-flex items-center gap-1.5">
           <BarChart3 size={14} />
           赔率{" "}
           {context.odds
@@ -999,20 +1252,20 @@ export function AnalysisSnapshot({ detail }: { detail: FixtureDetail }) {
             : "暂无"}
         </span>
         {prediction && (
-          <span>
+          <span className="inline-flex items-center gap-1.5">
             <Goal size={14} />
             预期进球 {prediction.expected_goals.home} :{" "}
             {prediction.expected_goals.away}
           </span>
         )}
       </div>
-      <p className="analysis-note">
+      <p className="mt-3 border-t border-slate-800 pt-2.5 text-xs leading-relaxed text-slate-400">
         {formText}；{availabilityText}。
         {context.lineup.confirmed
           ? "首发已纳入当前证据。"
           : "首发未发布，结论仍属于初步版本。"}
       </p>
-    </section>
+    </Card>
   );
 }
 
@@ -1042,65 +1295,76 @@ export function TeamProfiles({
     ({ profile }) => profile.founded || profile.venue || profile.logo,
   );
   return (
-    <section className="team-information" aria-label="球队信息与完整阵容">
+    <section className="space-y-4" aria-label="球队信息与完整阵容">
       {showProfiles && (
-        <div className="detail-data-block team-profile-block">
+        <Card className="p-4">
           <SectionHeader
-            className="section-heading"
+            className="mb-3"
             eyebrow="TEAM DOSSIER"
             title="球队档案"
             level={3}
             meta={hasProfile ? "供应商资料" : "待同步"}
           />
-          <div className="team-profile-grid">
+          <div className="grid gap-3 sm:grid-cols-2">
             {profiles.map(({ side, team, profile }) => (
-              <div className="team-profile" key={side}>
-                <div className="team-profile-top">
+              <div
+                className="rounded-xl border border-slate-800 bg-pitch-950 p-3"
+                key={side}
+              >
+                <div className="flex items-center gap-2.5">
                   <TeamLogo profile={profile} team={team} tone={side} />
-                  <div>
-                    <strong>{team.name}</strong>
-                    <small>
+                  <div className="min-w-0">
+                    <strong className="block truncate text-sm font-semibold text-slate-100">
+                      {team.name}
+                    </strong>
+                    <small className="block truncate text-[11px] text-slate-500">
                       {profile.city ?? profile.country ?? "球队资料"}
                     </small>
                   </div>
                 </div>
-                <dl>
+                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
                   <div>
-                    <dt>成立</dt>
-                    <dd>{profile.founded ?? "-"}</dd>
+                    <dt className="text-slate-500">成立</dt>
+                    <dd className="mt-0.5 font-mono tabular-nums text-slate-200">
+                      {profile.founded ?? "-"}
+                    </dd>
                   </div>
                   <div>
-                    <dt>主场</dt>
-                    <dd>{profile.venue ?? fixture.venue}</dd>
+                    <dt className="text-slate-500">主场</dt>
+                    <dd className="mt-0.5 font-mono tabular-nums text-slate-200">
+                      {profile.venue ?? fixture.venue}
+                    </dd>
                   </div>
                   <div>
-                    <dt>容量</dt>
-                    <dd>
+                    <dt className="text-slate-500">容量</dt>
+                    <dd className="mt-0.5 font-mono tabular-nums text-slate-200">
                       {profile.capacity
                         ? `${profile.capacity.toLocaleString()} 人`
                         : "-"}
                     </dd>
                   </div>
                   <div>
-                    <dt>所在地</dt>
-                    <dd>{profile.city ?? profile.country ?? "-"}</dd>
+                    <dt className="text-slate-500">所在地</dt>
+                    <dd className="mt-0.5 font-mono tabular-nums text-slate-200">
+                      {profile.city ?? profile.country ?? "-"}
+                    </dd>
                   </div>
                 </dl>
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       )}
       {showSquads && (
-        <div className="detail-data-block squad-block">
+        <Card className="p-4">
           <SectionHeader
-            className="section-heading"
+            className="mb-3"
             eyebrow="SQUAD REGISTER"
             title="全队球员与身价"
             level={3}
             meta="身价字段需授权数据源"
           />
-          <div className="squad-grid">
+          <div className="grid gap-3 lg:grid-cols-2">
             <SquadTable
               teamName={fixture.home_team.name}
               players={context.squads?.home ?? []}
@@ -1110,10 +1374,10 @@ export function TeamProfiles({
               players={context.squads?.away ?? []}
             />
           </div>
-          <p className="data-source-note">
+          <p className={sourceNoteClass}>
             当前免费公开源提供球员名单、号码、位置、年龄和照片；未提供可验证的实时市场身价，因此显示“暂无身价”，不会用转会费或工资替代。
           </p>
-        </div>
+        </Card>
       )}
     </section>
   );
@@ -1136,11 +1400,11 @@ export function EvidenceDetails({
   const awayInjuries = injuries.filter((player) => player.team === "away");
   const hasEvidence = Boolean(context.synced_at);
   return (
-    <section className="evidence-details" aria-label="详细赛前数据">
+    <section className="space-y-4" aria-label="详细赛前数据">
       {sections.includes("form") && (
-        <div className="detail-data-block">
+        <Card className="p-4">
           <SectionHeader
-            className="section-heading"
+            className="mb-3"
             eyebrow="FORM GUIDE"
             title={`近期战绩（${Math.max(homeForm.length, awayForm.length)}/10）`}
             level={3}
@@ -1151,7 +1415,7 @@ export function EvidenceDetails({
             }
           />
           {hasEvidence ? (
-            <div className="recent-form-grid">
+            <div className="grid gap-4 lg:grid-cols-2">
               <RecentFormColumn
                 teamName={fixture.home_team.name}
                 matches={homeForm}
@@ -1164,51 +1428,61 @@ export function EvidenceDetails({
               />
             </div>
           ) : (
-            <p className="data-empty">请先同步这场比赛的赛前数据</p>
+            <p className={mutedNoteClass}>请先同步这场比赛的赛前数据</p>
           )}
-        </div>
+        </Card>
       )}
 
       {sections.includes("h2h") && (
-        <div className="detail-data-block">
+        <Card className="p-4">
           <SectionHeader
-            className="section-heading"
+            className="mb-3"
             eyebrow="HEAD TO HEAD"
             title="历史交锋"
             level={3}
             meta={`${context.head_to_head.length} 场`}
           />
           {context.head_to_head.length > 0 ? (
-            <div className="h2h-table" role="table" aria-label="历史交锋记录">
-              <div className="h2h-row h2h-header" role="row">
+            <div
+              className="overflow-hidden rounded-xl border border-slate-800"
+              role="table"
+              aria-label="历史交锋记录"
+            >
+              <div
+                className="grid grid-cols-[5.5rem_minmax(0,1fr)_4rem] gap-2 border-b border-slate-800 bg-pitch-950 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-slate-400"
+                role="row"
+              >
                 <span>日期</span>
                 <span>对阵</span>
                 <span>比分</span>
               </div>
               {context.head_to_head.map((match) => (
                 <div
-                  className="h2h-row"
+                  className="grid grid-cols-[5.5rem_minmax(0,1fr)_4rem] items-center gap-2 border-b border-slate-800/60 px-3 py-2 text-xs text-slate-300 last:border-b-0 hover:bg-slate-800/30"
                   role="row"
                   key={`${match.date}-${match.home}-${match.away}`}
                 >
-                  <time>{match.date}</time>
-                  <span>
-                    {match.home} <i>vs</i> {match.away}
+                  <time className="font-mono tabular-nums text-slate-500">
+                    {match.date}
+                  </time>
+                  <span className="min-w-0 truncate">
+                    {match.home} <i className="not-italic text-slate-500">vs</i>{" "}
+                    {match.away}
                   </span>
                   <ParsedScoreline score={match.score} />
                 </div>
               ))}
             </div>
           ) : (
-            <p className="data-empty">暂无历史交锋数据</p>
+            <p className={mutedNoteClass}>暂无历史交锋数据</p>
           )}
-        </div>
+        </Card>
       )}
 
       {sections.includes("availability") && (
-        <div className="detail-data-block">
+        <Card className="p-4">
           <SectionHeader
-            className="section-heading"
+            className="mb-3"
             eyebrow="AVAILABILITY"
             title="伤停影响"
             level={3}
@@ -1222,16 +1496,25 @@ export function EvidenceDetails({
             }
           />
           {hasEvidence ? (
-            <div className="availability-grid">
-              <div>
-                <strong>{fixture.home_team.name}</strong>
-                <span>{context.availability.home_missing} 人缺阵</span>
-                <ul className="absence-list">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="min-w-0">
+                <strong className="block truncate text-sm font-semibold text-slate-100">
+                  {fixture.home_team.name}
+                </strong>
+                <span className="block font-mono text-xs tabular-nums text-slate-400">
+                  {context.availability.home_missing} 人缺阵
+                </span>
+                <ul className="mt-2 space-y-1.5">
                   {homeInjuries.length > 0 ? (
                     homeInjuries.map((player) => (
-                      <li key={`${player.name}-${player.reason}`}>
-                        <b>{player.name}</b>
-                        <small>
+                      <li
+                        key={`${player.name}-${player.reason}`}
+                        className="flex items-baseline gap-2 text-xs"
+                      >
+                        <b className="shrink-0 font-medium text-slate-200">
+                          {player.name}
+                        </b>
+                        <small className="min-w-0 text-[11px] text-slate-500">
                           {[player.reason, playerNameStatus(player)]
                             .filter(Boolean)
                             .join(" · ")}
@@ -1239,19 +1522,28 @@ export function EvidenceDetails({
                       </li>
                     ))
                   ) : (
-                    <li className="absence-empty">暂无已知伤停</li>
+                    <li className="text-xs text-slate-500">暂无已知伤停</li>
                   )}
                 </ul>
               </div>
-              <div>
-                <strong>{fixture.away_team.name}</strong>
-                <span>{context.availability.away_missing} 人缺阵</span>
-                <ul className="absence-list">
+              <div className="min-w-0">
+                <strong className="block truncate text-sm font-semibold text-slate-100">
+                  {fixture.away_team.name}
+                </strong>
+                <span className="block font-mono text-xs tabular-nums text-slate-400">
+                  {context.availability.away_missing} 人缺阵
+                </span>
+                <ul className="mt-2 space-y-1.5">
                   {awayInjuries.length > 0 ? (
                     awayInjuries.map((player) => (
-                      <li key={`${player.name}-${player.reason}`}>
-                        <b>{player.name}</b>
-                        <small>
+                      <li
+                        key={`${player.name}-${player.reason}`}
+                        className="flex items-baseline gap-2 text-xs"
+                      >
+                        <b className="shrink-0 font-medium text-slate-200">
+                          {player.name}
+                        </b>
+                        <small className="min-w-0 text-[11px] text-slate-500">
                           {[player.reason, playerNameStatus(player)]
                             .filter(Boolean)
                             .join(" · ")}
@@ -1259,28 +1551,28 @@ export function EvidenceDetails({
                       </li>
                     ))
                   ) : (
-                    <li className="absence-empty">暂无已知伤停</li>
+                    <li className="text-xs text-slate-500">暂无已知伤停</li>
                   )}
                 </ul>
               </div>
             </div>
           ) : (
-            <p className="data-empty">请先同步这场比赛的伤停数据</p>
+            <p className={mutedNoteClass}>请先同步这场比赛的伤停数据</p>
           )}
-        </div>
+        </Card>
       )}
 
       {sections.includes("lineup") && (
-        <div className="detail-data-block">
+        <Card className="p-4">
           <SectionHeader
-            className="section-heading"
+            className="mb-3"
             eyebrow="LINEUPS"
             title="球员名单"
             level={3}
             meta={context.lineup.confirmed ? "已确认" : "未公布"}
           />
           {context.lineup.confirmed ? (
-            <div className="lineup-grid">
+            <div className="grid gap-4 lg:grid-cols-2">
               <LineupColumn
                 teamName={fixture.home_team.name}
                 formation={context.lineup.home_formation}
@@ -1293,15 +1585,19 @@ export function EvidenceDetails({
               />
             </div>
           ) : (
-            <div className="lineup-pending">
-              <Shirt size={18} />
+            <div className="flex items-start gap-3 rounded-xl border border-dashed border-slate-700 bg-pitch-950 px-4 py-3.5">
+              <Shirt size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
               <div>
-                <strong>首发名单尚未发布</strong>
-                <p>比赛临近后再次同步，确认首发后会显示首发与替补球员。</p>
+                <strong className="block text-sm font-medium text-slate-200">
+                  首发名单尚未发布
+                </strong>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  比赛临近后再次同步，确认首发后会显示首发与替补球员。
+                </p>
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
     </section>
   );
@@ -1352,29 +1648,27 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
     : "暂无可靠身价";
   if (!impact)
     return (
-      <section className="player-impact-panel">
+      <Card className="p-4">
         <SectionHeader
+          className="mb-3"
           eyebrow="PLAYER IMPACT"
           title="球员影响"
           level={3}
           meta="数据不足"
         />
-        <p className="data-empty">
+        <p className={mutedNoteClass}>
           当前阵容证据不足，未对球队战力作人数式扣减。
         </p>
-      </section>
+      </Card>
     );
   const teams = [
     { side: "home" as const, name: fixture.home_team.name, data: impact.home },
     { side: "away" as const, name: fixture.away_team.name, data: impact.away },
   ];
   return (
-    <section
-      className="player-impact-panel"
-      aria-labelledby="player-impact-title"
-    >
+    <Card className="p-4" aria-labelledby="player-impact-title">
       <SectionHeader
-        className="section-heading"
+        className="mb-3"
         eyebrow="PLAYER IMPACT"
         title="球员影响与战力保留"
         titleId="player-impact-title"
@@ -1383,7 +1677,7 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
           impact.lineup_confirmed ? "已按确认首发重算" : "基于预计首发与分钟"
         }
       />
-      <div className="player-impact-grid">
+      <div className="grid gap-3 lg:grid-cols-2">
         {teams.map(({ side, name, data }) => {
           const retention = [
             ["进攻", data.attack_retention],
@@ -1392,11 +1686,20 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
             ["门将", data.goalkeeper_retention],
           ] as const;
           return (
-            <div className={`player-impact-team ${side}`} key={side}>
-              <header>
-                <div>
-                  <strong>{name}</strong>
-                  <small>
+            <div
+              className={`rounded-xl border border-slate-800 bg-pitch-950 p-3 ${
+                side === "home"
+                  ? "border-t-2 border-t-blue-500/60"
+                  : "border-t-2 border-t-slate-500/60"
+              }`}
+              key={side}
+            >
+              <header className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <strong className="block truncate text-sm font-semibold text-slate-100">
+                    {name}
+                  </strong>
+                  <small className="block text-[11px] text-slate-500">
                     {data.data_status === "complete"
                       ? "球员数据完整"
                       : data.data_status === "partial"
@@ -1404,34 +1707,37 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
                         : "球员数据不足"}
                   </small>
                 </div>
-                <span>{data.squad_count} 人阵容</span>
+                <span className="shrink-0 font-mono text-xs tabular-nums text-slate-400">
+                  {data.squad_count} 人阵容
+                </span>
               </header>
-              <div className="retention-list">
+              <div className="mt-3 space-y-2">
                 {retention.map(([label, value]) => (
-                  <div key={label}>
-                    <span>{label}</span>
-                    <i>
+                  <div key={label} className="flex items-center gap-2 text-xs">
+                    <span className="w-8 shrink-0 text-slate-400">{label}</span>
+                    <i className="block h-1.5 flex-1 overflow-hidden rounded-full bg-pitch-800">
                       <b
-                        style={
-                          {
-                            "--retention": percent(value),
-                          } as React.CSSProperties
-                        }
+                        className="block h-full rounded-full bg-emerald-400/80"
+                        style={{ width: percent(value) }}
                       />
                     </i>
-                    <strong>{percent(value)}</strong>
+                    <strong className="w-10 shrink-0 text-right font-mono tabular-nums text-slate-200">
+                      {percent(value)}
+                    </strong>
                   </div>
                 ))}
               </div>
-              <div className="impact-player-groups">
-                <div>
-                  <span>关键可用</span>
-                  <ul>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="min-w-0">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    关键可用
+                  </span>
+                  <ul className="mt-1.5 space-y-1">
                     {data.key_available_players.length ? (
                       data.key_available_players.map((player) => (
-                        <li key={impactPlayerKey(player)}>
-                          <b>{player.name}</b>
-                          <small>
+                        <li key={impactPlayerKey(player)} className="text-xs">
+                          <b className="font-medium text-slate-200">{player.name}</b>
+                          <small className="block text-[11px] text-slate-500">
                             {player.player_role} · 预计{" "}
                             {Math.round(player.expected_minutes)} 分钟
                             {playerNameStatus(player)
@@ -1442,19 +1748,21 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
                       ))
                     ) : (
                       <li>
-                        <small>暂无可靠识别</small>
+                        <small className="text-[11px] text-slate-500">暂无可靠识别</small>
                       </li>
                     )}
                   </ul>
                 </div>
-                <div>
-                  <span>关键缺阵</span>
-                  <ul>
+                <div className="min-w-0">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    关键缺阵
+                  </span>
+                  <ul className="mt-1.5 space-y-1">
                     {data.key_absent_players.length ? (
                       data.key_absent_players.map((player) => (
-                        <li key={impactPlayerKey(player)}>
-                          <b>{player.name}</b>
-                          <small>
+                        <li key={impactPlayerKey(player)} className="text-xs">
+                          <b className="font-medium text-slate-200">{player.name}</b>
+                          <small className="block text-[11px] text-slate-500">
                             {player.player_role} · 影响{" "}
                             {percent(player.absence_impact ?? 0)}
                             {playerNameStatus(player)
@@ -1465,23 +1773,30 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
                       ))
                     ) : (
                       <li>
-                        <small>暂无关键缺阵</small>
+                        <small className="text-[11px] text-slate-500">暂无关键缺阵</small>
                       </li>
                     )}
                   </ul>
                 </div>
               </div>
               {data.expected_replacements.length > 0 && (
-                <div className="replacement-line">
-                  <span>预计替补</span>
+                <div className="mt-3 rounded-lg bg-pitch-800/50 p-2.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    预计替补
+                  </span>
                   {data.expected_replacements.slice(0, 2).map((row) => (
-                    <p key={impactPlayerKey(row.absent_player)}>
-                      <b>{row.absent_player.name}</b>
-                      <ChevronRight size={13} aria-hidden="true" />
-                      <strong>
+                    <p
+                      key={impactPlayerKey(row.absent_player)}
+                      className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs"
+                    >
+                      <b className="text-slate-200">{row.absent_player.name}</b>
+                      <ChevronRight size={13} aria-hidden="true" className="text-slate-500" />
+                      <strong className="text-slate-100">
                         {row.replacement?.name ?? "暂无同位置替补"}
                       </strong>
-                      <small>差值 {percent(row.absence_impact)}</small>
+                      <small className="font-mono tabular-nums text-slate-500">
+                        差值 {percent(row.absence_impact)}
+                      </small>
                     </p>
                   ))}
                 </div>
@@ -1490,16 +1805,16 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
           );
         })}
       </div>
-      <footer className="player-value-provenance">
+      <footer className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-800 pt-2.5 text-xs text-slate-500">
         <Database size={14} aria-hidden="true" />
-        <span>身价边界</span>
-        <strong>{valueMeta}</strong>
+        <span className="font-medium text-slate-400">身价边界</span>
+        <strong className="text-slate-200">{valueMeta}</strong>
         <small>
           {context.player_value?.reason ??
             `${context.player_value?.available_count ?? 0} 人有可靠身价`}
         </small>
       </footer>
-    </section>
+    </Card>
   );
 }
 
@@ -1563,107 +1878,141 @@ export function ProbabilityPanel({
     decision?.model_recommendation_status,
   );
   return (
-    <section className="prediction-panel" aria-labelledby={headingId}>
-      <div className="prediction-header">
+    <Card className="space-y-4 p-4" aria-labelledby={headingId}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <span>01 · 赛果判断</span>
-          <h3 id={headingId}>
+          <span className={eyebrowClass}>01 · 赛果判断</span>
+          <h3
+            id={headingId}
+            className="mt-1 font-display text-lg font-bold tracking-tight text-slate-100"
+          >
             {prediction.phase === "confirmed_lineup"
               ? "确认首发版"
               : "初步预测"}{" "}
             · 胜平负概率
           </h3>
         </div>
-        <div className="prediction-actions">
+        <div className="flex items-center gap-2">
           {prediction.phase === "preliminary" &&
             canCreatePrediction(fixture) &&
             onManualPredict && (
               <button
-                className="manual-predict-button"
+                className={manualPredictButtonClass}
                 type="button"
                 title="基于当前已同步数据重新生成预测"
                 onClick={onManualPredict}
                 disabled={predicting}
               >
                 {predicting ? (
-                  <LoaderCircle className="spin" size={13} aria-hidden="true" />
+                  <LoaderCircle className="animate-spin" size={13} aria-hidden="true" />
                 ) : (
                   <Play size={13} fill="currentColor" aria-hidden="true" />
                 )}
                 {predicting ? "计算中" : "重新生成"}
               </button>
             )}
-          <span className="model-tag">{prediction.model_version}</span>
+          <span className="rounded-md bg-pitch-800 px-2 py-1 font-mono text-[11px] text-slate-400">
+            {prediction.model_version}
+          </span>
         </div>
       </div>
-      <div className="probability-grid">
+      <div className="grid gap-2 sm:grid-cols-3">
         {options.map((item) => (
           <div
-            className={
-              item.key === best.key ? "probability winner" : "probability"
-            }
+            className={`relative overflow-hidden rounded-xl border p-3 ${
+              item.key === best.key
+                ? "border-blue-500/40 bg-blue-500/5"
+                : "border-slate-800 bg-pitch-950"
+            }`}
             key={item.key}
           >
-            <span>{item.label}</span>
-            <strong>{percent(item.value)}</strong>
-            <small>{item.team}</small>
+            <span className="block text-xs text-slate-400">{item.label}</span>
+            <strong
+              className={`mt-1 block font-mono text-xl font-black tabular-nums ${
+                item.key === best.key ? "text-amber-400" : "text-slate-100"
+              }`}
+            >
+              {percent(item.value)}
+            </strong>
+            <small className="mt-0.5 block truncate text-[11px] text-slate-500">
+              {item.team}
+            </small>
             <i
-              style={
-                { "--probability": percent(item.value) } as React.CSSProperties
-              }
+              className={`absolute inset-x-0 bottom-0 block h-0.5 ${
+                item.key === best.key ? "bg-amber-400/70" : "bg-slate-500/40"
+              }`}
+              style={{ width: percent(item.value) }}
             />
           </div>
         ))}
       </div>
       {prediction.top_scores?.length ? (
-        <div className="score-forecast" aria-label="比分预测">
+        <div
+          className="flex flex-wrap items-center gap-2 text-xs text-slate-400"
+          aria-label="比分预测"
+        >
           <span>比分预测</span>
           {prediction.top_scores.map((item) => (
-            <b key={item.score}>
+            <b
+              key={item.score}
+              className="rounded-md bg-pitch-800 px-2 py-1 font-mono font-bold tabular-nums text-slate-200"
+            >
               {item.score}
-              <small>{percent(item.probability)}</small>
+              <small className="ml-1 font-normal text-slate-500">
+                {percent(item.probability)}
+              </small>
             </b>
           ))}
         </div>
       ) : null}
       {prediction.ai && (
-        <div className={`ai-assessment ai-${prediction.ai.status}`}>
-          <div className="ai-assessment-copy">
-            <span>
+        <div
+          className={`rounded-xl border p-3 ${
+            prediction.ai.status === "completed"
+              ? "border-blue-500/30 bg-blue-500/5"
+              : "border-amber-500/30 bg-amber-500/5"
+          }`}
+        >
+          <div className="min-w-0 space-y-2">
+            <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-400">
               {prediction.ai.provider === "chatgpt"
                 ? "CHATGPT ASSESSMENT"
                 : "DEEPSEEK ASSESSMENT"}
             </span>
-            <strong>
+            <strong className="block text-sm leading-relaxed text-slate-100">
               {prediction.ai.status !== "completed"
                 ? "AI 不可用，当前仅显示 Poisson 基线"
                 : prediction.analysis_summary}
             </strong>
-            <small>
+            <small className="block font-mono text-[11px] tabular-nums text-slate-500">
               {prediction.ai.status === "completed"
                 ? `${prediction.ai.returned_model} · ${prediction.ai.prompt_version} · ${prediction.ai.evidence_version ?? "证据版本待确认"}`
                 : prediction.ai.error}
             </small>
             {prediction.ai.status === "completed" &&
             prediction.player_analysis?.replacement_gap ? (
-              <p className="ai-thesis">
-                <b>替补差值</b>
+              <p className="flex items-start gap-2 rounded-lg bg-pitch-800/60 px-2.5 py-2 text-xs text-slate-300">
+                <b className="shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-blue-300">
+                  替补差值
+                </b>
                 {prediction.player_analysis.replacement_gap}
               </p>
             ) : null}
             {prediction.ai.status === "completed" && modelRecommendation ? (
-              <p className="ai-thesis">
-                <b>AI 下注观点</b>
+              <p className="flex items-start gap-2 rounded-lg bg-pitch-800/60 px-2.5 py-2 text-xs text-slate-300">
+                <b className="shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-blue-300">
+                  AI 下注观点
+                </b>
                 {modelRecommendation.status === "bet"
                   ? `${marketText(modelRecommendation.market)} · ${selectionWithHandicap(modelRecommendation.selection, aiHandicap?.line)} · ${modelRecommendation.reason}`
                   : `不下注 · ${modelRecommendation.reason}`}
               </p>
             ) : null}
           </div>
-          <dl>
+          <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-800/70 pt-2.5 text-xs">
             <div>
-              <dt>最可能赛果</dt>
-              <dd>
+              <dt className="text-slate-500">最可能赛果</dt>
+              <dd className="mt-0.5 font-mono text-sm font-bold tabular-nums text-slate-100">
                 {outcomeText(
                   prediction.forecast?.predicted_outcome ??
                     prediction.predicted_outcome,
@@ -1671,8 +2020,8 @@ export function ProbabilityPanel({
               </dd>
             </div>
             <div>
-              <dt>预测置信度</dt>
-              <dd>
+              <dt className="text-slate-500">预测置信度</dt>
+              <dd className="mt-0.5 font-mono text-sm font-bold tabular-nums text-slate-100">
                 {percent(
                   prediction.forecast_confidence ??
                     decision?.model_confidence ??
@@ -1681,8 +2030,8 @@ export function ProbabilityPanel({
               </dd>
             </div>
             <div>
-              <dt>亚洲盘</dt>
-              <dd>
+              <dt className="text-slate-500">亚洲盘</dt>
+              <dd className="mt-0.5 font-mono text-sm font-bold tabular-nums text-slate-100">
                 {aiHandicap && aiHandicap.line !== null
                   ? `${percent(aiHandicap.home_cover_probability ?? 0)} 主队覆盖`
                   : "证据不足"}
@@ -1691,9 +2040,11 @@ export function ProbabilityPanel({
           </dl>
           {prediction.ai.status === "completed" &&
           prediction.risk_factors?.length ? (
-            <div className="ai-risk-factors">
-              <span>风险因素</span>
-              <ul>
+            <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-xs">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400/90">
+                风险因素
+              </span>
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-slate-300">
                 {prediction.risk_factors.map((risk) => (
                   <li key={risk}>{risk}</li>
                 ))}
@@ -1702,9 +2053,11 @@ export function ProbabilityPanel({
           ) : null}
           {prediction.ai.status === "completed" &&
           prediction.missing_evidence?.length ? (
-            <div className="ai-caveats">
-              <span>证据缺口</span>
-              <ul>
+            <div className="mt-3 rounded-lg border border-slate-800 bg-pitch-950 p-2.5 text-xs">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                证据缺口
+              </span>
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-slate-400">
                 {prediction.missing_evidence.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
@@ -1712,7 +2065,7 @@ export function ProbabilityPanel({
             </div>
           ) : null}
           {aiHandicap && (
-            <p className="ai-handicap-note">
+            <p className="mt-3 rounded-lg bg-pitch-800/60 px-2.5 py-2 text-xs leading-relaxed text-slate-300">
               亚洲让球覆盖预测：
               {aiHandicap.line !== null
                 ? `${formatFavoriteHandicap(aiHandicap.line, fixture.home_team.name, fixture.away_team.name)} · 主队 ${percent(aiHandicap.home_cover_probability ?? 0)} / 客队 ${percent(aiHandicap.away_cover_probability ?? 0)}`
@@ -1721,32 +2074,39 @@ export function ProbabilityPanel({
             </p>
           )}
           {prediction.evidence_hash && (
-            <code>证据 {prediction.evidence_hash.slice(0, 12)}</code>
+            <code className="mt-3 block truncate rounded bg-pitch-800 px-2 py-1 font-mono text-[11px] text-slate-500">
+              证据 {prediction.evidence_hash.slice(0, 12)}
+            </code>
           )}
         </div>
       )}
-      <div className="prediction-facts">
-        <span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs tabular-nums text-slate-400">
+        <span className="inline-flex items-center gap-1.5">
           <Goal size={16} />
           预期进球 {prediction.expected_goals.home} :{" "}
           {prediction.expected_goals.away}
         </span>
-        <span>
+        <span className="inline-flex items-center gap-1.5">
           <Gauge size={16} />
           证据置信度 {prediction.confidence}
         </span>
-        <span>
+        <span className="inline-flex items-center gap-1.5">
           <Clock3 size={16} />
           生成于 {formatTimestamp(prediction.created_at)}
         </span>
       </div>
-      <section className="market-value-layer" aria-label="赔率价值">
-        <header>
+      <section
+        className="rounded-xl border border-slate-800 bg-pitch-950 p-3"
+        aria-label="赔率价值"
+      >
+        <header className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <span>02 · 赔率价值</span>
-            <strong>市场数学</strong>
+            <span className={eyebrowClass}>02 · 赔率价值</span>
+            <strong className="mt-1 block font-display text-base font-bold text-slate-100">
+              市场数学
+            </strong>
           </div>
-          <small>
+          <small className="text-[11px] text-slate-500">
             {prediction.market_assessment?.bookmaker
               ? marketSourceLabel(prediction.market_assessment.bookmaker)
               : "暂无匹配赔率"}{" "}
@@ -1759,8 +2119,8 @@ export function ProbabilityPanel({
           </small>
         </header>
         {marketRows.length ? (
-          <div className="market-value-table">
-            <div className="market-value-head">
+          <div className="mt-3 divide-y divide-slate-800/60">
+            <div className="grid grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))] gap-2 border-b border-slate-800 px-2 pb-1.5 font-mono text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               <span>市场</span>
               <span>模型</span>
               <span>回本线</span>
@@ -1769,12 +2129,14 @@ export function ProbabilityPanel({
             </div>
             {marketRows.map((row) => (
               <div
-                className="market-value-row"
+                className="grid grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))] items-center gap-2 px-2 py-1.5 text-xs transition-colors hover:bg-slate-800/30"
                 key={`${row.market}-${row.selection}`}
               >
-                <span className="market-value-name">
-                  <b>{selectionWithHandicap(row.selection, row.line)}</b>
-                  <small>
+                <span className="min-w-0">
+                  <b className="block truncate font-semibold text-slate-200">
+                    {selectionWithHandicap(row.selection, row.line)}
+                  </b>
+                  <small className="block truncate font-mono text-[11px] tabular-nums text-slate-500">
                     {row.market === "asian_handicap" && row.line !== undefined
                       ? `亚洲盘 ${formatHandicapLine(row.selection === "away_handicap" ? -row.line : row.line)}`
                       : "胜平负"}{" "}
@@ -1782,24 +2144,30 @@ export function ProbabilityPanel({
                   </small>
                 </span>
                 <span>
-                  <small>模型</small>
-                  <b>{percent(row.model_probability)}</b>
+                  <small className="block text-[10px] text-slate-500">模型</small>
+                  <b className="block font-mono tabular-nums text-slate-200">
+                    {percent(row.model_probability)}
+                  </b>
                 </span>
                 <span>
-                  <small>回本线</small>
-                  <b>{percent(row.break_even_probability)}</b>
+                  <small className="block text-[10px] text-slate-500">回本线</small>
+                  <b className="block font-mono tabular-nums text-slate-200">
+                    {percent(row.break_even_probability)}
+                  </b>
                 </span>
                 <span>
-                  <small>去水</small>
-                  <b>{percent(row.de_vig_probability)}</b>
+                  <small className="block text-[10px] text-slate-500">去水</small>
+                  <b className="block font-mono tabular-nums text-slate-200">
+                    {percent(row.de_vig_probability)}
+                  </b>
                 </span>
                 <span
                   className={
-                    row.expected_edge > 0 ? "edge-positive" : "edge-negative"
+                    row.expected_edge > 0 ? "text-emerald-400" : "text-rose-400"
                   }
                 >
-                  <small>优势</small>
-                  <b>
+                  <small className="block text-[10px] text-slate-500">优势</small>
+                  <b className="block font-mono font-bold tabular-nums">
                     {row.expected_edge > 0 ? "+" : ""}
                     {(row.expected_edge * 100).toFixed(1)}%
                   </b>
@@ -1808,17 +2176,25 @@ export function ProbabilityPanel({
             ))}
           </div>
         ) : (
-          <p className="data-empty">没有可计算的匹配赔率市场</p>
+          <p className={`${mutedNoteClass} mt-3`}>没有可计算的匹配赔率市场</p>
         )}
       </section>
       <section
-        className={`execution-layer execution-${decision?.status ?? "insufficient_data"}`}
+        className={`rounded-xl border p-3 ${
+          (decision?.status ?? "insufficient_data") === "bet"
+            ? "border-emerald-500/30 bg-emerald-500/5"
+            : (decision?.status ?? "insufficient_data") === "insufficient_data"
+              ? "border-slate-800 bg-pitch-950"
+              : "border-amber-500/30 bg-amber-500/5"
+        }`}
         aria-label="执行决定"
       >
-        <header>
-          <span>03 · 执行决定</span>
-          <strong>{executionLabel}</strong>
-          <em className="execution-verdict">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className={eyebrowClass}>03 · 执行决定</span>
+          <strong className="text-sm font-semibold text-slate-100">
+            {executionLabel}
+          </strong>
+          <em className="rounded-md bg-pitch-800 px-2 py-0.5 text-xs not-italic text-slate-300">
             预测：
             {outcomeText(
               prediction.forecast?.predicted_outcome ??
@@ -1836,26 +2212,28 @@ export function ProbabilityPanel({
             )}
             ）
           </em>
-          <small>单注 10%–25% · 每日 10% · 单联赛 4%</small>
+          <small className="text-[11px] text-slate-500">
+            单注 10%–25% · 每日 10% · 单联赛 4%
+          </small>
         </header>
-        <div>
-          <p>
+        <div className="mt-2.5 space-y-2 text-xs text-slate-400">
+          <p className="leading-relaxed">
             {execution?.reason ??
               decision?.reason ??
               "当前预测版本缺少确定性决策结果"}
           </p>
           {decision?.warning ? <p>{decision.warning}</p> : null}
           {executionReasons.length ? (
-            <ul>
+            <ul className="list-disc space-y-0.5 pl-4 text-slate-500">
               {executionReasons.map((code) => (
                 <li key={code}>{decisionReasonLabels[code] ?? code}</li>
               ))}
             </ul>
           ) : null}
-          <dl>
+          <dl className="grid grid-cols-2 gap-2 pt-1 sm:grid-cols-5">
             <div>
-              <dt>模型赛果</dt>
-              <dd>
+              <dt className="text-[11px] text-slate-500">模型赛果</dt>
+              <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
                 {outcomeText(
                   prediction.forecast?.predicted_outcome ??
                     prediction.predicted_outcome,
@@ -1863,16 +2241,16 @@ export function ProbabilityPanel({
               </dd>
             </div>
             <div>
-              <dt>赔率候选</dt>
-              <dd>
+              <dt className="text-[11px] text-slate-500">赔率候选</dt>
+              <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
                 {advisedMarket
                   ? `${marketText(advisedMarket.market)} · ${selectionWithHandicap(advisedMarket.selection, advisedMarket.line)}`
                   : "-"}
               </dd>
             </div>
             <div>
-              <dt>预期优势</dt>
-              <dd>
+              <dt className="text-[11px] text-slate-500">预期优势</dt>
+              <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
                 {decision?.expected_edge !== null &&
                 decision?.expected_edge !== undefined
                   ? `${decision.expected_edge > 0 ? "+" : ""}${(decision.expected_edge * 100).toFixed(1)}%`
@@ -1880,20 +2258,26 @@ export function ProbabilityPanel({
               </dd>
             </div>
             <div>
-              <dt>不确定性</dt>
-              <dd>{percent(decision?.uncertainty ?? 1)}</dd>
+              <dt className="text-[11px] text-slate-500">不确定性</dt>
+              <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
+                {percent(decision?.uncertainty ?? 1)}
+              </dd>
             </div>
             <div>
-              <dt>理论仓位</dt>
-              <dd>{percent(decision?.stake_fraction ?? 0)}</dd>
+              <dt className="text-[11px] text-slate-500">理论仓位</dt>
+              <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
+                {percent(decision?.stake_fraction ?? 0)}
+              </dd>
             </div>
           </dl>
         </div>
       </section>
       {currentBet && (
-        <div className="simulated-position">
-          <span>本次模拟仓位</span>
-          <strong>
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
+          <span className="block text-[11px] font-medium text-emerald-400/90">
+            本次模拟仓位
+          </span>
+          <strong className="mt-0.5 block font-mono text-sm font-bold tabular-nums text-emerald-300">
             {betSelectionText(
               currentBet.market,
               currentBet.selection,
@@ -1901,7 +2285,7 @@ export function ProbabilityPanel({
             )}{" "}
             · {currentBet.odds.toFixed(2)}
           </strong>
-          <small>
+          <small className="mt-0.5 block font-mono text-[11px] tabular-nums text-slate-500">
             金额 {currentBet.stake.toFixed(2)} ·{" "}
             {currentBet.status === "placed"
               ? "未结算"
@@ -1910,17 +2294,19 @@ export function ProbabilityPanel({
         </div>
       )}
       {prediction.asian_handicap && (
-        <div className="handicap-block">
-          <div>
-            <span>市场盘口（博彩公司）</span>
-            <strong>
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-pitch-950 p-3">
+          <div className="min-w-[12rem] flex-1">
+            <span className="block text-[11px] text-slate-500">
+              市场盘口（博彩公司）
+            </span>
+            <strong className="mt-0.5 block text-sm font-bold text-slate-100">
               {formatFavoriteHandicap(
                 prediction.asian_handicap.line,
                 fixture.home_team.name,
                 fixture.away_team.name,
               )}
             </strong>
-            <small>
+            <small className="mt-0.5 block text-[11px] text-slate-500">
               Poisson 基线倾向：
               {handicapRecommendation(
                 prediction.asian_handicap.home_settlement,
@@ -1932,20 +2318,25 @@ export function ProbabilityPanel({
           </div>
           {Object.entries(prediction.asian_handicap.home_settlement).map(
             ([key, value]) => (
-              <span key={key}>
-                <small>
+              <span
+                key={key}
+                className="rounded-lg bg-pitch-900 px-2.5 py-1.5 text-center"
+              >
+                <small className="block text-[10px] text-slate-500">
                   {settlementLabels[key as keyof typeof settlementLabels]}
                 </small>
-                <b>{percent(value)}</b>
+                <b className="block font-mono text-xs font-bold tabular-nums text-slate-200">
+                  {percent(value)}
+                </b>
               </span>
             ),
           )}
         </div>
       )}
-      <p className="disclaimer">
+      <p className="text-[11px] leading-relaxed text-slate-600">
         概率是模型对赛前信息的量化结果，不代表确定赛果，也不构成投注建议。
       </p>
-    </section>
+    </Card>
   );
 }
 
@@ -1977,30 +2368,34 @@ function DetailPanel({
   const canSyncEvidence = detail.capabilities.evidence_sync;
   const canSyncDongqiudi = Boolean(detail.capabilities.dongqiudi_sync);
   return (
-    <aside className="detail-panel">
-      <div className="match-summary">
-        <div className="detail-kicker">
-          <span>{fixture.league.name}</span>
-          <span>{fixture.is_demo ? "演示数据" : "提供商数据"}</span>
+    <aside className="flex flex-col gap-4">
+      <Card className="p-4">
+        <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+          <span className="truncate">{fixture.league.name}</span>
+          <span className="shrink-0">
+            {fixture.is_demo ? "演示数据" : "提供商数据"}
+          </span>
         </div>
-        <div className="match-teams">
-          <div>
+        <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+          <div className="flex min-w-0 flex-col items-center gap-1 text-center">
             <TeamLogo
               profile={context.teams?.home ?? {}}
               team={fixture.home_team}
               tone="home"
             />
-            <strong>{fixture.home_team.name}</strong>
-            <small>主队</small>
+            <strong className="block w-full truncate text-sm font-semibold text-slate-100">
+              {fixture.home_team.name}
+            </strong>
+            <small className="text-[11px] text-slate-500">主队</small>
           </div>
           {fixture.score ? (
-            <span className="versus score-versus">
+            <span className="flex flex-col items-center gap-1">
               <Scoreline
                 home={fixture.score.home}
                 away={fixture.score.away}
                 large
               />
-              <small>
+              <small className="text-xs text-slate-400">
                 {fixture.score.home > fixture.score.away
                   ? "主胜"
                   : fixture.score.home < fixture.score.away
@@ -2009,31 +2404,36 @@ function DetailPanel({
               </small>
             </span>
           ) : (
-            <span className="versus">
-              VS<small>{formatKickoff(fixture.kickoff)}</small>
+            <span className="flex flex-col items-center font-display text-lg font-black text-slate-400">
+              VS
+              <small className="mt-0.5 font-mono text-[11px] font-normal tabular-nums text-slate-500">
+                {formatKickoff(fixture.kickoff)}
+              </small>
             </span>
           )}
-          <div>
+          <div className="flex min-w-0 flex-col items-center gap-1 text-center">
             <TeamLogo
               profile={context.teams?.away ?? {}}
               team={fixture.away_team}
               tone="away"
             />
-            <strong>{fixture.away_team.name}</strong>
-            <small>客队</small>
+            <strong className="block w-full truncate text-sm font-semibold text-slate-100">
+              {fixture.away_team.name}
+            </strong>
+            <small className="text-[11px] text-slate-500">客队</small>
           </div>
         </div>
-        <p>
+        <p className="mt-3 flex items-center justify-center gap-1.5 font-mono text-xs tabular-nums text-slate-500">
           <CalendarDays size={15} />{" "}
           {new Date(fixture.kickoff).toLocaleDateString("zh-CN")} ·{" "}
           {fixture.venue}
         </p>
-      </div>
+      </Card>
 
       {operatorMode && canCreatePrediction(fixture) && (
-        <div className="operator-actions">
-          <div>
-            <strong>
+        <Card className="flex items-center gap-2.5 p-3">
+          <div className="min-w-0 flex-1">
+            <strong className="block text-sm font-semibold text-slate-100">
               {realEvidencePending
                 ? canSyncEvidence
                   ? "真实赛前证据尚未同步"
@@ -2042,7 +2442,7 @@ function DetailPanel({
                   ? "生成新预测版本"
                   : "这场比赛尚未预测"}
             </strong>
-            <small>
+            <small className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
               {realEvidencePending
                 ? canSyncEvidence
                   ? "赛程与双方身份已就绪，等待拉取近期状态、伤停和赔率"
@@ -2053,7 +2453,7 @@ function DetailPanel({
             </small>
           </div>
           <button
-            className="icon-button secondary"
+            className={iconButtonSecondaryClass}
             title={
               canSyncEvidence
                 ? "从 TheSportsDB 同步基础赛前数据"
@@ -2064,21 +2464,21 @@ function DetailPanel({
             disabled={syncingEvidence || !canSyncEvidence}
           >
             {syncingEvidence ? (
-              <LoaderCircle className="spin" size={18} />
+              <LoaderCircle className="animate-spin" size={18} />
             ) : (
               <RefreshCw size={18} />
             )}
           </button>
           {canSyncDongqiudi && (
             <button
-              className="icon-button secondary"
+              className={iconButtonSecondaryClass}
               title="同步懂球帝赔率和赛前分析"
               aria-label="同步懂球帝数据"
               onClick={onSyncDongqiudi}
               disabled={syncingDongqiudi}
             >
               {syncingDongqiudi ? (
-                <LoaderCircle className="spin" size={18} />
+                <LoaderCircle className="animate-spin" size={18} />
               ) : (
                 <Database size={18} />
               )}
@@ -2086,13 +2486,13 @@ function DetailPanel({
           )}
           <button
             ref={actionRef}
-            className="primary-action"
+            className={primaryButtonClass}
             onClick={onPredict}
             disabled={running || realEvidencePending}
             aria-describedby={success ? "prediction-success" : undefined}
           >
             {running ? (
-              <LoaderCircle className="spin" size={18} />
+              <LoaderCircle className="animate-spin" size={18} />
             ) : (
               <Play size={18} fill="currentColor" />
             )}
@@ -2102,20 +2502,20 @@ function DetailPanel({
                 ? "先同步证据"
                 : "发起预测"}
           </button>
-        </div>
+        </Card>
       )}
 
       {operatorMode && success && (
         <div
-          className="prediction-success"
+          className="flex items-center gap-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-emerald-300"
           id="prediction-success"
           role="status"
           aria-live="polite"
         >
-          <Check size={17} aria-hidden="true" />
-          <span>
-            <strong>预测版本已保存</strong>
-            <small>
+          <Check size={17} aria-hidden="true" className="shrink-0 text-emerald-400" />
+          <span className="min-w-0">
+            <strong className="block text-sm font-semibold">预测版本已保存</strong>
+            <small className="block font-mono text-[11px] tabular-nums text-emerald-400/80">
               版本 {success.id.slice(0, 8)} ·{" "}
               {formatPreciseTimestamp(success.created_at)}
             </small>
@@ -2127,13 +2527,15 @@ function DetailPanel({
         <AnalysisSnapshot detail={detail} />
       ) : (
         <section
-          className="analysis-snapshot evidence-pending"
+          className="flex items-start gap-3 rounded-2xl border border-dashed border-slate-700 bg-pitch-900 px-4 py-3.5"
           aria-label="赛前证据状态"
         >
-          <Database size={21} aria-hidden="true" />
+          <Database size={21} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
           <div>
-            <strong>双方基础信息已就绪</strong>
-            <p>
+            <strong className="block text-sm font-medium text-slate-200">
+              双方基础信息已就绪
+            </strong>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">
               {canSyncEvidence
                 ? "基础赛前数据尚未同步，懂球帝将在比赛窗口继续补充。"
                 : "TheSportsDB 未配置，暂不展示基础赛前数据。"}
@@ -2150,9 +2552,9 @@ function DetailPanel({
 
       <DongqiudiAnalysisSummary analysis={context.dongqiudi_analysis} />
 
-      <section className="market-section" aria-labelledby="market-title">
+      <Card className="p-4" aria-labelledby="market-title">
         <SectionHeader
-          className="section-heading"
+          className="mb-3"
           eyebrow="PRE-MATCH MARKET"
           title="赛前赔率快照"
           titleId="market-title"
@@ -2165,34 +2567,40 @@ function DetailPanel({
         />
         {context.odds ? (
           <>
-            <div className="odds-row">
-              <span>
-                <small>主胜</small>
-                <b>{context.odds.home.toFixed(2)}</b>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+              <span className="rounded-lg bg-pitch-800/50 px-2.5 py-1.5">
+                <small className="block text-[11px] text-slate-500">主胜</small>
+                <b className="block font-mono text-sm font-bold tabular-nums text-slate-100">
+                  {context.odds.home.toFixed(2)}
+                </b>
               </span>
-              <span>
-                <small>平局</small>
-                <b>{context.odds.draw.toFixed(2)}</b>
+              <span className="rounded-lg bg-pitch-800/50 px-2.5 py-1.5">
+                <small className="block text-[11px] text-slate-500">平局</small>
+                <b className="block font-mono text-sm font-bold tabular-nums text-slate-100">
+                  {context.odds.draw.toFixed(2)}
+                </b>
               </span>
-              <span>
-                <small>客胜</small>
-                <b>{context.odds.away.toFixed(2)}</b>
+              <span className="rounded-lg bg-pitch-800/50 px-2.5 py-1.5">
+                <small className="block text-[11px] text-slate-500">客胜</small>
+                <b className="block font-mono text-sm font-bold tabular-nums text-slate-100">
+                  {context.odds.away.toFixed(2)}
+                </b>
               </span>
               {context.odds.asian_handicap !== null && (
                 <>
-                  <span>
-                    <small>
+                  <span className="rounded-lg bg-pitch-800/50 px-2.5 py-1.5">
+                    <small className="block truncate text-[11px] text-slate-500">
                       {formatHandicapSide(context.odds.asian_handicap, "home")}
                     </small>
-                    <b>
+                    <b className="block font-mono text-sm font-bold tabular-nums text-slate-100">
                       {context.odds.asian_handicap_home_odd?.toFixed(2) ?? "-"}
                     </b>
                   </span>
-                  <span>
-                    <small>
+                  <span className="rounded-lg bg-pitch-800/50 px-2.5 py-1.5">
+                    <small className="block truncate text-[11px] text-slate-500">
                       {formatHandicapSide(context.odds.asian_handicap, "away")}
                     </small>
-                    <b>
+                    <b className="block font-mono text-sm font-bold tabular-nums text-slate-100">
                       {context.odds.asian_handicap_away_odd?.toFixed(2) ?? "-"}
                     </b>
                   </span>
@@ -2200,7 +2608,7 @@ function DetailPanel({
               )}
             </div>
             {Object.entries(context.odds_by_bookmaker ?? {}).length > 0 && (
-              <div className="bookmaker-odds-list">
+              <div className="mt-2 space-y-2">
                 {Object.entries(context.odds_by_bookmaker ?? {}).map(
                   ([key, book]) => {
                     const euro = book["1x2"]?.current;
@@ -2208,9 +2616,14 @@ function DetailPanel({
                     const asia = book.asian_handicap?.current;
                     const asiaInitial = book.asian_handicap?.initial;
                     return (
-                      <div className="bookmaker-odds-row" key={key}>
-                        <strong>{marketSourceLabel(book.name)}</strong>
-                        <span>
+                      <div
+                        className="grid gap-1.5 rounded-lg border border-slate-800/70 px-2.5 py-2 text-xs sm:grid-cols-[7rem_minmax(0,1fr)_minmax(0,1fr)]"
+                        key={key}
+                      >
+                        <strong className="text-xs font-semibold text-slate-200">
+                          {marketSourceLabel(book.name)}
+                        </strong>
+                        <span className="font-mono text-[11px] leading-relaxed tabular-nums text-slate-400">
                           初始 {formatOdds(euroInitial?.home)} /{" "}
                           {formatOdds(euroInitial?.draw)} /{" "}
                           {formatOdds(euroInitial?.away)}
@@ -2218,7 +2631,7 @@ function DetailPanel({
                           当前 胜 {formatOdds(euro?.home)} / 平{" "}
                           {formatOdds(euro?.draw)} / 负 {formatOdds(euro?.away)}
                         </span>
-                        <span>
+                        <span className="font-mono text-[11px] leading-relaxed tabular-nums text-slate-400">
                           {asia?.line != null ? (
                             <>
                               初始{" "}
@@ -2240,18 +2653,18 @@ function DetailPanel({
                 )}
               </div>
             )}
-            <p className="data-source-note">
+            <p className={sourceNoteClass}>
               {Object.keys(context.odds_by_bookmaker ?? {}).length
                 ? "来源：懂球帝公开接口，仅保留两家主流市场参考源；当前值与初始值均写入赔率快照。"
                 : "赔率等待懂球帝同步；已同步数据会记录更新时间。"}
             </p>
           </>
         ) : (
-          <p className="empty-note">
+          <p className={`${mutedNoteClass} mt-2`}>
             这场比赛没有可用的赛前赔率，因此不会生成让球判断。
           </p>
         )}
-      </section>
+      </Card>
 
       {detail.predictions && Object.values(detail.predictions).some(Boolean) ? (
         <DualProbabilityPanels detail={detail} />
@@ -2262,11 +2675,13 @@ function DetailPanel({
           bet={detail.bet}
         />
       ) : (
-        <section className="no-prediction">
-          <Database size={23} aria-hidden="true" />
+        <section className="flex items-start gap-3 rounded-2xl border border-dashed border-slate-700 bg-pitch-900 px-4 py-4">
+          <Database size={23} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
           <div>
-            <h3>暂无当前版本预测</h3>
-            <p>
+            <h3 className="font-display text-sm font-semibold text-slate-200">
+              暂无当前版本预测
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">
               {realEvidencePending
                 ? "真实赛程已经缓存；点击同步赛前数据后，系统会拉取近期状态、交锋、伤停和赔率。"
                 : operatorMode
@@ -2347,12 +2762,9 @@ function DongqiudiAnalysisSummary({
       ? Object.keys(analysis.contrast).length
       : 0;
   return (
-    <section
-      className="analysis-details dongqiudi-analysis"
-      aria-label="懂球帝赛前分析"
-    >
+    <Card className="p-4" aria-label="懂球帝赛前分析">
       <SectionHeader
-        className="section-heading"
+        className="mb-3"
         eyebrow="DONGQIUDI ANALYSIS"
         title="懂球帝赛前分析"
         level={3}
@@ -2362,19 +2774,30 @@ function DongqiudiAnalysisSummary({
             : "已同步"
         }
       />
-      <div className="analysis-chip-row">
+      <div className="flex flex-wrap gap-1.5">
         {available.map(([, label]) => (
-          <span key={label}>{label}</span>
+          <span
+            key={label}
+            className="rounded-md bg-pitch-800 px-2 py-0.5 text-[11px] text-slate-300"
+          >
+            {label}
+          </span>
         ))}
-        {contrast > 0 && <span>攻防对比</span>}
+        {contrast > 0 && (
+          <span className="rounded-md bg-pitch-800 px-2 py-0.5 text-[11px] text-slate-300">
+            攻防对比
+          </span>
+        )}
         {Array.isArray(analysis.errors) && analysis.errors.length > 0 && (
-          <span>部分接口未返回</span>
+          <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-400">
+            部分接口未返回
+          </span>
         )}
       </div>
-      <p className="data-source-note">
+      <p className={sourceNoteClass}>
         仅展示懂球帝公开的交锋、近期、积分和攻防数据，不包含付费专家方案。
       </p>
-    </section>
+    </Card>
   );
 }
 
@@ -2435,24 +2858,28 @@ export function DualProbabilityPanels({
   }
 
   return (
-    <section className="dual-prediction-section" aria-label="GPT 初步预测">
-      <div className="dual-prediction-heading">
+    <Card className="space-y-3 p-3" aria-label="GPT 初步预测">
+      <div className="flex flex-wrap items-end justify-between gap-2 px-1">
         <div>
-          <span>GPT ANALYSIS</span>
-          <h3>比赛的初步预测</h3>
+          <span className={eyebrowClass}>GPT ANALYSIS</span>
+          <h3 className="mt-1 font-display text-base font-bold tracking-tight text-slate-100">
+            比赛的初步预测
+          </h3>
         </div>
-        <div className="dual-prediction-actions">
-          <small>基于当前证据生成 GPT 观点并进入模拟账户</small>
+        <div className="flex flex-wrap items-center gap-2">
+          <small className="text-[11px] text-slate-500">
+            基于当前证据生成 GPT 观点并进入模拟账户
+          </small>
           {canCreatePrediction(detail.fixture) && onManualPredict && (
             <button
-              className="manual-predict-button"
+              className={manualPredictButtonClass}
               type="button"
               title="使用当前数据重新生成 GPT 预测"
               onClick={onManualPredict}
               disabled={predicting}
             >
               {predicting ? (
-                <LoaderCircle className="spin" size={13} aria-hidden="true" />
+                <LoaderCircle className="animate-spin" size={13} aria-hidden="true" />
               ) : (
                 <Play size={13} fill="currentColor" aria-hidden="true" />
               )}
@@ -2461,15 +2888,19 @@ export function DualProbabilityPanels({
           )}
         </div>
       </div>
-      <div className="dual-prediction-shell">
+      <div className="space-y-3">
         <div
-          className="model-prediction-tabs"
+          className="grid gap-2 sm:grid-cols-2"
           role="tablist"
           aria-label="选择预测模型"
         >
           {entries.map(([key, prediction]) => (
             <button
-              className={`model-prediction-tab model-${key}${activeKey === key ? " active" : ""}`}
+              className={`flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                activeKey === key
+                  ? "border-blue-500/50 bg-blue-500/10"
+                  : "border-slate-800 bg-pitch-950 hover:bg-slate-800/40"
+              }`}
               id={`model-tab-${key}-${detail.fixture.id}`}
               key={key}
               ref={(node) => {
@@ -2483,24 +2914,28 @@ export function DualProbabilityPanels({
               onClick={() => setSelectedModel(key)}
               onKeyDown={(event) => handleTabKeyDown(event, key)}
             >
-              <span className="model-tab-name">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 {key === "deepseek" ? "DeepSeek" : "GPT-5.6 Sol"}
               </span>
-              <strong className="model-tab-judgment">
+              <strong className="font-display text-base font-bold text-slate-100">
                 {outcomeText(
                   prediction.forecast?.predicted_outcome ??
                     prediction.predicted_outcome,
                 )}
               </strong>
               <span
-                className={`model-tab-investment${prediction.execution?.status !== "bet" ? " no-bet" : ""}`}
+                className={`text-xs font-medium ${
+                  prediction.execution?.status !== "bet"
+                    ? "text-slate-500"
+                    : "text-emerald-400"
+                }`}
               >
                 {modelTabInvestmentLabel(
                   prediction,
                   detail.bets?.[key] ?? null,
                 )}
               </span>
-              <small className="model-tab-position">
+              <small className="font-mono text-[11px] tabular-nums text-slate-500">
                 {detail.bets?.[key]?.prediction_id === prediction.id
                   ? `本次仓位 ${detail.bets[key]?.stake.toFixed(2)}`
                   : "当前无持仓"}
@@ -2509,7 +2944,7 @@ export function DualProbabilityPanels({
           ))}
         </div>
         <div
-          className={`model-prediction-panel model-${activeKey}`}
+          className="min-w-0"
           id={`model-panel-${activeKey}-${detail.fixture.id}`}
           role="tabpanel"
           aria-labelledby={`model-tab-${activeKey}-${detail.fixture.id}`}
@@ -2521,7 +2956,7 @@ export function DualProbabilityPanels({
           />
         </div>
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -2767,57 +3202,45 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
 
   if (!operatorMode) {
     return (
-      <main className="score-center-page">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6">
         <DataFreshness
-          className="status-strip"
           status={syncStatus}
           label={dataMode === "demo" ? "演示数据模式" : syncLabel}
           source={`${scheduleProvider} · ${lastSyncedAt ? `更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : "首次访问自动获取"}${dongqiudiLastSyncedAt ? ` · 懂球帝 ${formatPreciseTimestamp(dongqiudiLastSyncedAt)}` : ""}`}
         />
-        <PageHeader
-          className="score-center-title"
-          eyebrow="MATCH RESEARCH"
-          title="比赛研究台"
-          description="筛选值得研究的比赛，再核对证据、模型共识与风险。"
-          aside={
-            <div className="today-stamp">
-              <CalendarDays size={19} aria-hidden="true" />
-              <span>
-                <small>北京时间</small>
-                <strong>
-                  {new Date().toLocaleDateString("zh-CN", {
-                    month: "long",
-                    day: "numeric",
-                    weekday: "short",
-                  })}
-                </strong>
-              </span>
-            </div>
-          }
-        />
-        <div className="score-center-filter">
-          <Tabs
-            className="score-date-tabs"
-            ariaLabel="日期范围"
-            value={dateFilter}
-            onChange={(value) => {
-              setLoading(true);
-              setDateFilter(value);
-            }}
-            items={dateTabs.map((tab) => ({
-              value: tab.key,
-              label: tab.label,
-            }))}
+        <Card className="p-5">
+          <PageHeader
+            eyebrow="MATCH RESEARCH"
+            title="比赛研究台"
+            description="筛选值得研究的比赛，再核对证据、模型共识与风险。"
+            aside={
+              <Tabs
+                ariaLabel="日期范围"
+                value={dateFilter}
+                onChange={(value) => {
+                  setLoading(true);
+                  setDateFilter(value);
+                }}
+                items={dateTabs.map((tab) => ({
+                  value: tab.key,
+                  label: tab.label,
+                }))}
+              />
+            }
           />
-        </div>
+        </Card>
         {error && (
-          <div className="error-banner score-center-error" role="alert">
-            <AlertTriangle size={18} aria-hidden="true" />
+          <div
+            className="flex items-start gap-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+            role="alert"
+          >
+            <AlertTriangle size={18} aria-hidden="true" className="mt-0.5 shrink-0" />
             {error}
             <button
               type="button"
               onClick={() => setError(null)}
               aria-label="关闭错误提示"
+              className="ml-auto shrink-0 rounded px-1.5 text-base leading-none text-rose-300 transition-colors hover:text-rose-100"
             >
               ×
             </button>
@@ -2879,9 +3302,8 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   }
 
   return (
-    <main className="operator-page">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6">
       <DataFreshness
-        className="status-strip"
         status={syncStatus}
         label={
           <>
@@ -2891,26 +3313,26 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         }
         source={`系统就绪 · ${scheduleProvider} · ${lastSyncedAt ? `更新于 ${formatPreciseTimestamp(lastSyncedAt)}` : "首次访问自动获取"}${dongqiudiLastSyncedAt ? ` · 懂球帝 ${formatPreciseTimestamp(dongqiudiLastSyncedAt)}` : ""}`}
         action={
-          <div className="sync-actions">
+          <div className="flex items-center gap-2">
             <button
-              className="sync-action"
+              className={syncActionClass}
               onClick={() => void syncFixtures()}
               disabled={syncing || syncingDongqiudiSchedule}
             >
               {syncing ? (
-                <LoaderCircle className="spin" size={14} />
+                <LoaderCircle className="animate-spin" size={14} />
               ) : (
                 <RefreshCw size={14} />
               )}
               {syncing ? "同步中" : "同步赛程"}
             </button>
             <button
-              className="sync-action secondary"
+              className={syncActionSecondaryClass}
               onClick={() => void syncDongqiudiSchedule()}
               disabled={syncing || syncingDongqiudiSchedule}
             >
               {syncingDongqiudiSchedule ? (
-                <LoaderCircle className="spin" size={14} />
+                <LoaderCircle className="animate-spin" size={14} />
               ) : (
                 <Database size={14} />
               )}
@@ -2920,96 +3342,86 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         }
       />
       {syncMessage && (
-        <div className="sync-success" role="status" aria-live="polite">
-          <Check size={16} />
+        <div
+          className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-sm text-emerald-300"
+          role="status"
+          aria-live="polite"
+        >
+          <Check size={16} className="shrink-0 text-emerald-400" />
           {syncMessage}
         </div>
       )}
-      <PageHeader
-        className="workspace-title"
-        eyebrow={operatorMode ? "OPERATOR CONTROL" : "FIXTURE OPERATIONS"}
-        title={operatorMode ? "预测操作台" : "赛程与赛前判断"}
-        description={
-          operatorMode
-            ? "只对选中的比赛生成预测，每次运行保留独立版本。"
-            : "浏览四项赛事的赛程，并查看管理员已发布的赛前概率。"
-        }
-        aside={
-          <div className="today-stamp">
-            <CalendarDays size={19} />
-            <span>
-              <small>北京时间</small>
-              <strong>
-                {new Date().toLocaleDateString("zh-CN", {
-                  month: "long",
-                  day: "numeric",
-                  weekday: "short",
-                })}
-              </strong>
-            </span>
-          </div>
-        }
-      />
-
-      <div className="filter-band">
-        <Tabs
-          className="segmented"
-          ariaLabel="日期范围"
-          value={dateFilter}
-          onChange={(value) => {
-            setLoading(true);
-            setSuccess(null);
-            setDateFilter(value);
-          }}
-          items={dateTabs.map((tab) => ({ value: tab.key, label: tab.label }))}
+      <Card className="p-5">
+        <PageHeader
+          eyebrow={operatorMode ? "OPERATOR CONTROL" : "FIXTURE OPERATIONS"}
+          title={operatorMode ? "预测操作台" : "赛程与赛前判断"}
+          description={
+            operatorMode
+              ? "只对选中的比赛生成预测，每次运行保留独立版本。"
+              : "浏览四项赛事的赛程，并查看管理员已发布的赛前概率。"
+          }
+          aside={
+            <Tabs
+              ariaLabel="日期范围"
+              value={dateFilter}
+              onChange={(value) => {
+                setLoading(true);
+                setSuccess(null);
+                setDateFilter(value);
+              }}
+              items={dateTabs.map((tab) => ({ value: tab.key, label: tab.label }))}
+            />
+          }
         />
-      </div>
+      </Card>
 
       {error && (
-        <div className="error-banner" role="alert">
-          <AlertTriangle size={18} />
+        <div
+          className="flex items-start gap-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+          role="alert"
+        >
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
           {error}
-          <button onClick={() => setError(null)} aria-label="关闭错误提示">
+          <button
+            onClick={() => setError(null)}
+            aria-label="关闭错误提示"
+            className="ml-auto shrink-0 rounded px-1.5 text-base leading-none text-rose-300 transition-colors hover:text-rose-100"
+          >
             ×
           </button>
         </div>
       )}
 
-      <div className="workspace-grid">
-        <section className="fixture-board" aria-labelledby="fixture-list-title">
-          <div className="board-heading">
-            <div>
-              <span>开球</span>
-              <h2 id="fixture-list-title">比赛</h2>
-            </div>
-            <span>数据状态</span>
-          </div>
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)]">
+        <section className="flex flex-col gap-4" aria-labelledby="fixture-list-title">
+          <SectionHeader
+            eyebrow="开球"
+            title="比赛"
+            titleId="fixture-list-title"
+            meta="数据状态"
+          />
           {loading ? (
-            <div className="loading-state">
-              <LoaderCircle className="spin" />
-              正在读取赛程
-            </div>
+            <LoadingState>正在读取赛程</LoadingState>
           ) : fixtures.length ? (
-            fixtures.map((fixture) => (
-              <FixtureRow
-                key={fixture.id}
-                fixture={fixture}
-                selected={fixture.id === selectedId}
-                onSelect={() => {
+            groupFixturesByLeague(fixtures).map((group) => (
+              <FixtureGroupCard
+                key={group.league.id}
+                group={group}
+                selectedFixtureId={selectedId}
+                onSelect={(fixtureId) => {
                   setSuccess(null);
-                  setSelectedId(fixture.id);
+                  setSelectedId(fixtureId);
                 }}
               />
             ))
           ) : (
-            <div className="loading-state">
-              <CalendarDays />
+            <EmptyState icon={<CalendarDays />}>
               {dataMode === "unconfigured"
                 ? "请在 API 服务中配置免费赛程数据源"
                 : dataMode === "error"
                   ? "自动获取赛程失败，请稍后刷新"
                   : "当前筛选下没有比赛"}
-            </div>
+            </EmptyState>
           )}
         </section>
         {detail && selectedId === detail.fixture.id ? (
@@ -3026,14 +3438,14 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
             onSyncDongqiudi={() => void syncDongqiudi()}
           />
         ) : selectedId ? (
-          <aside className="detail-panel detail-loading">
-            <LoaderCircle className="spin" />
-            读取比赛证据
+          <aside>
+            <LoadingState>读取比赛证据</LoadingState>
           </aside>
         ) : (
-          <aside className="detail-panel detail-loading">
-            <Database />
-            同步真实赛程后可查看比赛详情
+          <aside>
+            <EmptyState icon={<Database />}>
+              同步真实赛程后可查看比赛详情
+            </EmptyState>
           </aside>
         )}
       </div>

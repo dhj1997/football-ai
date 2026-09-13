@@ -2,33 +2,35 @@
 
 import {
   ArrowLeft,
-  BarChart3,
-  CalendarDays,
   Check,
+  CheckCircle2,
   CircleAlert,
   Clock3,
   Database,
-  Gauge,
-  HeartPulse,
   LoaderCircle,
-  MapPin,
   Play,
   ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { CSSProperties } from "react";
+import type { ReactNode } from "react";
 
 import {
   AnalysisSnapshot,
   DualProbabilityPanels,
   EvidenceDetails,
   PlayerImpactPanel,
-  Scoreline,
   TeamLogo,
   TeamProfiles,
 } from "@/components/fixture-workspace";
-import { Tabs } from "@/components/ui";
+import {
+  Card,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  StatusBadge,
+  Tabs,
+} from "@/components/ui";
 import {
   fetchFixtureDetail,
   fetchPredictionMetrics,
@@ -51,6 +53,15 @@ const tabs: Array<{ key: MatchTab; label: string }> = [
   { key: "odds", label: "赔率" },
   { key: "teams", label: "球队信息" },
 ];
+
+const labelClass =
+  "text-[11px] font-semibold uppercase tracking-wider text-slate-500";
+const innerPanelClass =
+  "rounded-xl border border-slate-800 bg-pitch-950 px-3 py-2.5";
+const consensusGridClass =
+  "grid grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))_minmax(0,1.1fr)] items-center gap-x-3";
+const primaryButtonClass =
+  "inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-blue-600/30 transition-colors hover:from-blue-500 hover:to-indigo-500 disabled:cursor-not-allowed disabled:opacity-40";
 
 const percent = (value: number | null) =>
   value === null ? "-" : `${Math.round(value * 100)}%`;
@@ -86,7 +97,109 @@ function fixtureState(detail: FixtureDetail) {
   return fixture.lineup_confirmed ? "首发已确认" : "未开始";
 }
 
-function MatchHeader({ detail }: { detail: FixtureDetail }) {
+function fixtureStatusVariant(detail: FixtureDetail) {
+  const { status } = detail.fixture;
+  if (status === "finished") return "neutral" as const;
+  if (status === "live") return "ready" as const;
+  if (status === "postponed" || status === "cancelled") return "danger" as const;
+  return "info" as const;
+}
+
+function scoreToneClass(self: number, other: number) {
+  if (self > other) return "text-rose-400";
+  if (self < other) return "text-emerald-400";
+  return "text-slate-100";
+}
+
+function teamLogoCircle(
+  profile: FixtureDetail["context"]["teams"]["home"],
+  team: FixtureDetail["fixture"]["home_team"],
+  tone: "home" | "away",
+) {
+  return (
+    <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-700 bg-pitch-950">
+      <TeamLogo profile={profile ?? {}} team={team} tone={tone} />
+    </span>
+  );
+}
+
+/** 设计稿样式的单行区块标题：mono 大写眉题 + 中文标题 + 右侧备注。 */
+function SectionTitle({
+  titleId,
+  eyebrow,
+  title,
+  meta,
+  className,
+}: {
+  titleId?: string;
+  eyebrow: string;
+  title: string;
+  meta?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-1 ${className ?? ""}`}
+    >
+      <h3 id={titleId} className="text-xs font-bold uppercase tracking-wider text-slate-400">
+        {eyebrow} <span className="ml-1">{title}</span>
+      </h3>
+      {meta != null ? <span className="text-xs text-slate-500">{meta}</span> : null}
+    </div>
+  );
+}
+
+function useLeagueRanks(detail: FixtureDetail | null) {
+  const [ranks, setRanks] = useState<{ home: string; away: string } | null>(
+    null,
+  );
+  const leagueKey = detail?.fixture.league_key;
+  const homeName = detail?.fixture.home_team.name;
+  const awayName = detail?.fixture.away_team.name;
+
+  useEffect(() => {
+    if (!leagueKey) return;
+    let active = true;
+    void fetchStandings()
+      .then((response) => {
+        if (!active) return;
+        const snapshot = (response.items ?? []).find(
+          (item) => item.league_key === leagueKey,
+        );
+        const rows = snapshot?.standings ?? [];
+        const find = (name?: string) => {
+          const row = rows.find(
+            (item) =>
+              name &&
+              (item.team.name === name ||
+                item.team.name.includes(name) ||
+                name.includes(item.team.name)),
+          );
+          return row ? `联赛第 ${row.rank} 位 · ${row.points} 分` : "暂无排名";
+        };
+        setRanks({
+          home: find(homeName),
+          away: find(awayName),
+        });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [leagueKey, homeName, awayName]);
+
+  return ranks;
+}
+
+function MatchHeader({
+  detail,
+  ranks,
+  children,
+}: {
+  detail: FixtureDetail;
+  ranks: { home: string; away: string } | null;
+  children?: ReactNode;
+}) {
   const { fixture, context } = detail;
   const outcome = fixture.score
     ? fixture.score.home > fixture.score.away
@@ -96,37 +209,47 @@ function MatchHeader({ detail }: { detail: FixtureDetail }) {
         : "平局"
     : null;
   return (
-    <header className="match-center-header research-match-header">
-      <div className="match-breadcrumb">
-        <Link href="/">
+    <Card as="header" className="p-6">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-slate-300 transition-colors hover:text-blue-400"
+        >
           <ArrowLeft size={15} aria-hidden="true" />
           比赛研究台
         </Link>
         <span>{fixture.league.name}</span>
         <span>{fixtureState(detail)}</span>
       </div>
-      <div className="match-center-scoreboard">
-        <div className="match-side home">
-          <TeamLogo
-            profile={context.teams.home ?? {}}
-            team={fixture.home_team}
-            tone="home"
-          />
-          <strong>{fixture.home_team.name}</strong>
-          <small>主队</small>
-        </div>
-        <div className="match-score">
-          <span className={`match-state ${fixture.status}`}>
-            {fixtureState(detail)}
+      <div className="mt-6 flex items-center justify-between gap-3 sm:gap-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {teamLogoCircle(context.teams.home, fixture.home_team, "home")}
+          <span className="min-w-0">
+            <strong className="block truncate text-xl font-bold text-white">
+              {fixture.home_team.name}
+            </strong>
+            <small className="text-xs text-slate-400">主队{ranks?.home ? ` · ${ranks.home}` : ""}</small>
           </span>
+        </div>
+        <div className="flex shrink-0 flex-col items-center gap-1.5 text-center">
+          <StatusBadge variant={fixtureStatusVariant(detail)}>
+            {fixtureState(detail)}
+          </StatusBadge>
           {fixture.score ? (
-            <Scoreline
-              home={fixture.score.home}
-              away={fixture.score.away}
-              large
-            />
+            <span
+              className="font-mono text-4xl font-black tracking-wider text-white tabular-nums"
+              aria-label={`${fixture.score.home} 比 ${fixture.score.away}`}
+            >
+              <span className={scoreToneClass(fixture.score.home, fixture.score.away)}>
+                {fixture.score.home}
+              </span>
+              <span className="mx-1.5 text-slate-600">:</span>
+              <span className={scoreToneClass(fixture.score.away, fixture.score.home)}>
+                {fixture.score.away}
+              </span>
+            </span>
           ) : (
-            <strong>
+            <strong className="font-mono text-4xl font-black tracking-wider text-white tabular-nums">
               {new Intl.DateTimeFormat("zh-CN", {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -134,35 +257,23 @@ function MatchHeader({ detail }: { detail: FixtureDetail }) {
               }).format(new Date(fixture.kickoff))}
             </strong>
           )}
-          <small>{outcome ?? "北京时间"}</small>
+          <small className="font-mono text-xs text-slate-400">
+            {outcome ? `${outcome} · ` : ""}
+            {formatKickoff(fixture.kickoff)}
+          </small>
         </div>
-        <div className="match-side away">
-          <TeamLogo
-            profile={context.teams.away ?? {}}
-            team={fixture.away_team}
-            tone="away"
-          />
-          <strong>{fixture.away_team.name}</strong>
-          <small>客队</small>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-3 text-right">
+          <span className="min-w-0">
+            <strong className="block truncate text-xl font-bold text-white">
+              {fixture.away_team.name}
+            </strong>
+            <small className="text-xs text-slate-400">客队{ranks?.away ? ` · ${ranks.away}` : ""}</small>
+          </span>
+          {teamLogoCircle(context.teams.away, fixture.away_team, "away")}
         </div>
       </div>
-      <div className="match-meta">
-        <span>
-          <CalendarDays size={14} aria-hidden="true" />
-          {formatKickoff(fixture.kickoff)}
-        </span>
-        <span>
-          <MapPin size={14} aria-hidden="true" />
-          {fixture.venue || "场地待定"}
-        </span>
-        <span>
-          <Database size={14} aria-hidden="true" />
-          {context.synced_at
-            ? `数据 ${formatTimestamp(context.synced_at)}`
-            : "数据待同步"}
-        </span>
-      </div>
-    </header>
+      <div className="mt-6 border-t border-slate-800/80 pt-6">{children}</div>
+    </Card>
   );
 }
 
@@ -300,51 +411,75 @@ function DecisionReport({
         ? "重新生成"
         : "生成预测";
   return (
-    <div className="evidence-first-layout">
-      <div className="evidence-first-main">
-        <section
-          className="evidence-workbench-block evidence-audit"
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+      <div className="flex min-w-0 flex-col gap-6 lg:col-span-8">
+        <Card
+          className="p-5"
           aria-labelledby="evidence-audit-title"
         >
-          <header className="evidence-block-heading">
-            <div>
-              <span>01 / EVIDENCE AUDIT</span>
-              <h2 id="evidence-audit-title">证据完整度</h2>
-            </div>
-            <small>先确认数据，再阅读结论</small>
-          </header>
-          <div className="evidence-audit-body">
-            <div className="evidence-audit-score">
-              <strong>
+          <SectionTitle
+            className="mb-4"
+            eyebrow="01 / EVIDENCE AUDIT"
+            title="证据完整度"
+            titleId="evidence-audit-title"
+            meta="先确认数据，再阅读结论"
+          />
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-pitch-950 p-4 text-center">
+              <strong className="block font-mono text-4xl font-black tabular-nums text-white">
                 {report.evidenceReady} / {report.evidenceTotal}
               </strong>
-              <span>
+              <span className="mt-1 block text-xs text-slate-400">
                 当前证据
                 {report.evidenceQuality >= 0.67
                   ? "可用于研究"
                   : "不足以形成判断"}
               </span>
-              <i aria-hidden="true">
-                <em style={{ width: percent(report.evidenceQuality) }} />
-              </i>
-              <small>{percent(report.evidenceQuality)} 已就绪</small>
+              <div
+                className="mt-3 h-1.5 w-full rounded-full bg-slate-800"
+                aria-hidden="true"
+              >
+                <div
+                  className="h-1.5 rounded-full bg-emerald-500"
+                  style={{ width: percent(report.evidenceQuality) }}
+                />
+              </div>
+              <small className="mt-2 block font-mono text-xs tabular-nums text-emerald-400">
+                {percent(report.evidenceQuality)} 已就绪
+              </small>
             </div>
-            <div className="evidence-source-grid">
+            <div className="grid grid-cols-2 content-start gap-3 md:col-span-3 md:grid-cols-3">
               {report.evidence.map((item) => (
                 <div
-                  className={item.ready ? "ready" : "waiting"}
                   key={item.key}
+                  className={`rounded-xl border p-3 text-xs ${
+                    item.ready
+                      ? "border-slate-800 bg-pitch-950"
+                      : "border-amber-500/20 bg-amber-500/5"
+                  }`}
                 >
-                  <span>
-                    {item.ready ? (
-                      <Check size={14} aria-label="已就绪" />
-                    ) : (
-                      <Clock3 size={14} aria-label="待同步" />
-                    )}
-                    {item.label}
+                  <span className="flex items-center justify-between gap-1.5">
+                    <strong className="truncate text-xs font-semibold text-white">
+                      {item.label}
+                    </strong>
+                    <span
+                      className={`flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] ${
+                        item.ready
+                          ? "bg-emerald-500/20 text-emerald-400"
+                          : "bg-amber-500/20 text-amber-400"
+                      }`}
+                    >
+                      {item.ready ? (
+                        <Check size={11} aria-label="已就绪" />
+                      ) : (
+                        <Clock3 size={11} aria-label="待同步" />
+                      )}
+                    </span>
                   </span>
-                  <strong>{item.detail}</strong>
-                  <small>
+                  <strong className="mt-1.5 block text-[11px] font-normal leading-relaxed text-slate-500">
+                    {item.detail}
+                  </strong>
+                  <small className="mt-1 block font-mono text-[10px] text-slate-500">
                     {evidenceSource(item.key)} ·{" "}
                     {formatTimestamp(item.updatedAt)}
                   </small>
@@ -352,20 +487,20 @@ function DecisionReport({
               ))}
             </div>
           </div>
-        </section>
+        </Card>
 
-        <section
-          className="evidence-workbench-block"
+        <Card
+          className="p-5"
           aria-labelledby="form-evidence-title"
         >
-          <header className="evidence-block-heading">
-            <div>
-              <span>02 / RECENT FORM</span>
-              <h2 id="form-evidence-title">近期状态对照</h2>
-            </div>
-            <small>统一读取最近样本</small>
-          </header>
-          <div className="form-evidence-grid">
+          <SectionTitle
+            className="mb-4"
+            eyebrow="02 / RECENT FORM"
+            title="近期状态对照"
+            titleId="form-evidence-title"
+            meta="统一读取最近样本"
+          />
+          <div className="grid gap-3 md:grid-cols-2">
             {[
               {
                 name: detail.fixture.home_team.name,
@@ -380,44 +515,54 @@ function DecisionReport({
                 matches: detail.context.recent_form.away,
               },
             ].map((team) => (
-              <div key={team.side}>
-                <header>
-                  <span>{team.side}</span>
-                  <strong>{team.name}</strong>
-                  <small>{team.matches.length} 场样本</small>
+              <div key={team.side} className={innerPanelClass}>
+                <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                  <span className={labelClass}>{team.side}</span>
+                  <strong className="text-sm font-semibold text-white">
+                    {team.name}
+                  </strong>
+                  <small className="text-[11px] text-slate-500">
+                    {team.matches.length} 场样本
+                  </small>
                 </header>
-                <div>
-                  <b>{team.ppg.toFixed(2)}</b>
-                  <span>场均积分</span>
-                  <i aria-hidden="true">
-                    <em
+                <div className="mt-3">
+                  <b className="font-mono text-2xl font-black tabular-nums text-amber-400">
+                    {team.ppg.toFixed(2)}
+                  </b>
+                  <span className="ml-2 text-xs text-slate-400">场均积分</span>
+                  <div
+                    className="mt-2 h-1.5 rounded-full bg-slate-800"
+                    aria-hidden="true"
+                  >
+                    <div
+                      className="h-1.5 rounded-full bg-emerald-500"
                       style={{
                         width: `${Math.min(100, (team.ppg / 3) * 100)}%`,
                       }}
                     />
-                  </i>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
-        </section>
+        </Card>
 
-        <section
-          className="evidence-workbench-block"
+        <Card
+          className="p-5"
           aria-labelledby="availability-evidence-title"
         >
-          <header className="evidence-block-heading">
-            <div>
-              <span>03 / AVAILABILITY</span>
-              <h2 id="availability-evidence-title">伤停与阵容</h2>
-            </div>
-            <small>
-              {detail.context.lineup.confirmed
+          <SectionTitle
+            className="mb-4"
+            eyebrow="03 / AVAILABILITY"
+            title="伤停与阵容"
+            titleId="availability-evidence-title"
+            meta={
+              detail.context.lineup.confirmed
                 ? "正式首发已确认"
-                : "预计阵容 · 开赛前复核"}
-            </small>
-          </header>
-          <div className="availability-evidence-grid">
+                : "预计阵容 · 开赛前复核"
+            }
+          />
+          <div className="grid gap-3 md:grid-cols-2">
             {[
               {
                 name: detail.fixture.home_team.name,
@@ -432,26 +577,40 @@ function DecisionReport({
                 players: awayAbsent,
               },
             ].map((team) => (
-              <div key={team.name}>
-                <div className="availability-team-title">
-                  <strong>{team.name}</strong>
-                  <span>{team.missing ? "存在缺阵" : "阵容较完整"}</span>
+              <div key={team.name} className={innerPanelClass}>
+                <div className="flex items-center justify-between gap-2">
+                  <strong className="text-sm font-semibold text-white">
+                    {team.name}
+                  </strong>
+                  <span
+                    className={`text-xs font-medium ${
+                      team.missing ? "text-rose-400" : "text-emerald-400"
+                    }`}
+                  >
+                    {team.missing ? "存在缺阵" : "阵容较完整"}
+                  </span>
                 </div>
-                <dl>
+                <dl className="mt-2.5 grid grid-cols-3 gap-2">
                   <div>
-                    <dt>确认缺阵</dt>
-                    <dd>{team.missing}</dd>
+                    <dt className="text-[11px] text-slate-500">确认缺阵</dt>
+                    <dd className="mt-0.5 font-mono text-sm font-bold tabular-nums text-white">
+                      {team.missing}
+                    </dd>
                   </div>
                   <div>
-                    <dt>阵容强度</dt>
-                    <dd>{Math.round(team.strength * 100)}%</dd>
+                    <dt className="text-[11px] text-slate-500">阵容强度</dt>
+                    <dd className="mt-0.5 font-mono text-sm font-bold tabular-nums text-white">
+                      {Math.round(team.strength * 100)}%
+                    </dd>
                   </div>
                   <div>
-                    <dt>名单状态</dt>
-                    <dd>{detail.context.lineup.confirmed ? "正式" : "预计"}</dd>
+                    <dt className="text-[11px] text-slate-500">名单状态</dt>
+                    <dd className="mt-0.5 text-sm font-semibold text-white">
+                      {detail.context.lineup.confirmed ? "正式" : "预计"}
+                    </dd>
                   </div>
                 </dl>
-                <p>
+                <p className="mt-2.5 text-xs leading-relaxed text-slate-400">
                   {team.players.length
                     ? team.players
                         .map((player) => `${player.name}（${player.reason}）`)
@@ -461,40 +620,46 @@ function DecisionReport({
               </div>
             ))}
           </div>
-        </section>
+        </Card>
 
-        <section
-          className="evidence-workbench-block"
+        <Card
+          className="p-5"
           aria-labelledby="market-evidence-title"
         >
-          <header className="evidence-block-heading">
-            <div>
-              <span>04 / MARKET</span>
-              <h2 id="market-evidence-title">赔率与市场</h2>
-            </div>
-            <small>
-              {detail.context.odds
+          <SectionTitle
+            className="mb-4"
+            eyebrow="04 / MARKET"
+            title="赔率与市场"
+            titleId="market-evidence-title"
+            meta={
+              detail.context.odds
                 ? `${detail.context.odds.bookmaker} · ${formatTimestamp(detail.context.odds.updated_at)}`
-                : "当前不使用估算值"}
-            </small>
-          </header>
+                : "当前不使用估算值"
+            }
+          />
           {detail.context.odds ? (
-            <div className="market-evidence-grid">
-              <div>
-                <span>主胜</span>
-                <strong>{detail.context.odds.home.toFixed(2)}</strong>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              <div className={innerPanelClass}>
+                <span className="text-[11px] text-slate-500">主胜</span>
+                <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+                  {detail.context.odds.home.toFixed(2)}
+                </strong>
               </div>
-              <div>
-                <span>平局</span>
-                <strong>{detail.context.odds.draw.toFixed(2)}</strong>
+              <div className={innerPanelClass}>
+                <span className="text-[11px] text-slate-500">平局</span>
+                <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+                  {detail.context.odds.draw.toFixed(2)}
+                </strong>
               </div>
-              <div>
-                <span>客胜</span>
-                <strong>{detail.context.odds.away.toFixed(2)}</strong>
+              <div className={innerPanelClass}>
+                <span className="text-[11px] text-slate-500">客胜</span>
+                <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+                  {detail.context.odds.away.toFixed(2)}
+                </strong>
               </div>
-              <div>
-                <span>亚洲让球</span>
-                <strong>
+              <div className={innerPanelClass}>
+                <span className="text-[11px] text-slate-500">亚洲让球</span>
+                <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
                   {detail.context.odds.asian_handicap === null
                     ? "-"
                     : formatHandicapSide(
@@ -505,60 +670,129 @@ function DecisionReport({
               </div>
             </div>
           ) : (
-            <div className="market-evidence-empty">
-              <CircleAlert size={18} aria-hidden="true" />
+            <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+              <CircleAlert
+                size={18}
+                className="mt-0.5 shrink-0 text-amber-400"
+                aria-hidden="true"
+              />
               <div>
-                <strong>即时赔率尚未同步</strong>
-                <p>当前模型判断不包含市场价格，不会使用估算赔率补齐。</p>
+                <strong className="block font-semibold">即时赔率尚未同步</strong>
+                <p className="mt-0.5 text-amber-200/70">
+                  当前模型判断不包含市场价格，不会使用估算赔率补齐。
+                </p>
               </div>
             </div>
           )}
-        </section>
+        </Card>
 
-        <section
-          className="evidence-workbench-block model-conclusion"
+        <Card
+          className="p-5"
           aria-labelledby="model-conclusion-title"
         >
-          <header className="evidence-block-heading">
-            <div>
-              <span>05 / MODEL CONCLUSION</span>
-              <h2 id="model-conclusion-title">模型综合判断</h2>
-            </div>
-            <small>
-              基于当前 {report.evidenceReady} 项有效证据
-              {hitRate ? (
-                <span className="hit-rate-badge">
-                  历史命中率 {percent(hitRate.accuracy)} · {hitRate.samples} 场
-                </span>
-              ) : null}
-            </small>
-          </header>
-          <div className="model-conclusion-summary">
-            <div>
-              <span>模型共识</span>
-              <strong>{report.consensus}</strong>
-              <p>{report.consensusDetail}</p>
-            </div>
-            <dl>
-              <div>
-                <dt>一致度</dt>
-                <dd>{percent(report.agreement)}</dd>
+          <SectionTitle
+            className="mb-4"
+            eyebrow="05 / MODEL CONCLUSION"
+            title="模型综合判断"
+            titleId="model-conclusion-title"
+            meta={
+              <>
+                基于当前 {report.evidenceReady} 项有效证据
+                {hitRate ? (
+                  <span className="ml-2 rounded-md bg-emerald-500/10 px-2 py-0.5 font-mono text-[11px] tabular-nums text-emerald-400">
+                    历史命中率 {percent(hitRate.accuracy)} · {hitRate.samples} 场
+                  </span>
+                ) : null}
+              </>
+            }
+          />
+          {aggregate && predictedKey ? (
+            <div className="mb-3 rounded-xl border border-slate-800 bg-pitch-950 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 font-mono text-xs tabular-nums">
+                {(["home", "draw", "away"] as const).map((key, index) => (
+                  <span
+                    key={key}
+                    className={
+                      key === predictedKey
+                        ? "font-bold text-rose-400"
+                        : "text-slate-400"
+                    }
+                  >
+                    {key === "home" ? "主胜" : key === "draw" ? "平局" : "客胜"}{" "}
+                    {percent(aggregate[index])}
+                  </span>
+                ))}
               </div>
-              <div>
-                <dt>关键变量</dt>
-                <dd>{report.keyVariable}</dd>
+              <div
+                className="mt-2.5 flex h-3 w-full overflow-hidden rounded-full bg-slate-800"
+                aria-hidden="true"
+              >
+                {(["home", "draw", "away"] as const).map((key, index) => {
+                  const fallbackIndex = (
+                    ["home", "draw", "away"] as const
+                  ).filter((outcome) => outcome !== predictedKey).indexOf(key);
+                  return (
+                    <span
+                      key={key}
+                      className={
+                        key === predictedKey
+                          ? "bg-rose-500"
+                          : fallbackIndex === 0
+                            ? "bg-slate-600"
+                            : "bg-slate-700"
+                      }
+                      style={{ width: percent(aggregate[index]) }}
+                    />
+                  );
+                })}
               </div>
-              <div>
-                <dt>市场观察</dt>
-                <dd>{report.marketWatch}</dd>
+            </div>
+          ) : null}
+          {detail.prediction?.analysis_summary ? (
+            <div className="mb-3 rounded-xl border border-slate-800 bg-pitch-950 p-4 text-xs leading-relaxed text-slate-300">
+              <p className="mb-1 font-semibold text-slate-200">分析摘要：</p>
+              {detail.prediction.analysis_summary}
+            </div>
+          ) : null}
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+            <div className={innerPanelClass}>
+              <span className={labelClass}>模型共识</span>
+              <strong className="mt-1 block text-lg font-bold text-white">
+                {report.consensus}
+              </strong>
+              <p className="mt-1 text-sm leading-relaxed text-slate-400">
+                {report.consensusDetail}
+              </p>
+            </div>
+            <dl className="grid content-start gap-2.5 sm:grid-cols-3 lg:grid-cols-1">
+              <div className={innerPanelClass}>
+                <dt className={labelClass}>一致度</dt>
+                <dd className="mt-1 font-mono text-lg font-bold tabular-nums text-white">
+                  {percent(report.agreement)}
+                </dd>
+              </div>
+              <div className={innerPanelClass}>
+                <dt className={labelClass}>关键变量</dt>
+                <dd className="mt-1 text-sm font-semibold text-white">
+                  {report.keyVariable}
+                </dd>
+              </div>
+              <div className={innerPanelClass}>
+                <dt className={labelClass}>市场观察</dt>
+                <dd className="mt-1 text-sm font-semibold text-white">
+                  {report.marketWatch}
+                </dd>
               </div>
             </dl>
           </div>
           <div
-            className="consensus-board evidence-consensus"
+            className="mt-3 overflow-hidden rounded-xl border border-slate-800 bg-pitch-950"
             aria-label="胜平负概率对照"
           >
-            <div className="consensus-columns" aria-hidden="true">
+            <div
+              className={`${consensusGridClass} border-b border-slate-800 bg-pitch-950 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-slate-400`}
+              aria-hidden="true"
+            >
               <span>模型</span>
               <span>主胜</span>
               <span>平局</span>
@@ -566,60 +800,82 @@ function DecisionReport({
               <span>判断</span>
             </div>
             {report.models.length ? (
-              <div className="consensus-rows">
+              <div className="divide-y divide-slate-800/60">
                 {aggregate && predictedKey ? (
-                  <div className="consensus-row consensus-prediction">
-                    <strong>综合预测</strong>
+                  <div
+                    className={`${consensusGridClass} bg-emerald-500/5 px-3 py-2.5`}
+                  >
+                    <strong className="text-sm font-semibold text-emerald-400">
+                      综合预测
+                    </strong>
                     {(["home", "draw", "away"] as const).map((key, index) => (
-                      <span
-                        key={key}
-                        className={
-                          key === predictedKey ? "predicted" : undefined
-                        }
-                      >
-                        <b>{percent(aggregate[index])}</b>
-                        <i>
-                          <em
-                            style={
-                              {
-                                "--report-probability": percent(
-                                  aggregate[index],
-                                ),
-                              } as CSSProperties
-                            }
+                      <span key={key}>
+                        <b
+                          className={`font-mono text-sm tabular-nums ${
+                            key === predictedKey
+                              ? "font-black text-emerald-400"
+                              : "text-slate-300"
+                          }`}
+                        >
+                          {percent(aggregate[index])}
+                        </b>
+                        <span className="mt-1 block h-1 rounded-full bg-slate-800">
+                          <span
+                            className={`block h-1 rounded-full ${
+                              key === predictedKey
+                                ? "bg-emerald-500"
+                                : "bg-emerald-500/40"
+                            }`}
+                            style={{ width: percent(aggregate[index]) }}
                           />
-                        </i>
+                        </span>
                       </span>
                     ))}
-                    <mark className="prediction-mark">
-                      {predictedKey === "home"
-                        ? "主胜"
-                        : predictedKey === "draw"
-                          ? "平局"
-                          : "客胜"}
-                    </mark>
-                    {agreementTag ? (
-                      <em className={`agreement-tag ${agreementTag.tone}`}>
-                        {agreementTag.label}
-                      </em>
-                    ) : null}
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <mark className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-400">
+                        {predictedKey === "home"
+                          ? "主胜"
+                          : predictedKey === "draw"
+                            ? "平局"
+                            : "客胜"}
+                      </mark>
+                      {agreementTag ? (
+                        <em
+                          className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium not-italic ${
+                            agreementTag.tone === "success"
+                              ? "bg-emerald-500/10 text-emerald-400"
+                              : agreementTag.tone === "warning"
+                                ? "bg-amber-500/10 text-amber-400"
+                                : "bg-blue-500/10 text-blue-400"
+                          }`}
+                        >
+                          {agreementTag.label}
+                        </em>
+                      ) : null}
+                    </span>
                   </div>
                 ) : null}
                 {implied ? (
-                  <div className="consensus-row consensus-market">
-                    <strong>市场隐含</strong>
+                  <div
+                    className={`${consensusGridClass} px-3 py-2.5 hover:bg-slate-800/30`}
+                  >
+                    <strong className="text-sm font-semibold text-slate-300">
+                      市场隐含
+                    </strong>
                     {(["home", "draw", "away"] as const).map((key, index) => (
                       <span key={key}>
-                        <b>{percent(implied[index])}</b>
+                        <b className="font-mono text-sm tabular-nums text-slate-300">
+                          {percent(implied[index])}
+                        </b>
                         {aggregate ? (
                           <small
-                            className={
+                            className={`ml-1.5 font-mono text-[11px] tabular-nums ${
                               aggregate[index] - implied[index] > 0
-                                ? "edge-positive"
+                                ? "text-rose-400"
                                 : aggregate[index] - implied[index] < 0
-                                  ? "edge-negative"
-                                  : undefined
-                            }
+                                  ? "text-emerald-400"
+                                  : "text-slate-500"
+                            }`}
                           >
                             {aggregate[index] - implied[index] > 0 ? "+" : ""}
                             {(
@@ -629,69 +885,79 @@ function DecisionReport({
                             %
                           </small>
                         ) : null}
-                        <i>
-                          <em
-                            className="market-bar"
-                            style={
-                              {
-                                "--report-probability": percent(implied[index]),
-                              } as CSSProperties
-                            }
+                        <span className="mt-1 block h-1 rounded-full bg-slate-800">
+                          <span
+                            className="block h-1 rounded-full bg-slate-500"
+                            style={{ width: percent(implied[index]) }}
                           />
-                        </i>
+                        </span>
                       </span>
                     ))}
-                    <mark className="market-mark">去水基准</mark>
+                    <span>
+                      <mark className="rounded-md bg-pitch-800 px-2 py-0.5 text-xs font-medium text-slate-400">
+                        去水基准
+                      </mark>
+                    </span>
                   </div>
                 ) : null}
                 {report.models.map((model) => (
-                  <div className="consensus-row" key={model.key}>
-                    <strong>{model.label}</strong>
+                  <div
+                    className={`${consensusGridClass} px-3 py-2.5 hover:bg-slate-800/30`}
+                    key={model.key}
+                  >
+                    <strong className="truncate text-sm font-semibold text-slate-200">
+                      {model.label}
+                    </strong>
                     {(["home", "draw", "away"] as const).map((key) => (
                       <span key={key}>
-                        <b>{percent(model.probabilities[key])}</b>
-                        <i>
-                          <em
-                            style={
-                              {
-                                "--report-probability": percent(
-                                  model.probabilities[key],
-                                ),
-                              } as CSSProperties
-                            }
+                        <b className="font-mono text-sm tabular-nums text-slate-300">
+                          {percent(model.probabilities[key])}
+                        </b>
+                        <span className="mt-1 block h-1 rounded-full bg-slate-800">
+                          <span
+                            className="block h-1 rounded-full bg-emerald-500/40"
+                            style={{
+                              width: percent(model.probabilities[key]),
+                            }}
                           />
-                        </i>
+                        </span>
                       </span>
                     ))}
-                    <mark>
-                      {model.outcome === "home"
-                        ? "主胜"
-                        : model.outcome === "draw"
-                          ? "平局"
-                          : "客胜"}
-                    </mark>
+                    <span>
+                      <mark className="rounded-md bg-pitch-800 px-2 py-0.5 text-xs font-medium text-slate-200">
+                        {model.outcome === "home"
+                          ? "主胜"
+                          : model.outcome === "draw"
+                            ? "平局"
+                            : "客胜"}
+                      </mark>
+                    </span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="report-empty-line">
+              <div className="flex items-center justify-center gap-2 px-4 py-6 text-sm text-slate-500">
                 <Clock3 size={17} aria-hidden="true" />
                 暂无当前提示词版本的模型结果
               </div>
             )}
           </div>
-          <div className="decision-arguments">
-            <div className="support">
-              <span>支持因素</span>
-              <p>
+          <div className="mt-3 grid gap-2.5 md:grid-cols-3">
+            <div className="rounded-xl border border-slate-800 border-l-2 border-l-emerald-500 bg-pitch-950 px-3 py-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">
+                支持因素
+              </span>
+              <p className="mt-1 text-sm leading-relaxed text-slate-300">
                 {report.factors.find(
                   (factor) => factor.tone === "home" || factor.tone === "away",
                 )?.conclusion ?? "当前没有明显单边优势"}
               </p>
             </div>
-            <div className="against">
-              <span>反对因素</span>
-              <p>
+            <div className="rounded-xl border border-slate-800 border-l-2 border-l-rose-500 bg-pitch-950 px-3 py-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">
+                反对因素
+              </span>
+              <p className="mt-1 text-sm leading-relaxed text-slate-300">
                 {report.models.length > 1 && !report.consensus.includes("一致")
                   ? report.consensusDetail
                   : detail.context.odds
@@ -699,30 +965,36 @@ function DecisionReport({
                     : "缺少可验证的即时赔率"}
               </p>
             </div>
-            <div className="pending">
-              <span>待确认项</span>
-              <p>
+            <div className="rounded-xl border border-slate-800 border-l-2 border-l-amber-500 bg-pitch-950 px-3 py-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">
+                待确认项
+              </span>
+              <p className="mt-1 text-sm leading-relaxed text-slate-300">
                 {report.evidence.find((item) => !item.ready)?.label ??
                   "主要证据已就绪"}
               </p>
             </div>
           </div>
-          <footer className="decision-action-row">
-            <div>
+          <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
+            <div className="flex items-center gap-2.5">
               {eligible ? (
-                <Check size={16} aria-hidden="true" />
+                <Check size={16} className="text-emerald-400" aria-hidden="true" />
               ) : (
-                <CircleAlert size={16} aria-hidden="true" />
+                <CircleAlert
+                  size={16}
+                  className="text-amber-400"
+                  aria-hidden="true"
+                />
               )}
               <span>
-                <strong>
+                <strong className="block text-sm font-semibold text-white">
                   {eligible
                     ? detail.fixture.status === "live"
                       ? "进行中仍可生成预测"
                       : "当前可生成预测"
                     : "本场预测已关闭"}
                 </strong>
-                <small>
+                <small className="block text-xs text-slate-500">
                   {eligible
                     ? "赛中预测只保存版本，不产生新的模拟下注"
                     : "完场、延期或取消状态不可创建新版本"}
@@ -731,14 +1003,14 @@ function DecisionReport({
             </div>
             {eligible && (
               <button
-                className="report-predict-button"
+                className={primaryButtonClass}
                 type="button"
                 onClick={onManualPredict}
                 disabled={predicting || !hasEvidence}
                 title={!hasEvidence ? "等待赛前证据同步" : actionLabel}
               >
                 {predicting ? (
-                  <LoaderCircle className="spin" size={16} aria-hidden="true" />
+                  <LoaderCircle className="animate-spin" size={16} aria-hidden="true" />
                 ) : (
                   <Play size={16} fill="currentColor" aria-hidden="true" />
                 )}
@@ -750,56 +1022,110 @@ function DecisionReport({
               </button>
             )}
           </footer>
-        </section>
+        </Card>
       </div>
 
-      <aside className="research-progress-rail" aria-label="研究进度">
+      <aside
+        className="flex min-w-0 flex-col gap-4 lg:col-span-4"
+        aria-label="研究进度"
+      >
         <section>
-          <header>
-            <span>RESEARCH FLOW</span>
-            <h2>研究进度</h2>
-          </header>
-          <ol>
+          <SectionTitle eyebrow="RESEARCH FLOW" title="研究进度" />
+          <ol className="mt-3 space-y-2">
             {report.evidence.map((item, index) => (
-              <li className={item.ready ? "ready" : "waiting"} key={item.key}>
-                <i>
+              <li
+                key={item.key}
+                className="flex items-center justify-between gap-2.5 rounded-lg border border-slate-800 bg-pitch-950 p-2.5 text-xs"
+              >
+                <span className="flex min-w-0 items-center gap-2">
                   {item.ready ? (
-                    <Check size={12} aria-hidden="true" />
+                    <CheckCircle2
+                      size={16}
+                      className="shrink-0 text-emerald-400"
+                      aria-hidden="true"
+                    />
                   ) : (
-                    index + 1
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 font-mono text-[11px] font-bold tabular-nums text-amber-400">
+                      {index + 1}
+                    </span>
                   )}
-                </i>
-                <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.ready ? "已读取" : "待同步"}</small>
+                  <strong
+                    className={`truncate font-semibold ${
+                      item.ready ? "text-slate-200" : "text-amber-400"
+                    }`}
+                  >
+                    {item.label}
+                  </strong>
                 </span>
+                <small className="shrink-0 text-[11px] text-slate-500">
+                  {item.ready ? "已读取" : "待同步"}
+                </small>
               </li>
             ))}
-            <li className={report.models.length ? "ready" : "waiting"}>
-              <i>
+            <li className="flex items-center justify-between gap-2.5 rounded-lg border border-slate-800 bg-pitch-950 p-2.5 text-xs">
+              <span className="flex min-w-0 items-center gap-2">
                 {report.models.length ? (
-                  <Check size={12} aria-hidden="true" />
+                  <CheckCircle2
+                    size={16}
+                    className="shrink-0 text-emerald-400"
+                    aria-hidden="true"
+                  />
                 ) : (
-                  7
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 font-mono text-[11px] font-bold tabular-nums text-amber-400">
+                    7
+                  </span>
                 )}
-              </i>
-              <span>
-                <strong>模型判断</strong>
-                <small>{report.models.length ? "已生成" : "待生成"}</small>
+                <strong
+                  className={`truncate font-semibold ${
+                    report.models.length ? "text-slate-200" : "text-amber-400"
+                  }`}
+                >
+                  模型判断
+                </strong>
               </span>
+              <small className="shrink-0 text-[11px] text-slate-500">
+                {report.models.length ? "已生成" : "待生成"}
+              </small>
             </li>
           </ol>
         </section>
-        <section className={`research-risk ${risk.tone}`}>
-          <strong>当前风险：{risk.label}</strong>
-          <p>{risk.note}</p>
+        <section
+          className={`rounded-2xl border p-5 ${
+            risk.tone === "danger"
+              ? "border-rose-500/20 bg-rose-500/10"
+              : risk.tone === "warning"
+                ? "border-amber-500/20 bg-amber-500/10"
+                : "border-emerald-500/20 bg-emerald-500/10"
+          }`}
+        >
+          <strong
+            className={`flex items-center gap-1.5 text-sm font-bold ${
+              risk.tone === "danger"
+                ? "text-rose-400"
+                : risk.tone === "warning"
+                  ? "text-amber-400"
+                  : "text-emerald-400"
+            }`}
+          >
+            {risk.tone === "ready" ? (
+              <ShieldCheck size={15} aria-hidden="true" />
+            ) : (
+              <CircleAlert size={15} aria-hidden="true" />
+            )}
+            当前风险：{risk.label}
+          </strong>
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
+            {risk.note}
+          </p>
         </section>
-        <section className="research-source-note">
-          <Database size={16} aria-hidden="true" />
-          <div>
-            <strong>业务数据源</strong>
-            <p>TheSportsDB · 懂球帝</p>
-            <small>
+        <section className="flex gap-3 rounded-xl border border-slate-800 bg-pitch-950 p-4">
+          <Database size={16} className="mt-0.5 shrink-0 text-slate-500" aria-hidden="true" />
+          <div className="min-w-0">
+            <strong className="block text-sm font-semibold text-slate-200">
+              业务数据源
+            </strong>
+            <p className="mt-0.5 text-xs text-slate-400">TheSportsDB · 懂球帝</p>
+            <small className="mt-0.5 block font-mono text-[11px] tabular-nums text-slate-500">
               最近同步 {formatTimestamp(detail.context.synced_at ?? null)}
             </small>
           </div>
@@ -840,32 +1166,33 @@ function ManualPredictionEmpty({
       ? "可使用当前结构化证据生成两个模型的独立判断。"
       : "近期状态、交锋和伤停就绪后再生成预测。");
   return (
-    <section className="match-empty manual-prediction-empty">
-      <Clock3 size={20} aria-hidden="true" />
-      <div>
-        <strong>{title}</strong>
-        <p>{description}</p>
-        {eligible && (
-          <button
-            className="manual-predict-button"
-            type="button"
-            onClick={onManualPredict}
-            disabled={predicting || !hasEvidence}
-          >
-            {predicting ? (
-              <LoaderCircle className="spin" size={13} aria-hidden="true" />
-            ) : (
-              <Play size={13} fill="currentColor" aria-hidden="true" />
-            )}
-            {predicting
-              ? "计算中"
-              : detail.fixture.status === "live"
-                ? "按当前赛况预测"
-                : "生成预测"}
-          </button>
-        )}
-      </div>
-    </section>
+    <EmptyState icon={<Clock3 size={20} aria-hidden="true" />}>
+      <strong className="font-display text-base font-bold text-slate-200">
+        {title}
+      </strong>
+      <p className="max-w-md text-center text-sm leading-relaxed text-slate-500">
+        {description}
+      </p>
+      {eligible && (
+        <button
+          className={primaryButtonClass}
+          type="button"
+          onClick={onManualPredict}
+          disabled={predicting || !hasEvidence}
+        >
+          {predicting ? (
+            <LoaderCircle className="animate-spin" size={13} aria-hidden="true" />
+          ) : (
+            <Play size={13} fill="currentColor" aria-hidden="true" />
+          )}
+          {predicting
+            ? "计算中"
+            : detail.fixture.status === "live"
+              ? "按当前赛况预测"
+              : "生成预测"}
+        </button>
+      )}
+    </EmptyState>
   );
 }
 
@@ -873,60 +1200,75 @@ function MatchOdds({ detail }: { detail: FixtureDetail }) {
   const odds = detail.context.odds;
   if (!odds)
     return (
-      <section className="match-empty">
-        <CircleAlert size={20} aria-hidden="true" />
-        <div>
-          <strong>暂无可用赛前赔率</strong>
-          <p>系统不会用估算赔率替代缺失的市场数据。</p>
-        </div>
-      </section>
+      <EmptyState icon={<CircleAlert size={20} aria-hidden="true" />}>
+        <strong className="font-display text-base font-bold text-slate-200">
+          暂无可用赛前赔率
+        </strong>
+        <p className="text-sm text-slate-500">
+          系统不会用估算赔率替代缺失的市场数据。
+        </p>
+      </EmptyState>
     );
   const handicap = odds.asian_handicap;
   return (
-    <section className="market-board" aria-label="赛前赔率">
-      <div className="market-board-heading">
-        <div>
-          <span>PRE-MATCH MARKET</span>
-          <h2>赛前赔率</h2>
+    <Card className="p-5" aria-label="赛前赔率">
+      <SectionTitle
+        className="mb-4"
+        eyebrow="PRE-MATCH MARKET"
+        title="赛前赔率"
+        meta={`${odds.bookmaker} · ${formatTimestamp(odds.updated_at)}`}
+      />
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+        <div className={innerPanelClass}>
+          <span className="text-[11px] text-slate-500">主胜</span>
+          <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+            {odds.home.toFixed(2)}
+          </strong>
         </div>
-        <small>
-          {odds.bookmaker} · {formatTimestamp(odds.updated_at)}
-        </small>
-      </div>
-      <div className="market-grid">
-        <div>
-          <span>主胜</span>
-          <strong>{odds.home.toFixed(2)}</strong>
+        <div className={innerPanelClass}>
+          <span className="text-[11px] text-slate-500">平局</span>
+          <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+            {odds.draw.toFixed(2)}
+          </strong>
         </div>
-        <div>
-          <span>平局</span>
-          <strong>{odds.draw.toFixed(2)}</strong>
-        </div>
-        <div>
-          <span>客胜</span>
-          <strong>{odds.away.toFixed(2)}</strong>
+        <div className={innerPanelClass}>
+          <span className="text-[11px] text-slate-500">客胜</span>
+          <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+            {odds.away.toFixed(2)}
+          </strong>
         </div>
         {handicap !== null && (
           <>
-            <div>
-              <span>{formatHandicapSide(handicap, "home")}</span>
-              <strong>{odds.asian_handicap_home_odd?.toFixed(2) ?? "-"}</strong>
+            <div className={innerPanelClass}>
+              <span className="text-[11px] text-slate-500">
+                {formatHandicapSide(handicap, "home")}
+              </span>
+              <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+                {odds.asian_handicap_home_odd?.toFixed(2) ?? "-"}
+              </strong>
             </div>
-            <div>
-              <span>{formatHandicapSide(handicap, "away")}</span>
-              <strong>{odds.asian_handicap_away_odd?.toFixed(2) ?? "-"}</strong>
+            <div className={innerPanelClass}>
+              <span className="text-[11px] text-slate-500">
+                {formatHandicapSide(handicap, "away")}
+              </span>
+              <strong className="mt-0.5 block font-mono text-lg font-bold tabular-nums text-white">
+                {odds.asian_handicap_away_odd?.toFixed(2) ?? "-"}
+              </strong>
             </div>
           </>
         )}
       </div>
-    </section>
+    </Card>
   );
 }
 
-function VerdictStrip({ detail }: { detail: FixtureDetail }) {
-  const [ranks, setRanks] = useState<{ home: string; away: string } | null>(
-    null,
-  );
+function VerdictStrip({
+  detail,
+  ranks,
+}: {
+  detail: FixtureDetail;
+  ranks: { home: string; away: string } | null;
+}) {
   const prediction = detail.prediction;
   const report = deriveMatchReport(detail);
   const probabilities: Record<"home" | "draw" | "away", number | undefined> =
@@ -944,79 +1286,53 @@ function VerdictStrip({ detail }: { detail: FixtureDetail }) {
       : execution?.reason
         ? "暂不下注"
         : "待预测";
-  useEffect(() => {
-    let active = true;
-    void fetchStandings()
-      .then((response) => {
-        if (!active) return;
-        const snapshot = (response.items ?? []).find(
-          (item) =>
-            detail.fixture.league_key &&
-            item.league_key === detail.fixture.league_key,
-        );
-        const rows = snapshot?.standings ?? [];
-        const find = (name?: string) => {
-          const row = rows.find(
-            (item) =>
-              name &&
-              (item.team.name === name ||
-                item.team.name.includes(name) ||
-                (name ?? "").includes(item.team.name)),
-          );
-          return row ? `第 ${row.rank} 位 · ${row.points} 分` : "暂无";
-        };
-        setRanks({
-          home: find(detail.fixture.home_team.name),
-          away: find(detail.fixture.away_team.name),
-        });
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [
-    detail.fixture.league_key,
-    detail.fixture.home_team.name,
-    detail.fixture.away_team.name,
-  ]);
   return (
-    <div className="verdict-strip" aria-label="AI 结论速览">
-      <div>
-        <small>AI 综合预测</small>
-        <strong>
+    <div className="grid gap-4 md:grid-cols-3" aria-label="AI 结论速览">
+      <div className="rounded-xl border border-slate-800 bg-pitch-950 p-4">
+        <small className={labelClass}>AI 综合预测</small>
+        <strong className="mt-1.5 block text-lg font-bold text-amber-400">
           {pick && probabilities[pick] != null ? (
             <>
-              <span className="verdict-pick">{pickLabel}</span> ·{" "}
-              {Math.round(probabilities[pick] * 100)}%
-              <small style={{ marginLeft: 8 }}>
+              {pickLabel} ·{" "}
+              <span className="font-mono tabular-nums">
+                {Math.round(probabilities[pick] * 100)}%
+              </span>
+              <small className="ml-2 font-mono text-[11px] font-normal tabular-nums text-slate-400">
                 主 {Math.round((probabilities.home ?? 0) * 100)}% / 平{" "}
                 {Math.round((probabilities.draw ?? 0) * 100)}% / 客{" "}
                 {Math.round((probabilities.away ?? 0) * 100)}%
               </small>
             </>
           ) : report.models.length ? (
-            "生成中，暂无结论"
+            <span className="text-slate-500">生成中，暂无结论</span>
           ) : (
-            "暂无预测"
+            <span className="text-slate-500">暂无预测</span>
           )}
         </strong>
       </div>
-      <div>
-        <small>执行决定</small>
+      <div className="rounded-xl border border-slate-800 bg-pitch-950 p-4">
+        <small className={labelClass}>执行决定</small>
         <strong
-          className={
-            execution?.status === "bet" ? "verdict-bet" : "verdict-no-bet"
-          }
+          className={`mt-1.5 block text-lg font-bold ${
+            execution?.status === "bet" ? "text-rose-400" : "text-slate-400"
+          }`}
         >
           {executionText}
         </strong>
       </div>
-      <div>
-        <small>联赛排名</small>
-        <strong>
-          {ranks
-            ? `${detail.fixture.home_team.name} ${ranks.home} · ${detail.fixture.away_team.name} ${ranks.away}`
-            : "读取中"}
+      <div className="rounded-xl border border-slate-800 bg-pitch-950 p-4">
+        <small className={labelClass}>联赛排名</small>
+        <strong className="mt-1.5 block text-base font-medium text-slate-200">
+          {ranks ? (
+            <>
+              {detail.fixture.home_team.name}{" "}
+              <span className="font-mono tabular-nums">{ranks.home}</span> ·{" "}
+              {detail.fixture.away_team.name}{" "}
+              <span className="font-mono tabular-nums">{ranks.away}</span>
+            </>
+          ) : (
+            <span className="text-slate-500">读取中</span>
+          )}
         </strong>
       </div>
     </div>
@@ -1048,6 +1364,8 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
     };
   }, [fixtureId]);
 
+  const ranks = useLeagueRanks(detail);
+
   async function runManualPrediction() {
     if (!detail) return;
     setPredicting(true);
@@ -1076,36 +1394,19 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
 
   if (error)
     return (
-      <main className="match-center-page">
-        <section className="match-empty">
-          <CircleAlert size={20} aria-hidden="true" />
-          <div>
-            <strong>比赛详情暂不可用</strong>
-            <p>{error}</p>
-          </div>
-        </section>
+      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
+        <ErrorState>
+          <strong className="block text-sm font-semibold">
+            比赛详情暂不可用
+          </strong>
+          <span className="mt-0.5 block text-xs opacity-80">{error}</span>
+        </ErrorState>
       </main>
     );
   if (!detail)
     return (
-      <main className="match-center-page">
-        <div
-          className="match-report-skeleton"
-          aria-label="正在加载比赛研究报告"
-        >
-          <div className="skeleton-scoreboard">
-            <i />
-            <i />
-            <i />
-          </div>
-          <div className="skeleton-tabs" />
-          <div className="skeleton-report">
-            <i />
-            <i />
-            <i />
-            <i />
-          </div>
-        </div>
+      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
+        <LoadingState>正在加载比赛研究报告</LoadingState>
       </main>
     );
 
@@ -1113,26 +1414,39 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
     Object.values(detail.predictions ?? {}).some(Boolean) ||
     Boolean(detail.prediction);
   return (
-    <main className="match-center-page research-match-page">
-      <MatchHeader detail={detail} />
-      <VerdictStrip detail={detail} />
-      <Tabs
-        className="match-tabs"
-        ariaLabel="比赛研究页签"
-        value={activeTab}
-        onChange={setActiveTab}
-        items={tabs.map((tab) => ({ value: tab.key, label: tab.label }))}
-      />
-      <div className="match-content">
+    <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
+      <MatchHeader detail={detail} ranks={ranks}>
+        <VerdictStrip detail={detail} ranks={ranks} />
+      </MatchHeader>
+      <div className="mt-6 border-b border-slate-800 pb-2">
+        <Tabs
+          className="w-full border-none bg-transparent p-0"
+          ariaLabel="比赛研究页签"
+          value={activeTab}
+          onChange={setActiveTab}
+          items={tabs.map((tab) => ({ value: tab.key, label: tab.label }))}
+        />
+      </div>
+      <div className="mt-5 flex flex-col gap-4">
         {actionError && (
-          <div className="match-action-message error" role="alert">
-            <CircleAlert size={15} aria-hidden="true" />
+          <div
+            className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300"
+            role="alert"
+          >
+            <CircleAlert size={15} className="shrink-0 text-rose-400" aria-hidden="true" />
             {actionError}
           </div>
         )}
         {actionMessage && (
-          <div className="match-action-message success" role="status">
-            <ShieldCheck size={15} aria-hidden="true" />
+          <div
+            className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-300"
+            role="status"
+          >
+            <ShieldCheck
+              size={15}
+              className="shrink-0 text-emerald-400"
+              aria-hidden="true"
+            />
             {actionMessage}
           </div>
         )}
@@ -1144,7 +1458,7 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
           />
         )}
         {activeTab === "models" && (
-          <div className="match-tab-stack">
+          <div className="flex min-w-0 flex-col gap-5">
             {hasPredictions ? (
               <DualProbabilityPanels
                 detail={detail}
@@ -1161,18 +1475,18 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
           </div>
         )}
         {activeTab === "form" && (
-          <div className="match-tab-stack">
+          <div className="flex min-w-0 flex-col gap-5">
             <AnalysisSnapshot detail={detail} />
             <EvidenceDetails detail={detail} sections={["form"]} />
           </div>
         )}
         {activeTab === "h2h" && (
-          <div className="match-tab-stack">
+          <div className="flex min-w-0 flex-col gap-5">
             <EvidenceDetails detail={detail} sections={["h2h"]} />
           </div>
         )}
         {activeTab === "squads" && (
-          <div className="match-tab-stack">
+          <div className="flex min-w-0 flex-col gap-5">
             <EvidenceDetails
               detail={detail}
               sections={["availability", "lineup"]}

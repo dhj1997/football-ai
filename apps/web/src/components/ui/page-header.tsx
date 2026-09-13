@@ -10,13 +10,13 @@ export interface PageHeaderProps extends Omit<HTMLAttributes<HTMLElement>, "titl
 
 export function PageHeader({ eyebrow, title, description, aside, className, ...props }: PageHeaderProps) {
   return (
-    <section className={cx("ui-page-header", className)} {...props}>
-      <div>
-        <span>{eyebrow}</span>
-        <h1>{title}</h1>
-        {description ? <p>{description}</p> : null}
+    <section className={cx("flex flex-wrap items-center justify-between gap-x-6 gap-y-3", className)} {...props}>
+      <div className="min-w-0">
+        <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-blue-400">{eyebrow}</span>
+        <h1 className="mt-0.5 text-lg font-bold text-white">{title}</h1>
+        {description ? <p className="mt-0.5 text-xs text-slate-400">{description}</p> : null}
       </div>
-      {aside ? <div className="ui-page-header-aside">{aside}</div> : null}
+      {aside ? <div className="shrink-0">{aside}</div> : null}
     </section>
   );
 }
