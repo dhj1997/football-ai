@@ -5,8 +5,8 @@ import { SiteNav } from "@/components/site-nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "EDGE / FOOTBALL",
-  description: "可追溯的足球竞猜研究终端",
+  title: "绿茵罗盘 · 足球赛前研究终端",
+  description: "可追溯、可解释的足球赛前研究终端",
 };
 
 export default function RootLayout({
@@ -26,19 +26,22 @@ export default function RootLayout({
           <div className="flex items-center gap-5">
             <Link className="flex items-center gap-3" href="/" aria-label="返回赛程首页">
               <span
-                className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 text-xs font-bold text-white shadow-lg shadow-blue-500/20"
+                className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-tr from-amber-500 to-orange-600 text-base font-bold text-white shadow-lg shadow-amber-500/20"
                 aria-hidden="true"
               >
-                E/F
+                罗
               </span>
               <span>
                 <h1 className="flex items-center gap-2 text-sm font-bold tracking-wide text-white">
-                  EDGE / FOOTBALL
-                  <span className="rounded border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 font-mono text-[10px] font-normal text-blue-400">
+                  绿茵罗盘
+                  <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-normal text-amber-400">
+                    PITCH COMPASS
+                  </span>
+                  <span className="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 font-mono text-[10px] font-normal text-slate-400">
                     v0.1.0
                   </span>
                 </h1>
-                <p className="text-[11px] text-slate-400">足球竞猜研究终端</p>
+                <p className="text-[11px] text-slate-400">足球赛前研究终端</p>
               </span>
             </Link>
             <div className="hidden h-4 w-px bg-slate-800 md:block" aria-hidden="true" />
