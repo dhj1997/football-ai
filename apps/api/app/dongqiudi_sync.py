@@ -9,6 +9,9 @@ from typing import Any
 
 from .data import CHINA_TZ, unavailable_context
 from .data_quality_engine import record_fixture_conflicts
+
+# 临近开球窗口内 prematch 富化（赔率/让球价/分析）的重刷节流。
+PREMATCH_REFRESH_MINUTES = 10
 from .dongqiudi_provider import DongqiudiProvider
 from .team_names import to_chinese_player_name, to_chinese_team_name
 
@@ -165,8 +168,12 @@ class DongqiudiSyncService:
             if not timedelta(0) <= delta <= self.prematch_lead:
                 continue
             state = self._state(fixture)
-            if delta <= self.prematch_window and not state.get("prematch_synced_at"):
-                due.append((fixture, "prematch"))
+            if delta <= self.prematch_window:
+                # 临近开球赔率与让球价持续变化：窗口内按 PREMATCH_REFRESH_MINUTES
+                # 节流重刷，而不是进入 50 分钟窗口时只跑一次。
+                synced_at = _as_utc(state.get("prematch_synced_at"))
+                if synced_at is None or (now - synced_at) >= timedelta(minutes=PREMATCH_REFRESH_MINUTES):
+                    due.append((fixture, "prematch"))
             elif delta > self.prematch_window and not state.get("prematch_24h_synced_at"):
                 due.append((fixture, "prematch_24h"))
         results = await asyncio.gather(*(self.sync_match(item["id"], phase=phase) for item, phase in due), return_exceptions=True)

@@ -243,6 +243,44 @@ def test_legacy_prediction_without_ai_metadata_is_upgraded(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_lineup_refresh_retries_within_throttle_until_confirmed(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "lineup-retry.db"))
+    repository.initialize()
+    kickoff = (datetime.now(UTC) + timedelta(minutes=40)).isoformat()
+    fixture = {
+        "id": "fixture-lineup",
+        "provider_id": 9,
+        "fixture_date": kickoff[:10],
+        "kickoff": kickoff,
+        "status": "scheduled",
+        "league_key": "epl",
+        "home_team": {"name": "Home"},
+        "away_team": {"name": "Away"},
+        "external_ids": {},
+        "evidence_synced_at": datetime.now(UTC).isoformat(),
+        "evidence": {
+            "synced_at": datetime.now(UTC).isoformat(),
+            "lineup": {"confirmed": False},
+            "automation_refresh": {
+                # 上一次尝试 11 分钟前：节流窗口已过，应当重试。
+                "lineup_60_at": (datetime.now(UTC) - timedelta(minutes=11)).isoformat(),
+            },
+        },
+    }
+    repository.replace_fixtures(fixture["fixture_date"], fixture["fixture_date"], [fixture], datetime.now(UTC).isoformat())
+    automation = runner(repository)
+
+    first = await automation.run_job("lineup")
+    assert first["result"]["synced_count"] == 1
+    stored = repository.fixture("fixture-lineup")["evidence"]["automation_refresh"]
+    assert stored["lineup_60_at"] > (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+
+    # 节流窗口内不重复抓取。
+    second = await automation.run_job("lineup")
+    assert second["result"]["synced_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_disabled_analysis_is_not_run_by_scheduler(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "jobs.db"))
     repository.initialize()

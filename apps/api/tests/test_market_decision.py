@@ -127,6 +127,30 @@ def test_decision_surfaces_odds_freshness_for_display() -> None:
     assert result["decision"]["odds_updated_at"]
 
 
+def test_insufficient_1x2_edge_falls_back_to_asian_handicap() -> None:
+    item = prediction({"home": 0.48, "draw": 0.27, "away": 0.25})
+    item["asian_handicap"] = {
+        "line": -0.75,
+        "home_settlement": {
+            "full_win": 0.45,
+            "half_win": 0.15,
+            "push": 0.05,
+            "half_loss": 0.1,
+            "full_loss": 0.25,
+        },
+    }
+    odds = {**fresh_odds(2.0, 3.5, 4.0), "asian_handicap": -0.75, "asian_handicap_home_odd": 2.1, "asian_handicap_away_odd": 1.8}
+
+    result = apply_market_decision(item, context(odds))
+
+    # 1x2 边际全部低于门槛时，必须评估让球盘而不是直接放弃。
+    one_x_two = [row for row in result["market_assessment"]["markets"] if row["market"] == "1x2"]
+    assert max(row["expected_edge"] for row in one_x_two) < 0.03
+    assert result["decision"]["status"] == "bet"
+    assert result["decision"]["market"] == "asian_handicap"
+    assert "negative_edge" not in result["decision"]["reason_codes"]
+
+
 def test_implausible_model_vs_market_deviation_blocks_execution() -> None:
     result = apply_market_decision(
         prediction({"home": 0.2782, "draw": 0.2517, "away": 0.4702}),

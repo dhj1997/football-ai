@@ -15,6 +15,9 @@ from .prompt_contract import DEFAULT_PROMPT_CONTRACT
 from .schedule_sync import deduplicate_fixtures
 from .notifier import notify_due_fixtures
 
+# 首发未确认时的重试节流：通常开球前 20-40 分钟才公布，固定窗口会错过。
+LINEUP_RETRY_MINUTES = 10
+
 
 class AutomationRunner:
     """Run due domain jobs while preserving durable run history across restarts."""
@@ -227,18 +230,21 @@ class AutomationRunner:
                 counts["skipped_count"] += 1
                 continue
             markers = context.get("automation_refresh") or {}
-            # 追补式窗口：进入开球前 value 分钟内且未抓过即触发。窄定时窗会因
-            # 慢任务（模型预测）拉长任务节拍而被整窗跳过，错过唯一抓取机会。
+            # 首发通常开球前 20-40 分钟才公布：进入最大窗口后按
+            # LINEUP_RETRY_MINUTES 节流重试，直到确认或开球，而不是每个偏移只抓一次。
             offset = next(
                 (
                     value
                     for value in offsets
                     if 0 < delta_minutes <= value + window_minutes
-                    and not markers.get(f"lineup_{value}_at")
                 ),
                 None,
             )
             if offset is None:
+                continue
+            marker_key = f"lineup_{offset}_at"
+            last_attempt = _as_utc(markers.get(marker_key))
+            if last_attempt is not None and (now - last_attempt).total_seconds() < LINEUP_RETRY_MINUTES * 60:
                 continue
             counts["candidate_count"] += 1
             try:
@@ -246,7 +252,7 @@ class AutomationRunner:
                 merged = merge_evidence(context, incoming)
                 localize_evidence_players(merged)
                 refresh_state = dict(merged.get("automation_refresh") or {})
-                refresh_state[f"lineup_{offset}_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
+                refresh_state[marker_key] = datetime.now(UTC).replace(microsecond=0).isoformat()
                 merged["automation_refresh"] = refresh_state
                 updated = self.repository.save_fixture_evidence(fixture["id"], merged)
                 fixture = updated or fixture
