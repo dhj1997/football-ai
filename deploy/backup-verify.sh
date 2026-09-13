@@ -110,3 +110,8 @@ else
   diff "$FINGERPRINT_PROD" "$FINGERPRINT_CHECK" | head -10
 fi
 echo "backup_file=$DUMP"
+
+echo "== retention (keep 14 days) =="
+RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
+find "$BACKUP_DIR" -name 'db-*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete | sed 's/^/pruned /'
+echo "done"
