@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .data import CHINA_TZ, unavailable_context
+from .data_quality_engine import record_fixture_conflicts
 from .dongqiudi_provider import DongqiudiProvider
 from .team_names import to_chinese_player_name, to_chinese_team_name
 
@@ -52,6 +53,7 @@ class DongqiudiSyncService:
             for incoming in rows:
                 existing = self._find_existing(incoming)
                 if existing:
+                    record_fixture_conflicts(self.repository, existing, incoming)
                     incoming = self._merge_fixture(existing, incoming)
                 else:
                     inserted += 1
@@ -129,6 +131,8 @@ class DongqiudiSyncService:
                     or updated.get("provider_status") != existing.get("provider_status")
                     or updated.get("score") != existing.get("score")
                 ):
+                    if score is not None and existing.get("score"):
+                        record_fixture_conflicts(self.repository, existing, {**incoming, "source": "dongqiudi"})
                     self.repository.upsert_fixture(updated, synced_at=synced_at)
                     updated_count += 1
             return {

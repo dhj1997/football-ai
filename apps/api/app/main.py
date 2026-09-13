@@ -14,7 +14,9 @@ from .automation import AutomationRunner
 from .config import Settings, get_settings
 from .bankroll import BankrollService, DualBankrollService
 from .chatgpt_provider import ChatGptProvider
+from .competition_registry import COMPETITION_REGISTRY
 from .data import CHINA_TZ, demo_context, demo_fixtures, unavailable_context
+from .data_quality_engine import provider_reliability
 from .database import PredictionRepository
 from .deepseek_provider import DeepSeekProvider
 from .dongqiudi_provider import DongqiudiProvider
@@ -248,6 +250,7 @@ historical_accumulation_service = HistoricalOOSAccumulationService(
 )
 for _provider in p5_provider_registry.descriptors():
     repository.save_provider_registry({**_provider.as_dict(), "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat()})
+repository.save_competition_registry(COMPETITION_REGISTRY.as_dict())
 league_sync = LeagueSyncService(
     league_provider,
     repository,
@@ -687,6 +690,31 @@ def data_sources() -> dict:
     """Return the configured P5 providers and their declared capabilities."""
 
     return public_payload(public_registry(p5_provider_registry))
+
+
+@app.get("/api/competitions")
+def competitions() -> dict:
+    """Return the P9 six-competition registry with real fixture coverage."""
+
+    counts: dict[str, int] = {}
+    latest_kickoffs: dict[str, str] = {}
+    for fixture in repository.list_fixtures():
+        definition = COMPETITION_REGISTRY.get(fixture.get("league_key"))
+        if definition is None:
+            continue
+        counts[definition.key] = counts.get(definition.key, 0) + 1
+        kickoff = str(fixture.get("kickoff") or "")
+        if kickoff and kickoff > latest_kickoffs.get(definition.key, ""):
+            latest_kickoffs[definition.key] = kickoff
+    items = [
+        {
+            **definition.as_dict(),
+            "fixture_count": counts.get(definition.key, 0),
+            "latest_kickoff": latest_kickoffs.get(definition.key),
+        }
+        for definition in COMPETITION_REGISTRY.definitions()
+    ]
+    return {"items": items, "count": len(items), "total_fixture_count": sum(counts.values())}
 
 
 @app.get("/api/data-sync/runs")
@@ -1380,6 +1408,22 @@ def historical_data_quality(
         )
         items.append({"fixture_id": current_id, **quality})
     return serialize_public({"items": items, "count": len(items), "is_simulated": True})
+
+
+@app.get("/api/admin/provider-health", dependencies=[Depends(require_admin)])
+def admin_provider_health(limit: int = 300) -> dict:
+    """Return per-provider freshness, coverage, error and conflict telemetry."""
+
+    runs = repository.data_sync_runs(limit=limit) if callable(getattr(repository, "data_sync_runs", None)) else []
+    conflicts = repository.fixture_conflicts(limit=200) if callable(getattr(repository, "fixture_conflicts", None)) else []
+    return {
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "competitions": COMPETITION_REGISTRY.as_dict(),
+        "providers": provider_reliability(runs, fixture_conflicts=conflicts),
+        "conflicts": conflicts,
+        "conflict_count": len(conflicts),
+        "sync_run_window": {"limit": limit, "returned": len(runs)},
+    }
 
 
 @app.get("/api/admin/jobs", dependencies=[Depends(require_admin)])

@@ -3,6 +3,8 @@
 ## 已完成
 P0-P7.4 已建立 Prediction Integrity、Portfolio/Risk、Prediction Intelligence、Historical Validation、Historical Data、Model Evaluation、Recent Form、Historical Prediction、Historical Accumulation。
 
+P9 已建立 Competition Registry（六赛事 capability matrix）、canonical fixture/stage contract、数据质量规则引擎（freshness/completeness/conflict 分列可查询）、provider reliability 聚合与 `/api/admin/provider-health`、`/api/competitions`。
+
 ## 历史数据基线
 - CSL：100 fixtures
 - EPL：79 fixtures

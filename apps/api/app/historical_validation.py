@@ -131,6 +131,9 @@ def canonical_league_id(value: Any) -> str:
         "englishpremierleague": "epl",
         "laliga": "laliga",
         "spanishlaliga": "laliga",
+        # P5's uppercase "LAL" code must converge onto the same canonical
+        # identity as the browse-facing "laliga" key.
+        "lal": "laliga",
         "csl": "csl",
         "chinesesuperleague": "csl",
         "中超": "csl",

@@ -542,6 +542,39 @@ class PredictionRepository:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS competition_registry (
+                        competition_key VARCHAR(32) PRIMARY KEY,
+                        competition_type VARCHAR(16) NOT NULL,
+                        capabilities TEXT NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS fixture_conflicts (
+                        conflict_id VARCHAR(255) PRIMARY KEY,
+                        canonical_fixture_id VARCHAR(255) NOT NULL,
+                        competition_key VARCHAR(32) NOT NULL,
+                        conflict_type VARCHAR(32) NOT NULL,
+                        source_a VARCHAR(255) NOT NULL,
+                        source_b VARCHAR(255) NOT NULL,
+                        value_a TEXT NULL,
+                        value_b TEXT NULL,
+                        resolution VARCHAR(64) NOT NULL,
+                        resolved BOOLEAN NOT NULL,
+                        detected_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
             if not self.is_sqlite:
                 for table in (
                     "predictions",
@@ -569,6 +602,8 @@ class PredictionRepository:
                     "model_evaluation_experiments",
                     "model_evaluation_metrics",
                     "job_runs",
+                    "competition_registry",
+                    "fixture_conflicts",
                     "simulation_competitions",
                     "simulation_accounts",
                 ):
@@ -1734,6 +1769,83 @@ class PredictionRepository:
         parameters = {"league": league} if league else {}
         with self.engine.connect() as connection:
             rows = connection.execute(text("SELECT payload FROM fixture_identity_map" f"{clauses} ORDER BY league, kickoff_at"), parameters).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
+
+    def save_competition_registry(self, items: list[dict[str, Any]]) -> None:
+        """Persist the P9 competition registry snapshot, which is configuration."""
+
+        with self.engine.begin() as connection:
+            for item in items:
+                values = {
+                    "competition_key": item["key"],
+                    "competition_type": item["competition_type"],
+                    "capabilities": json.dumps(item.get("capabilities") or {}, ensure_ascii=False),
+                    "updated_at": item.get("updated_at") or datetime.now(UTC).isoformat(),
+                    "payload": json.dumps(item, ensure_ascii=False),
+                }
+                existing = connection.execute(
+                    text("SELECT competition_key FROM competition_registry WHERE competition_key = :competition_key"),
+                    {"competition_key": values["competition_key"]},
+                ).first()
+                if existing:
+                    connection.execute(
+                        text("UPDATE competition_registry SET competition_type = :competition_type, capabilities = :capabilities, updated_at = :updated_at, payload = :payload WHERE competition_key = :competition_key"),
+                        values,
+                    )
+                else:
+                    connection.execute(
+                        text("INSERT INTO competition_registry (competition_key, competition_type, capabilities, updated_at, payload) VALUES (:competition_key, :competition_type, :capabilities, :updated_at, :payload)"),
+                        values,
+                    )
+
+    def competition_registry(self) -> list[dict[str, Any]]:
+        """Return the persisted competition registry rows."""
+
+        with self.engine.connect() as connection:
+            rows = connection.execute(text("SELECT payload FROM competition_registry ORDER BY competition_key")).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_fixture_conflict(self, item: dict[str, Any]) -> None:
+        """Upsert one cross-source fixture conflict keyed by stable conflict id."""
+
+        required = ("conflict_id", "canonical_fixture_id", "conflict_type", "source_a", "source_b")
+        if any(not item.get(key) for key in required):
+            raise ValueError("Fixture conflict identity fields are required")
+        with self.engine.begin() as connection:
+            values = {
+                **item,
+                "resolved": bool(item.get("resolved")),
+                "detected_at": item.get("detected_at") or datetime.now(UTC).replace(microsecond=0).isoformat(),
+                "payload": json.dumps(item, ensure_ascii=False),
+            }
+            for field in ("value_a", "value_b"):
+                if not isinstance(values.get(field), (str, type(None))):
+                    values[field] = json.dumps(values[field], ensure_ascii=False, sort_keys=True)
+            existing = connection.execute(
+                text("SELECT conflict_id FROM fixture_conflicts WHERE conflict_id = :conflict_id"),
+                {"conflict_id": values["conflict_id"]},
+            ).first()
+            if existing:
+                connection.execute(
+                    text("UPDATE fixture_conflicts SET value_a = :value_a, value_b = :value_b, resolved = :resolved, detected_at = :detected_at, payload = :payload WHERE conflict_id = :conflict_id"),
+                    values,
+                )
+            else:
+                connection.execute(
+                    text("INSERT INTO fixture_conflicts (conflict_id, canonical_fixture_id, competition_key, conflict_type, source_a, source_b, value_a, value_b, resolution, resolved, detected_at, payload) VALUES (:conflict_id, :canonical_fixture_id, :competition_key, :conflict_type, :source_a, :source_b, :value_a, :value_b, :resolution, :resolved, :detected_at, :payload)"),
+                    values,
+                )
+
+    def fixture_conflicts(self, limit: int = 500, resolved: bool | None = None) -> list[dict[str, Any]]:
+        """List recorded cross-source fixture conflicts newest first."""
+
+        clause = " WHERE resolved = :resolved" if resolved is not None else ""
+        parameters: dict[str, Any] = {"resolved": resolved} if resolved is not None else {}
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT payload FROM fixture_conflicts" f"{clause} ORDER BY detected_at DESC, conflict_id DESC"),
+                parameters,
+            ).mappings().all()
         return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 1000))]]
 
     def upsert_fixture(self, fixture: dict[str, Any], synced_at: str | None = None) -> None:
