@@ -595,6 +595,20 @@ class PredictionRepository:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS market_snapshots (
+                        market_snapshot_id VARCHAR(255) PRIMARY KEY,
+                        fixture_id VARCHAR(255) NOT NULL,
+                        market VARCHAR(64) NOT NULL,
+                        captured_at VARCHAR(64) NOT NULL,
+                        overround DECIMAL(10, 6) NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
             if not self.is_sqlite:
                 for table in (
                     "predictions",
@@ -625,6 +639,7 @@ class PredictionRepository:
                     "competition_registry",
                     "fixture_conflicts",
                     "model_registry",
+                    "market_snapshots",
                     "simulation_competitions",
                     "simulation_accounts",
                 ):
@@ -1202,9 +1217,12 @@ class PredictionRepository:
                 {"snapshot_id": snapshot["id"]},
             ).mappings().all()
             if existing:
-                existing_quotes = [json.loads(row["payload"]) for row in existing]
+                # Quote rows are read back in id order, which is not the
+                # caller's order; compare content, not sequence.
+                signature = lambda quote: json.dumps(quote, ensure_ascii=False, sort_keys=True)  # noqa: E731
+                existing_quotes = sorted((json.loads(row["payload"]) for row in existing), key=signature)
                 if (
-                    existing_quotes != quotes
+                    existing_quotes != sorted(quotes, key=signature)
                     or existing[0]["fixture_id"] != snapshot["fixture_id"]
                     or existing[0]["captured_at"] != snapshot["captured_at"]
                     or existing[0]["source_updated_at"] != snapshot.get("source_updated_at")
@@ -1916,6 +1934,41 @@ class PredictionRepository:
             rows = connection.execute(
                 text("SELECT payload FROM model_registry" f"{where} ORDER BY model_key, created_at DESC"),
                 parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_market_snapshot(self, item: dict[str, Any]) -> None:
+        """Upsert one idempotent market snapshot record (content-hash id)."""
+
+        required = ("market_snapshot_id", "fixture_id", "market", "captured_at")
+        if any(not item.get(key) for key in required):
+            raise ValueError("Market snapshot identity fields are required")
+        with self.engine.begin() as connection:
+            values = {
+                "market_snapshot_id": item["market_snapshot_id"],
+                "fixture_id": item["fixture_id"],
+                "market": item["market"],
+                "captured_at": item["captured_at"],
+                "overround": item.get("overround"),
+                "payload": json.dumps(item, ensure_ascii=False),
+            }
+            existing = connection.execute(
+                text("SELECT market_snapshot_id FROM market_snapshots WHERE market_snapshot_id = :market_snapshot_id"),
+                {"market_snapshot_id": values["market_snapshot_id"]},
+            ).first()
+            if not existing:
+                connection.execute(
+                    text("INSERT INTO market_snapshots (market_snapshot_id, fixture_id, market, captured_at, overround, payload) VALUES (:market_snapshot_id, :fixture_id, :market, :captured_at, :overround, :payload)"),
+                    values,
+                )
+
+    def market_snapshots(self, fixture_id: str) -> list[dict[str, Any]]:
+        """List persisted market snapshots for one fixture, oldest capture first."""
+
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT payload FROM market_snapshots WHERE fixture_id = :fixture_id ORDER BY captured_at, market_snapshot_id"),
+                {"fixture_id": fixture_id},
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows]
 

@@ -43,6 +43,7 @@ from .espn_evidence_provider import EspnEvidenceProvider
 from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
 from .market_decision import apply_market_decision
+from .market_intelligence import MarketIntelligenceService
 from .model_platform import (
     BASELINE_VERSION,
     DIXON_COLES_VERSION,
@@ -248,6 +249,7 @@ p5_provider_registry = build_default_provider_registry(provider, schedule_provid
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
 model_registry_service = ModelRegistry(repository)
 recent_form_service = RecentFormService(repository)
+market_intelligence_service = MarketIntelligenceService(repository)
 model_evaluation_service = ModelEvaluationService(repository)
 historical_accumulation_service = HistoricalOOSAccumulationService(
     repository,
@@ -1557,6 +1559,37 @@ def latest_prediction(fixture_id: str) -> dict:
     result = apply_market_decision(result, context)
     result["execution"] = bankroll_service.execution_for_prediction(result, fixture)
     return public_payload(result)
+
+
+@app.get("/api/fixtures/{fixture_id}/market")
+def fixture_market(fixture_id: str, cutoff: str | None = None) -> dict:
+    """Return the P11 market research report: timeline, consensus, divergence, CLV."""
+
+    fixture = _fixture_or_404(fixture_id)
+    model_probabilities = None
+    latest = repository.latest_current(
+        fixture_id,
+        DEFAULT_PROMPT_CONTRACT.version,
+        competition_id=settings.simulation_competition_id,
+    )
+    if latest:
+        model_probabilities = latest.get("probabilities") or latest.get("model_probabilities")
+    report = market_intelligence_service.report(
+        fixture_id,
+        model_probabilities=model_probabilities,
+        cutoff=cutoff,
+        kickoff=fixture.get("kickoff"),
+    )
+    report["persisted_market_snapshots"] = repository.market_snapshots(fixture_id)
+    return serialize_public(report)
+
+
+@app.post("/api/admin/fixtures/{fixture_id}/market-snapshot", dependencies=[Depends(require_admin)])
+def capture_market_snapshot(fixture_id: str) -> dict:
+    """Persist idempotent market snapshots for research records."""
+
+    fixture = _fixture_or_404(fixture_id)
+    return market_intelligence_service.persist_market_snapshots(fixture_id, kickoff=fixture.get("kickoff"))
 
 
 @app.get(
