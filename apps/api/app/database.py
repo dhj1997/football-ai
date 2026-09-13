@@ -1240,7 +1240,8 @@ class PredictionRepository:
                     or existing[0]["fixture_id"] != snapshot["fixture_id"]
                     or existing[0]["captured_at"] != snapshot["captured_at"]
                     or existing[0]["source_updated_at"] != snapshot.get("source_updated_at")
-                    or existing[0]["bookmaker"] != snapshot.get("bookmaker")
+                    # bookmaker 列存的是报价级值，与首个报价比较而不是快照级字段。
+                    or existing[0]["bookmaker"] != next((quote.get("bookmaker") for quote in quotes if quote.get("bookmaker")), None)
                     or existing[0]["source"] != snapshot.get("source")
                 ):
                     raise ValueError("Odds snapshot is immutable")
@@ -2783,6 +2784,40 @@ class PredictionRepository:
             )
             self._fixture_revision += 1
             return fixture
+
+    def count_fixtures_by_prefix(self, prefix: str) -> int:
+        with self.engine.begin() as connection:
+            count = connection.execute(
+                text("SELECT COUNT(*) FROM fixtures WHERE id LIKE :pattern"),
+                {"pattern": f"{prefix}%"},
+            ).scalar()
+            return int(count or 0)
+
+    def save_sync_marker(self, name: str, item_count: int = 0) -> None:
+        now = datetime.now(UTC).replace(microsecond=0).isoformat()
+        with self.engine.begin() as connection:
+            exists = connection.execute(
+                text("SELECT name FROM sync_metadata WHERE name = :name"),
+                {"name": name},
+            ).first()
+            if exists:
+                connection.execute(
+                    text("UPDATE sync_metadata SET synced_at = :synced_at, item_count = :item_count WHERE name = :name"),
+                    {"name": name, "synced_at": now, "item_count": int(item_count)},
+                )
+            else:
+                connection.execute(
+                    text("INSERT INTO sync_metadata (name, synced_at, item_count) VALUES (:name, :synced_at, :item_count)"),
+                    {"name": name, "synced_at": now, "item_count": int(item_count)},
+                )
+
+    def sync_marker(self, name: str) -> dict[str, Any] | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT name, synced_at, item_count FROM sync_metadata WHERE name = :name"),
+                {"name": name},
+            ).mappings().first()
+        return dict(row) if row else None
 
     def fixture_sync(self) -> dict[str, Any] | None:
         """Return the latest fixture synchronization metadata."""

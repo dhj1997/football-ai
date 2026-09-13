@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     historical_max_total: int = 2400
     automation_historical_backfill_interval_minutes: int = 60
     automation_ensemble_learning_interval_minutes: int = 10080
+    automation_fd_backfill_interval_minutes: int = 360
+    football_data_seasons_backfill: int = 5
+    automation_clubeelo_interval_minutes: int = 1440
     automation_failure_backoff_minutes: int = 15
     prediction_lead_hours: int = 24
     evidence_refresh_minutes: int = 180

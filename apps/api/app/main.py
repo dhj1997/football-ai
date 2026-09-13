@@ -63,6 +63,8 @@ from .model_platform import (
 )
 from .model_fitting import fit_from_repository, fitted_record, load_fitted_params
 from .prediction import set_fitted_params_provider
+from .clubeelo_provider import ClubEloProvider, sync_ratings as sync_clubeelo_ratings
+from .football_data_provider import fetch_season_csv, sync_season
 from .model_registry import ModelRegistry, ModelRegistryError
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
@@ -94,6 +96,7 @@ from .prediction_intelligence import (
 from .schedule_provider import TheSportsDbProvider
 from .schedule_sync import ScheduleSyncService, deduplicate_fixtures
 from .settlement import SettlementService
+from .team_names import to_chinese_team_name
 from .recent_form import RecentFormService
 from .team_provider import EspnTeamProvider
 from .team_sync import TeamSyncService
@@ -272,6 +275,7 @@ p5_provider_registry = build_default_provider_registry(provider, schedule_provid
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
 model_registry_service = ModelRegistry(repository)
 set_fitted_params_provider(lambda: load_fitted_params(repository))
+clubeelo_provider = ClubEloProvider()
 recent_form_service = RecentFormService(repository)
 market_intelligence_service = MarketIntelligenceService(repository)
 model_evaluation_service = ModelEvaluationService(repository)
@@ -319,6 +323,8 @@ automation_runner = AutomationRunner(
     dongqiudi_sync,
     historical_data_service=historical_data_service,
     model_registry_service=model_registry_service,
+    football_data_service=fetch_season_csv,
+    clubeelo_service=clubeelo_provider,
 )
 runtime_config_updated_at: str | None = None
 
@@ -1594,6 +1600,28 @@ def run_model_fitting(min_matches: int = 30) -> dict:
         raise HTTPException(status_code=400, detail="历史样本不足，无法拟合")
     repository.save_model_registry(fitted_record(fitted))
     return fitted
+
+
+@app.post("/api/admin/football-data/sync", dependencies=[Depends(require_admin)])
+async def sync_football_data_season(division: str, season: int) -> dict:
+    """Ingest one Football-Data.co.uk season (results + closing odds)."""
+
+    if division not in {"epl", "laliga"}:
+        raise HTTPException(status_code=400, detail="仅支持 epl / laliga")
+    csv_text = await fetch_season_csv(division, season)
+    if csv_text is None:
+        raise HTTPException(status_code=404, detail="该赛季 CSV 尚未发布")
+    result = sync_season(repository, csv_text, division, season, chinese_name=to_chinese_team_name)
+    repository.save_sync_marker(f"fd:{division}:{season}", int(result.get("matches") or 0))
+    return result
+
+
+@app.post("/api/admin/clubeelo/sync", dependencies=[Depends(require_admin)])
+async def sync_clubeelo() -> dict:
+    """Refresh ClubElo ratings (free API, no key)."""
+
+    csv_text = await clubeelo_provider.fetch_on()
+    return sync_clubeelo_ratings(repository, csv_text, localize=to_chinese_team_name)
 
 
 @app.get("/api/admin/model-fitting/active", dependencies=[Depends(require_admin)])

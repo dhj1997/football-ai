@@ -38,6 +38,8 @@ class AutomationRunner:
         dongqiudi_sync_service: Any | None = None,
         historical_data_service: Any | None = None,
         model_registry_service: Any | None = None,
+        football_data_service: Any | None = None,
+        clubeelo_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -51,6 +53,8 @@ class AutomationRunner:
         self.dongqiudi_sync_service = dongqiudi_sync_service
         self.historical_data_service = historical_data_service
         self.model_registry_service = model_registry_service
+        self.football_data_service = football_data_service
+        self.clubeelo_service = clubeelo_service
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._jobs: dict[str, tuple[int, Callable[[], Awaitable[dict[str, Any]]]]] = {
@@ -75,6 +79,16 @@ class AutomationRunner:
             self._jobs["ensemble_learning"] = (
                 max(60, int(getattr(settings, "automation_ensemble_learning_interval_minutes", 10080))),
                 self._learn_ensemble_weights,
+            )
+        if football_data_service is not None:
+            self._jobs["fd_backfill"] = (
+                max(60, int(getattr(settings, "automation_fd_backfill_interval_minutes", 360))),
+                self._sync_football_data,
+            )
+        if clubeelo_service is not None and bool(getattr(settings, "clubeelo_enabled", True)):
+            self._jobs["clubeelo"] = (
+                max(60, int(getattr(settings, "automation_clubeelo_interval_minutes", 1440))),
+                self._sync_clubeelo,
             )
         if dongqiudi_sync_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
             self._jobs["dongqiudi_schedule"] = (
@@ -300,6 +314,45 @@ class AutomationRunner:
     async def _sync_standings(self) -> dict[str, Any]:
         result = await self.league_sync.force_refresh()
         return {**result, "item_count": int(result.get("item_count", 0))}
+
+    async def _sync_football_data(self) -> dict[str, Any]:
+        """Ingest the next pending Football-Data.co.uk season (one per run)."""
+
+        from .competition_registry import season_for
+        from .football_data_provider import DIVISION_MAP, season_code, season_csv_url, sync_season
+        from .team_names import to_chinese_team_name
+
+        divisions = ("epl", "laliga")
+        seasons_back = max(1, int(getattr(self.settings, "football_data_seasons_backfill", 5)))
+        today = datetime.now(UTC).date()
+        for division in divisions:
+            current = season_for(division, today)
+            for step in range(seasons_back):
+                season = current - step
+                marker = f"fd:{division}:{season}"
+                if self.repository.sync_marker(marker):
+                    continue
+                csv_text = await self.football_data_service.fetch_season_csv(division, season)
+                if csv_text is None:
+                    self.repository.save_sync_marker(marker, 0)
+                    continue
+                result = sync_season(
+                    self.repository,
+                    csv_text,
+                    division,
+                    season,
+                    chinese_name=to_chinese_team_name,
+                )
+                self.repository.save_sync_marker(marker, int(result.get("matches") or 0))
+                return {**result, "item_count": int(result.get("matches") or 0)}
+        return {"status": "complete", "reason": "所有赛季已回填", "item_count": 0}
+
+    async def _sync_clubeelo(self) -> dict[str, Any]:
+        from .clubeelo_provider import sync_ratings
+        from .team_names import to_chinese_team_name
+
+        csv_text = await self.clubeelo_service.fetch_on()
+        return sync_ratings(self.repository, csv_text, localize=to_chinese_team_name)
 
     def _historical_season_targets(self) -> list[tuple[str, int, int]]:
         """List (league, season, existing) pairs below the per-season cap."""

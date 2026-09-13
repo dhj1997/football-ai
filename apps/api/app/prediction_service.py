@@ -44,16 +44,22 @@ class PredictionService:
         self.initial_bankroll = max(0.0, float(initial_bankroll))
 
     def _elo_ratings(self) -> dict[str, float]:
-        """Elo ratings from finished fixtures in the local repository, if available."""
+        """Elo ratings: ClubElo snapshot (professional, cross-season) overrides
+        the locally computed window estimate as a fallback."""
 
+        merged: dict[str, float] = {}
         try:
             fixtures = self.repository.list_fixtures()  # type: ignore[attr-defined]
-        except AttributeError:
-            return {}
-        try:
-            return compute_elo(fixtures)
+            merged.update(compute_elo(fixtures))
         except Exception:
-            return {}
+            pass
+        try:
+            from .clubeelo_provider import stored_ratings
+
+            merged.update(stored_ratings(self.repository))
+        except Exception:
+            pass
+        return merged
 
     async def create(
         self,
