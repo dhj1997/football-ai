@@ -56,6 +56,7 @@ from .model_registry import ModelRegistry, ModelRegistryError
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
+from .research_engine import run_research, validate_hypothesis
 from .player_identity import public_payload
 from .player_impact import apply_player_impact
 from .player_name_provider import (
@@ -1479,6 +1480,54 @@ def historical_snapshots(
     reader = getattr(repository, "historical_snapshots", None)
     items = reader(fixture_id, as_of, limit) if callable(reader) else []
     return serialize_public({"items": items, "count": len(items), "is_simulated": True})
+
+
+@app.post("/api/admin/research/runs", dependencies=[Depends(require_admin)])
+def create_research_run(payload: dict) -> dict:
+    """Run one P14 research pipeline and archive an immutable, content-addressed run."""
+
+    try:
+        hypothesis = validate_hypothesis(
+            statement=str(payload.get("hypothesis") or payload.get("statement") or ""),
+            kind=str(payload.get("kind") or "exploratory"),
+            selection_rule=payload.get("selection_rule"),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    settlements = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    run = run_research(
+        settlements,
+        hypothesis=hypothesis,
+        mode=str(payload.get("mode") or "rolling"),
+        train_days=int(payload.get("train_days") or 180),
+        test_days=int(payload.get("test_days") or 30),
+        step_days=int(payload.get("step_days") or 30),
+        seed=int(payload.get("seed") or 20260913),
+        job_id=payload.get("job_id"),
+        created_by=str(payload.get("created_by") or "admin"),
+        repository=repository,
+    )
+    return run
+
+
+@app.get("/api/research/runs")
+def research_runs(status: str | None = None, limit: int = 100) -> dict:
+    """List archived research runs (reports trace back to their source run)."""
+
+    reader = getattr(repository, "research_runs", None)
+    items = reader(status, limit) if callable(reader) else []
+    return serialize_public({"items": items, "count": len(items), "is_simulated": False})
+
+
+@app.get("/api/research/runs/{run_id}")
+def research_run(run_id: str) -> dict:
+    """Return one research run with its full report."""
+
+    reader = getattr(repository, "research_run", None)
+    item = reader(run_id) if callable(reader) else None
+    if item is None:
+        raise HTTPException(status_code=404, detail="Research run was not found")
+    return serialize_public({"item": item, "is_simulated": False})
 
 
 @app.get("/api/data-quality")

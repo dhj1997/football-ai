@@ -609,6 +609,19 @@ class PredictionRepository:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS research_runs (
+                        run_id VARCHAR(255) PRIMARY KEY,
+                        status VARCHAR(32) NOT NULL,
+                        job_id VARCHAR(255) NULL,
+                        created_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
             if not self.is_sqlite:
                 for table in (
                     "predictions",
@@ -640,6 +653,7 @@ class PredictionRepository:
                     "fixture_conflicts",
                     "model_registry",
                     "market_snapshots",
+                    "research_runs",
                     "simulation_competitions",
                     "simulation_accounts",
                 ):
@@ -1971,6 +1985,55 @@ class PredictionRepository:
                 {"fixture_id": fixture_id},
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows]
+
+    def save_research_run(self, run: dict[str, Any]) -> None:
+        """Insert one content-addressed research run; duplicates are ignored."""
+
+        required = ("run_id", "status")
+        if any(not run.get(key) for key in required):
+            raise ValueError("Research run identity fields are required")
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM research_runs WHERE run_id = :run_id"),
+                {"run_id": run["run_id"]},
+            ).mappings().first()
+            if existing:
+                stored = json.loads(existing["payload"])
+                if stored.get("status") != run["status"]:
+                    raise ValueError("Research run is immutable")
+                return
+            connection.execute(
+                text("INSERT INTO research_runs (run_id, status, job_id, created_at, payload) VALUES (:run_id, :status, :job_id, :created_at, :payload)"),
+                {
+                    "run_id": run["run_id"],
+                    "status": run["status"],
+                    "job_id": run.get("job_id"),
+                    "created_at": run.get("created_at") or datetime.now(UTC).isoformat(),
+                    "payload": json.dumps(run, ensure_ascii=False),
+                },
+            )
+
+    def research_runs(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        """List research runs newest first."""
+
+        where = " WHERE status = :status" if status else ""
+        parameters: dict[str, Any] = {"status": status} if status else {}
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT payload FROM research_runs" f"{where} ORDER BY created_at DESC, run_id DESC"),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows[: max(1, min(int(limit), 500))]]
+
+    def research_run(self, run_id: str) -> dict[str, Any] | None:
+        """Return one research run by id."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM research_runs WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
 
     def upsert_fixture(self, fixture: dict[str, Any], synced_at: str | None = None) -> None:
         """Upsert one fixture without replacing another historical date window."""
