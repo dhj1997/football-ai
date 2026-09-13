@@ -735,12 +735,14 @@ function ScoreCenterHome({
   dataMode,
   selectedId,
   detail,
+  onSelect,
 }: {
   fixtures: Fixture[];
   loading: boolean;
   dataMode: DataMode;
   selectedId: string | null;
   detail: FixtureDetail | null;
+  onSelect: (fixtureId: string) => void;
 }) {
   const orderedFixtures = [...fixtures].sort((left, right) => {
     const priority = {
@@ -784,6 +786,7 @@ function ScoreCenterHome({
               key={group.league.id}
               group={group}
               selectedFixtureId={selectedFixture?.id ?? null}
+              onSelect={onSelect}
             />
           ))
         ) : (
@@ -1618,6 +1621,7 @@ const decisionReasonLabels: Record<string, string> = {
   low_confidence: "预测置信度不足",
   lineup_unconfirmed: "首发未确认",
   stale_odds: "赔率已过期",
+  odds_pending: "等待赔率刷新",
   missing_player_data: "球员数据不足",
   no_matching_market: "缺少匹配市场",
   risk_limit: "风险额度受限",
@@ -2222,6 +2226,19 @@ export function ProbabilityPanel({
               decision?.reason ??
               "当前预测版本缺少确定性决策结果"}
           </p>
+          {decision?.odds_updated_at || decision?.odds_status ? (
+            <p className="text-[11px] text-slate-500">
+              赔率
+              {decision?.odds_status === "fresh"
+                ? "已同步"
+                : decision?.odds_status === "missing"
+                  ? "尚未同步，等待计划刷新"
+                  : "已过期，等待计划刷新"}
+              {decision?.odds_updated_at
+                ? ` · 更新于 ${new Date(decision.odds_updated_at).toLocaleString("zh-CN", { hour12: false })}`
+                : ""}
+            </p>
+          ) : null}
           {decision?.warning ? <p>{decision.warning}</p> : null}
           {executionReasons.length ? (
             <ul className="list-disc space-y-0.5 pl-4 text-slate-500">
@@ -2703,7 +2720,8 @@ function executionStatusLabel(
 ) {
   if (status === "bet") return "执行模拟下注";
   if (aiStatus && aiStatus !== "completed") return "AI 服务失败";
-  if (reasonCodes.includes("stale_odds")) return "等待赔率刷新";
+  if (reasonCodes.includes("odds_pending") || reasonCodes.includes("stale_odds"))
+    return "等待赔率刷新";
   if (reasonCodes.includes("risk_limit")) return "风控拦截";
   if (reasonCodes.includes("negative_edge")) return "赔率优势不足";
   if (
@@ -3252,6 +3270,10 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
           dataMode={dataMode}
           selectedId={selectedId}
           detail={detail}
+          onSelect={(fixtureId) => {
+            setSuccess(null);
+            setSelectedId(fixtureId);
+          }}
         />
       </main>
     );

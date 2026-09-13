@@ -443,6 +443,8 @@ export interface Prediction {
     warning_codes?: string[];
     warning?: string | null;
     model_recommendation_status?: "bet" | "no_bet";
+    odds_status?: "fresh" | "stale" | "missing";
+    odds_updated_at?: string | null;
     is_deterministic: true;
     real_money_execution: false;
   };

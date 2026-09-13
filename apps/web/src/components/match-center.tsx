@@ -1280,12 +1280,17 @@ function VerdictStrip({
     ? { home: "主胜", draw: "平局", away: "客胜" }[pick]
     : null;
   const execution = prediction?.execution ?? prediction?.decision;
+  const waitingForOdds = (execution?.reason_codes ?? []).some((code) =>
+    ["odds_pending", "stale_odds", "odds_age_missing", "odds_age_stale"].includes(code),
+  );
   const executionText =
     execution?.status === "bet"
       ? "执行模拟下注"
-      : execution?.reason
-        ? "暂不下注"
-        : "待预测";
+      : waitingForOdds
+        ? "等待赔率刷新"
+        : execution?.reason
+          ? "暂不下注"
+          : "待预测";
   return (
     <div className="grid gap-4 md:grid-cols-3" aria-label="AI 结论速览">
       <div className="rounded-xl border border-slate-800 bg-pitch-950 p-4">

@@ -25,6 +25,7 @@ REASON_TEXT = {
     "low_confidence": "预测置信度不足",
     "lineup_unconfirmed": "首发阵容尚未确认",
     "stale_odds": "赔率已过期或缺少可靠更新时间",
+    "odds_pending": "等待赔率刷新（赔率按计划自动同步）",
     "missing_player_data": "关键球员数据不足",
     "no_matching_market": "没有与预测匹配的可用赔率市场",
     "risk_limit": "模拟账户风险额度不足",
@@ -65,9 +66,15 @@ def apply_market_decision(
     )
     warning_codes = [] if lineup_confirmed else ["lineup_unconfirmed"]
 
+    # Missing odds and non-matching markets are different states: the
+    # former resolves itself when the scheduled odds sync lands.
+    live_odds = context.get("odds")
+    odds_missing = not isinstance(live_odds, dict) or not any(
+        _positive_price(value) for value in live_odds.values()
+    )
     if not assessment["markets"]:
-        reason_codes.append("no_matching_market")
-    if assessment["odds_status"] != "fresh":
+        reason_codes.append("odds_pending" if odds_missing else "no_matching_market")
+    if assessment["odds_status"] != "fresh" and not odds_missing:
         reason_codes.append("stale_odds")
     if player_data_missing:
         reason_codes.append("missing_player_data")
@@ -118,6 +125,8 @@ def apply_market_decision(
         "warning_codes": warning_codes,
         "warning": "；".join(WARNING_TEXT[code] for code in warning_codes) if warning_codes else None,
         "model_recommendation_status": model_recommendation.get("status") or "no_bet",
+        "odds_status": assessment.get("odds_status"),
+        "odds_updated_at": assessment.get("odds_updated_at"),
         "is_deterministic": True,
         "real_money_execution": False,
     }

@@ -101,14 +101,30 @@ def test_de_vig_probabilities_sum_to_one() -> None:
     assert sum(row["de_vig_probability"] for row in one_x_two) == pytest.approx(1, abs=0.0002)
 
 
-def test_missing_market_is_insufficient_but_missing_players_is_no_bet() -> None:
-    no_market = apply_market_decision(prediction(), context(None))
+def test_missing_odds_waits_for_refresh_but_unmatched_market_is_insufficient() -> None:
+    no_odds = apply_market_decision(prediction(), context(None))
+    unmatched = apply_market_decision(
+        prediction(),
+        context({"home": 1.6, "bookmaker": "Test Book", "updated_at": fresh_odds()["updated_at"]}),
+    )
     no_players = apply_market_decision(prediction(), context(fresh_odds(), player_status="insufficient"))
 
-    assert no_market["decision"]["status"] == "insufficient_data"
-    assert "no_matching_market" in no_market["decision"]["reason_codes"]
+    # Missing odds resolve themselves on the scheduled sync: wait, don't fail.
+    assert no_odds["decision"]["status"] == "no_bet"
+    assert "odds_pending" in no_odds["decision"]["reason_codes"]
+    assert no_odds["decision"]["odds_status"] == "missing"
+    # Odds exist but nothing matches the prediction: genuinely insufficient.
+    assert unmatched["decision"]["status"] == "insufficient_data"
+    assert "no_matching_market" in unmatched["decision"]["reason_codes"]
     assert no_players["decision"]["status"] == "no_bet"
     assert "missing_player_data" in no_players["decision"]["reason_codes"]
+
+
+def test_decision_surfaces_odds_freshness_for_display() -> None:
+    result = apply_market_decision(prediction(), context(fresh_odds()))
+
+    assert result["decision"]["odds_status"] == "fresh"
+    assert result["decision"]["odds_updated_at"]
 
 
 def test_implausible_model_vs_market_deviation_blocks_execution() -> None:
