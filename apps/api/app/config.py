@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     api_football_key: str = ""
     api_football_base_url: str = "https://v3.football.api-sports.io"
+    # Deployment environment: local | test | staging | production (P15).
+    environment: str = "local"
     api_deepseek_key: str = ""
     deepseek_enabled: bool = True
     deepseek_model: str = "deepseek-v4-flash"

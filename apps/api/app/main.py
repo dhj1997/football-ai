@@ -67,6 +67,13 @@ from .player_name_provider import (
 )
 from .player_value_provider import NullPlayerValueProvider, PlayerValueService
 from .portfolio import PortfolioConfig
+from .production import (
+    EnvironmentContract,
+    _settings_view,
+    run_migrations,
+    run_smoke_checks,
+    sqlite_backup_and_verify,
+)
 from .prediction_intelligence import (
     build_feature_snapshot,
     build_performance_profiles,
@@ -1528,6 +1535,57 @@ def research_run(run_id: str) -> dict:
     if item is None:
         raise HTTPException(status_code=404, detail="Research run was not found")
     return serialize_public({"item": item, "is_simulated": False})
+
+
+@app.get("/api/production/readiness", dependencies=[Depends(require_admin)])
+def production_readiness() -> dict:
+    """P15 deployment gate: environment contract, migrations, smoke checks."""
+
+    contract = EnvironmentContract(settings.environment)
+    violations = contract.validate(_settings_view(settings))
+    migration_status = run_migrations(repository, dry_run=True)
+    smoke = run_smoke_checks(repository, settings)
+    return {
+        "environment": settings.environment,
+        "is_production": contract.is_production,
+        "config_violations": violations,
+        "migration_dry_run": migration_status,
+        "smoke": smoke,
+        "status": "ready" if not violations and smoke["status"] == "pass" and migration_status["status"] in {"validated", "not_supported"} else "blocked",
+        "checked_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+    }
+
+
+@app.post("/api/admin/production/migrations/dry-run", dependencies=[Depends(require_admin)])
+def migration_dry_run() -> dict:
+    """Validate pending additive migrations without committing them."""
+
+    return run_migrations(repository, dry_run=True)
+
+
+@app.post("/api/admin/production/migrations/apply", dependencies=[Depends(require_admin)])
+def migration_apply() -> dict:
+    """Apply pending versioned migrations (additive only; backup first)."""
+
+    return run_migrations(repository, dry_run=False)
+
+
+@app.post("/api/admin/production/backup", dependencies=[Depends(require_admin)])
+def production_backup() -> dict:
+    """Back up the SQLite database and verify the backup restores."""
+
+    database_url = str(settings.database_url or "")
+    if not database_url.startswith("sqlite:///"):
+        return {"status": "not_supported", "reason": "automated backup verification currently supports SQLite only"}
+    database_path = database_url.removeprefix("sqlite:///").removeprefix("sqlite:///")
+    return sqlite_backup_and_verify(database_path)
+
+
+@app.post("/api/admin/production/smoke", dependencies=[Depends(require_admin)])
+def production_smoke() -> dict:
+    """Run the automated production smoke checks."""
+
+    return run_smoke_checks(repository, settings)
 
 
 @app.get("/api/data-quality")

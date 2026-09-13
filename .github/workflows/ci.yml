@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend
+        run: pip install -e "apps/api[dev]"
+      - name: Unit / integration / API contract / leakage / data quality gates
+        working-directory: apps/api
+        run: python -m pytest -q
+      - name: Explicit leakage + integrity gates
+        working-directory: apps/api
+        run: python -m pytest -q tests/test_p0_integrity.py tests/test_p1_evaluation_integrity.py tests/test_p9_quality_engine.py tests/test_p13_explainability.py tests/test_p14_research_engine.py
+      - name: Migration dry-run gate
+        working-directory: apps/api
+        run: python -m pytest -q tests/test_p15_production.py -k "migration"
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pnpm
+        run: npm install -g pnpm@9
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm --filter web lint
+      - name: Build
+        run: pnpm --filter web build
