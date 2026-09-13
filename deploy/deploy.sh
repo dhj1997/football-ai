@@ -46,7 +46,8 @@ sudo -u football-ai ${REMOTE_APP_DIR}/apps/api/.venv/bin/python -m pip install -
   || echo 'pip 不可用，跳过依赖同步（依赖未变化时无影响）'
 export PATH=${NODE_BIN_DIR}:\$PATH
 cd ${REMOTE_APP_DIR}/apps/web
-sudo -u football-ai env PATH=\$PATH pnpm install --prefer-offline || echo 'pnpm install skipped'
+# 服务器访问不通 registry.npmjs.org，必须走 npmmirror
+sudo -u football-ai env PATH=\$PATH pnpm install --prefer-offline --registry=https://registry.npmmirror.com || echo 'pnpm install skipped'
 sudo -u football-ai env PATH=\$PATH pnpm build
 "
 
