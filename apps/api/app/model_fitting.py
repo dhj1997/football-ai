@@ -20,6 +20,7 @@ from .historical_validation import parse_timestamp
 FITTING_VERSION = "model-fitting-v1"
 MAX_GOALS = 10
 RHO_GRID_STEP = 0.005
+RHO_GRID_MIN = -0.25
 
 
 def _poisson(lam: float, goals: int) -> float:
@@ -67,9 +68,9 @@ def fit_league(rows: Iterable[tuple[int, int]]) -> dict[str, Any]:
     away_xg = sum(a for _, a in scores) / n
     best_rho = 0.0
     best_ll = float("-inf")
-    steps = int(abs(-0.20) / RHO_GRID_STEP)
+    steps = int(abs(RHO_GRID_MIN) / RHO_GRID_STEP)
     for step in range(steps + 1):
-        rho = round(-0.20 + step * RHO_GRID_STEP, 3)
+        rho = round(RHO_GRID_MIN + step * RHO_GRID_STEP, 3)
         ll = _dc_log_likelihood(scores, home_xg, away_xg, rho)
         if ll > best_ll:
             best_ll, best_rho = ll, rho
@@ -84,13 +85,18 @@ def fit_league(rows: Iterable[tuple[int, int]]) -> dict[str, Any]:
 
 
 def _finished_rows(fixture_rows: Iterable[Mapping[str, Any]]) -> Iterable[tuple[str, int, int, str]]:
+    from .competition_registry import normalize_competition_key
+
     for row in fixture_rows:
         if row.get("status") != "finished":
             continue
         score = row.get("score") if isinstance(row.get("score"), Mapping) else None
         if not score or score.get("home") is None or score.get("away") is None:
             continue
-        league = str(row.get("canonical_league") or row.get("league_key") or "").casefold()
+        # P5 旧库的 "lal" 与浏览键 "laliga" 必须归一到同一个联赛桶。
+        league = normalize_competition_key(
+            row.get("canonical_league") or row.get("league_key")
+        ) or str(row.get("canonical_league") or row.get("league_key") or "").casefold()
         kickoff = parse_timestamp(row.get("kickoff"))
         yield league, int(score["home"]), int(score["away"]), kickoff.isoformat() if kickoff else ""
 
@@ -109,10 +115,11 @@ def fit_from_repository(repository: Any, *, min_matches: int = 30) -> dict[str, 
     leagues: dict[str, Any] = {}
     for league, scores in sorted(by_league.items()):
         result = fit_league(scores)
-        if result.get("status") != "ok" and result["n"] < min_matches:
-            leagues[league] = {**result, "status": "insufficient_sample"}
-        else:
+        if result.get("status") == "ok":
+            # 只有带参数的联赛才进入注册表；不足样本的诚实缺席（数据集段保留计数）。
             leagues[league] = result
+        else:
+            leagues[league] = {"n": result["n"], "status": "insufficient_sample", "minimum": result.get("minimum", min_matches)}
     fitted = {
         "fitting_version": FITTING_VERSION,
         "fitted_at": datetime.now(UTC).replace(microsecond=0).isoformat(),

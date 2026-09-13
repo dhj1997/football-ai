@@ -46,7 +46,7 @@ def test_fit_league_recovers_poisson_means_and_negative_rho() -> None:
     empirical_away = sum(a for _, a in scores) / len(scores)
     assert fitted["home_xg"] == pytest.approx(empirical_home, abs=0.001)
     assert fitted["away_xg"] == pytest.approx(empirical_away, abs=0.001)
-    assert -0.2 <= fitted["rho"] <= 0.0
+    assert -0.25 <= fitted["rho"] <= 0.0
     assert fitted["log_likelihood"] < 0
 
 

@@ -33,7 +33,8 @@ def _league_fitted_params(league_key: Any) -> dict | None:
     try:
         data = _FITTED_PARAMS_PROVIDER() or {}
         entry = (data.get("leagues") or {}).get(str(league_key or "").casefold())
-        if not entry:
+        if not entry or entry.get("status") != "ok":
+            # 不足样本的联赛没有可用参数：不注入、不挂拟合版本后缀。
             return None
         return {**entry, "fitted_version": data.get("fitted_version")}
     except Exception:
