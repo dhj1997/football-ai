@@ -1308,7 +1308,12 @@ class PredictionRepository:
         }
 
     def odds_snapshots(self, fixture_id: str | None = None) -> list[dict[str, Any]]:
-        """List immutable odds captures, newest capture last."""
+        """List immutable odds captures, newest capture last.
+
+        One query loads every quote row and groups by snapshot id — the
+        previous per-snapshot round trip made this an N+1 scan (~2000
+        queries per audit on the odds-heavy fixtures).
+        """
 
         clauses = ["1 = 1"]
         parameters: dict[str, Any] = {}
@@ -1316,15 +1321,38 @@ class PredictionRepository:
             clauses.append("fixture_id = :fixture_id")
             parameters["fixture_id"] = fixture_id
         with self.engine.connect() as connection:
-            ids = connection.execute(
+            rows = connection.execute(
                 text(
-                    "SELECT snapshot_id, MAX(captured_at) AS captured_at "
-                    f"FROM odds_snapshots WHERE {' AND '.join(clauses)} "
-                    "GROUP BY snapshot_id ORDER BY captured_at, snapshot_id"
+                    "SELECT snapshot_id, fixture_id, captured_at, source_updated_at, bookmaker, source, payload "
+                    f"FROM odds_snapshots WHERE {' AND '.join(clauses)} ORDER BY captured_at, snapshot_id, id"
                 ),
                 parameters,
             ).mappings().all()
-        return [item for row in ids if (item := self.odds_snapshot(row["snapshot_id"] or ""))]
+        grouped: dict[str, list[Any]] = {}
+        order: list[str] = []
+        for row in rows:
+            snapshot_id = row["snapshot_id"]
+            if snapshot_id not in grouped:
+                grouped[snapshot_id] = []
+                order.append(snapshot_id)
+            grouped[snapshot_id].append(row)
+        snapshots: list[dict[str, Any]] = []
+        for snapshot_id in order:
+            group = grouped[snapshot_id]
+            quotes = [json.loads(item["payload"]) for item in group]
+            snapshots.append(
+                {
+                    "id": snapshot_id,
+                    "fixture_id": group[0]["fixture_id"],
+                    "captured_at": group[0]["captured_at"],
+                    "source_updated_at": group[0]["source_updated_at"],
+                    "bookmaker": group[0]["bookmaker"],
+                    "source": group[0]["source"],
+                    "quotes": quotes,
+                    "payload": _odds_payload_from_quotes(quotes),
+                }
+            )
+        return snapshots
 
     def save_historical_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Insert one immutable historical reconstruction."""

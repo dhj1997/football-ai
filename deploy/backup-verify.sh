@@ -83,7 +83,10 @@ if ! "${RESTORE_CMD[@]}" | M "$CHECKDB" > /tmp/restore.err 2>&1; then
   exit 1
 fi
 
-TABLE_LIST=$(M -N -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$DB' AND table_type='BASE TABLE';")
+# 热表在 dump 后仍被自动化写入（job 心跳/赔率同步），其行数漂移不构成
+# 恢复失败；严格指纹只比较冷数据表。
+HOT_TABLES="job_runs|odds_snapshots|sync_metadata|data_sync_runs"
+TABLE_LIST=$(M -N -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$DB' AND table_type='BASE TABLE';" | grep -Ev "^($HOT_TABLES)$")
 MATCH=0; MISMATCH=0; MISSING=0; QUERY_ERROR=0
 FINGERPRINT_PROD=/tmp/fp-prod.txt; FINGERPRINT_CHECK=/tmp/fp-check.txt
 : > "$FINGERPRINT_PROD"; : > "$FINGERPRINT_CHECK"
@@ -104,7 +107,7 @@ M -e "DROP DATABASE IF EXISTS $CHECKDB;"
 
 echo "== fingerprint =="
 if [ $QUERY_ERROR -eq 0 ] && [ $MISSING -eq 0 ] && [ $MISMATCH -eq 0 ]; then
-  echo "RESTORE_VERIFIED tables=$MATCH"
+  echo "RESTORE_VERIFIED tables=$MATCH (hot tables excluded: $HOT_TABLES)"
 else
   echo "RESTORE_MISMATCH match=$MATCH mismatch=$MISMATCH missing=$MISSING query_error=$QUERY_ERROR"
   diff "$FINGERPRINT_PROD" "$FINGERPRINT_CHECK" | head -10
