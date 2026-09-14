@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 from app.bankroll import BankrollService, DualBankrollService
 from app.database import PredictionRepository
@@ -125,6 +125,39 @@ def test_player_names_are_resolved_once_before_both_models() -> None:
     assert started.count("player-names") == 1
 
 
+def test_live_ensemble_uses_registry_weights_and_keeps_poisson_baseline() -> None:
+    class Service:
+        def __init__(self, model_key: str) -> None:
+            self.model_key = model_key
+            self.model_provider = FakeProvider()
+
+        async def create(self, _fixture: dict, _context: dict) -> dict:
+            return {
+                "id": f"prediction-{self.model_key}",
+                "model_key": self.model_key,
+                "model_probabilities": {"home": 0.7, "draw": 0.2, "away": 0.1},
+                "baseline": {"probabilities": {"home": 0.3, "draw": 0.3, "away": 0.4}},
+            }
+
+    class Registry:
+        def champion(self, model_key: str) -> SimpleNamespace:
+            assert model_key == "ensemble"
+            return SimpleNamespace(payload={"weights": {"deepseek": 0.1, "chatgpt": 0.2, "poisson": 0.7}})
+
+    service = DualPredictionService(
+        {"deepseek": Service("deepseek"), "chatgpt": Service("chatgpt")},
+        "dual",
+        model_registry_service=Registry(),
+    )
+
+    results = asyncio.run(service.create(fixture(), {}))
+
+    ensemble = results[0]["p3_ensemble"]
+    assert ensemble["weights_source"] == "model_registry"
+    assert ensemble["weights"]["poisson"] == 0.7
+    assert ensemble["base_predictions"]["poisson"] == {"home": 0.3, "draw": 0.3, "away": 0.4}
+
+
 def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "dual.db"), "dual", ("deepseek", "chatgpt"))
     repository.initialize()
@@ -168,7 +201,7 @@ def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_pat
     assert bets[0]["candidate_score"] == 0.90
     assert len(repository.bet_executions(competition_id="dual")) == 1
     assert repository.current_balance("deepseek", "dual") == 1000.0
-    assert repository.current_balance("chatgpt", "dual") == 960.0
+    assert repository.current_balance("chatgpt", "dual") == 990.0
 
     selected = dual.select_portfolio_candidates(
         [candidate("deepseek", "prediction-deepseek", 0.8), candidate("chatgpt", "prediction-chatgpt", 0.9), candidate("poisson", "prediction-poisson", 0.7)]

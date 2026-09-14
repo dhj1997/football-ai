@@ -69,7 +69,7 @@ from .model_registry import ModelRegistry, ModelRegistryError
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
-from .research_engine import run_research, validate_hypothesis
+from .research_engine import filter_settlement_rows_by_source, run_research, validate_hypothesis
 from .player_identity import public_payload
 from .player_impact import apply_player_impact
 from .player_name_provider import (
@@ -264,6 +264,7 @@ chatgpt_prediction_service = PredictionService(
     player_value_service,
     settings.simulation_initial_bankroll,
 )
+model_registry_service = ModelRegistry(repository)
 active_prediction_services = {
     **({"deepseek": deepseek_prediction_service} if settings.deepseek_enabled else {}),
     "chatgpt": chatgpt_prediction_service,
@@ -272,6 +273,7 @@ prediction_service = DualPredictionService(
     active_prediction_services,
     settings.simulation_competition_id,
     player_name_service,
+    model_registry_service,
 )
 active_bankroll_services = {
     **({"deepseek": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("deepseek", settings.simulation_competition_id)} if settings.deepseek_enabled else {}),
@@ -284,7 +286,6 @@ bankroll_service = DualBankrollService(
 settlement_service = SettlementService(repository, settings.simulation_competition_id)
 p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
-model_registry_service = ModelRegistry(repository)
 set_fitted_params_provider(lambda: load_fitted_params(repository))
 clubeelo_provider = ClubEloProvider()
 recent_form_service = RecentFormService(repository)
@@ -1622,6 +1623,13 @@ def run_advanced_backtest(payload: dict) -> dict:
     """Run one reproducible P12 backtest and persist its immutable manifest."""
 
     settlements = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    source = payload.get("source")
+    if source:
+        settlements = filter_settlement_rows_by_source(
+            settlements,
+            source=str(source),
+            fixture_reader=getattr(repository, "fixture", None),
+        )
     try:
         result = run_backtest_engine(
             settlements,
@@ -1693,6 +1701,13 @@ def create_research_run(payload: dict) -> dict:
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     settlements = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    source = payload.get("source")
+    if source:
+        settlements = filter_settlement_rows_by_source(
+            settlements,
+            source=str(source),
+            fixture_reader=getattr(repository, "fixture", None),
+        )
     run = run_research(
         settlements,
         hypothesis=hypothesis,

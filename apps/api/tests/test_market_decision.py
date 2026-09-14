@@ -66,7 +66,7 @@ def test_backend_selects_a_positive_alternative_when_the_model_pick_has_negative
     assert result["decision"]["market"] == "1x2"
     assert result["decision"]["selection"] == "draw"
     assert result["decision"]["expected_edge"] == pytest.approx(0.3)
-    assert result["decision"]["stake_fraction"] == 0.25
+    assert result["decision"]["stake_fraction"] == 0.02
     assert "low_confidence" not in result["decision"]["reason_codes"]
     assert "low_confidence" in result["decision"]["warning_codes"]
     assert "lineup_unconfirmed" not in result["decision"]["reason_codes"]
@@ -80,7 +80,7 @@ def test_better_home_price_changes_deterministic_decision_when_evidence_is_ready
     assert result["decision"]["market"] == "1x2"
     assert result["decision"]["selection"] == "home"
     assert result["decision"]["expected_edge"] == pytest.approx(0.12)
-    assert result["decision"]["stake_fraction"] == 0.19
+    assert result["decision"]["stake_fraction"] == 0.02
 
 
 def test_three_percent_edge_uses_the_ten_percent_stake_floor() -> None:
@@ -91,7 +91,7 @@ def test_three_percent_edge_uses_the_ten_percent_stake_floor() -> None:
 
     assert result["decision"]["status"] == "bet"
     assert result["decision"]["expected_edge"] == pytest.approx(0.03)
-    assert result["decision"]["stake_fraction"] == 0.10
+    assert result["decision"]["stake_fraction"] == 0.01
 
 
 def test_de_vig_probabilities_sum_to_one() -> None:
@@ -181,7 +181,7 @@ def test_stale_odds_blocks_one_model_without_cross_model_disagreement_rule() -> 
     assert result["decision"]["status"] == "no_bet"
     assert "stale_odds" in result["decision"]["reason_codes"]
     assert "model_disagreement" not in result["decision"]["reason_codes"]
-    assert result["decision"]["stake_fraction"] == 0.19
+    assert result["decision"]["stake_fraction"] == 0.02
 
 
 def test_four_hour_old_odds_remains_fresh_under_twelve_hour_window() -> None:
@@ -210,7 +210,7 @@ def test_preliminary_prediction_can_bet_at_normal_size_before_lineup() -> None:
     result = apply_market_decision(item, context(fresh_odds()))
 
     assert result["decision"]["status"] == "bet"
-    assert result["decision"]["stake_fraction"] == 0.19
+    assert result["decision"]["stake_fraction"] == 0.02
     assert "lineup_unconfirmed" not in result["decision"]["reason_codes"]
     assert "lineup_unconfirmed" in result["decision"]["warning_codes"]
 
@@ -219,7 +219,7 @@ def test_completed_low_confidence_prediction_can_bet_at_normal_size() -> None:
     result = apply_market_decision(prediction(confidence=0.55), context(fresh_odds(home=1.6)))
 
     assert result["decision"]["status"] == "bet"
-    assert result["decision"]["stake_fraction"] == 0.19
+    assert result["decision"]["stake_fraction"] == 0.02
     assert "low_confidence" not in result["decision"]["reason_codes"]
     assert "low_confidence" in result["decision"]["warning_codes"]
 
@@ -249,7 +249,7 @@ def test_ai_no_bet_remains_visible_but_does_not_veto_positive_backend_value() ->
     assert result["decision"]["status"] == "bet"
     assert result["decision"]["market"] == "1x2"
     assert result["decision"]["selection"] == "home"
-    assert result["decision"]["stake_fraction"] == 0.19
+    assert result["decision"]["stake_fraction"] == 0.02
     assert result["decision"]["reason_codes"] == []
     assert result["decision"]["model_recommendation_status"] == "no_bet"
 
@@ -277,7 +277,7 @@ def test_legacy_prompt_evidence_cannot_create_a_new_bet() -> None:
     result = apply_market_decision(item, context(fresh_odds()))
 
     assert result["decision"]["status"] == "no_bet"
-    assert result["decision"]["stake_fraction"] == 0.19
+    assert result["decision"]["stake_fraction"] == 0.02
     assert "missing_player_data" in result["decision"]["reason_codes"]
 
 

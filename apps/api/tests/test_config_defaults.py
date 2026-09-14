@@ -31,3 +31,11 @@ def test_baseline_shrinks_toward_market_by_default() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.portfolio_baseline_market_shrinkage == 0.35
+
+
+def test_short_term_stake_policy_defaults_to_one_percent_with_two_percent_cap() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.portfolio_stake_fraction == 0.01
+    assert settings.portfolio_max_single_bet_fraction == 0.02
+    assert settings.automation_fd_confirmatory_research_interval_minutes == 20160

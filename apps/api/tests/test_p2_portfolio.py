@@ -23,6 +23,7 @@ from app.portfolio import (
     risk_gate,
     select_best_candidates,
     select_portfolio,
+    shrink_llm_probability,
 )
 from app.config import Settings
 from app.settlement import calculate_clv
@@ -152,15 +153,68 @@ def test_risk_gate_failure_always_returns_zero_stake() -> None:
 def test_single_bet_limit_allows_model_requested_fraction() -> None:
     config = PortfolioConfig(max_daily_exposure=0.5, max_league_exposure=0.5, max_total_exposure=1.0)
     result = risk_gate(candidate(), 10_000, config=config)
-    assert result["requested_stake"] == 1_000.0
-    assert result["allowed_stake"] == 1_000.0
+    assert result["requested_stake"] == 100.0
+    assert result["allowed_stake"] == 100.0
 
 
 def test_risk_gate_uses_candidate_stake_fraction() -> None:
     config = PortfolioConfig(max_daily_exposure=0.5, max_league_exposure=0.5, max_total_exposure=1.0)
     result = risk_gate(candidate(stake_fraction=0.20), 10_000, config=config)
-    assert result["requested_stake"] == 2_000.0
-    assert result["allowed_stake"] == 2_000.0
+    assert result["requested_stake"] == 200.0
+    assert result["allowed_stake"] == 200.0
+
+
+def test_risk_gate_hard_caps_legacy_single_bet_configuration_at_two_percent() -> None:
+    config = PortfolioConfig(
+        stake_fraction=0.25,
+        max_single_bet_fraction=0.25,
+        max_daily_exposure=1.0,
+        max_league_exposure=1.0,
+        max_total_exposure=1.0,
+    )
+
+    result = risk_gate(candidate(stake_fraction=0.25), 1_000, config=config)
+
+    assert result["allowed_stake"] == 20.0
+    assert result["limits"]["single"] == 20.0
+
+
+def test_llm_probability_shrinks_only_with_matching_fresh_market_snapshot() -> None:
+    prediction = {
+        "model_key": "deepseek",
+        "odds_snapshot_id": "snapshot-1",
+        "model_probabilities": {"home": 0.90, "draw": 0.05, "away": 0.05},
+        "market_assessment": {
+            "odds_snapshot_id": "snapshot-1",
+            "odds_status": "fresh",
+            "markets": [
+                {"market": "1x2", "selection": "home", "market_probability": 0.50},
+                {"market": "1x2", "selection": "draw", "market_probability": 0.30},
+                {"market": "1x2", "selection": "away", "market_probability": 0.20},
+            ],
+        },
+    }
+    shrunk, metadata = shrink_llm_probability(
+        0.90,
+        selection="home",
+        market="1x2",
+        prediction=prediction,
+        config=PortfolioConfig(),
+    )
+    assert shrunk == pytest.approx(0.78)
+    assert metadata["status"] == "applied"
+    assert metadata["market_prior_probability"] == 0.5
+
+    prediction["market_assessment"]["odds_status"] = "stale"
+    unchanged, metadata = shrink_llm_probability(
+        0.90,
+        selection="home",
+        market="1x2",
+        prediction=prediction,
+        config=PortfolioConfig(),
+    )
+    assert unchanged == 0.90
+    assert metadata["status"] == "unavailable"
 
 
 def test_daily_and_league_limits_clamp_requested_stake() -> None:
@@ -238,7 +292,7 @@ def test_p2_bankroll_freezes_execution_and_uses_fallback_stake(tmp_path) -> None
     placed = service.place_for_prediction(prediction, fixture, context)
 
     assert placed is not None
-    assert placed["stake"] == 40.0
+    assert placed["stake"] == 10.0
     assert placed["execution_id"]
     execution = repository.bet_execution(placed["execution_id"])
     assert execution is not None and execution["status"] == "EXECUTED"
@@ -251,7 +305,7 @@ def test_p2_bankroll_freezes_execution_and_uses_fallback_stake(tmp_path) -> None
     )
     assert settled is not None
     assert settled["odds"] == 2.0
-    assert settled["stake"] == 40.0
+    assert settled["stake"] == 10.0
     assert settled["selection"] == "home"
     assert settled["clv"] == pytest.approx(0.1111)
 

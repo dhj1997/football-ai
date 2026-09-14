@@ -82,6 +82,10 @@ class AutomationRunner:
                 max(60, int(getattr(settings, "automation_ensemble_learning_interval_minutes", 10080))),
                 self._learn_ensemble_weights,
             )
+            self._jobs["fd_confirmatory_research"] = (
+                max(60, int(getattr(settings, "automation_fd_confirmatory_research_interval_minutes", 20160))),
+                self._run_fd_confirmatory_research,
+            )
         if football_data_service is not None:
             self._jobs["fd_backfill"] = (
                 max(60, int(getattr(settings, "automation_fd_backfill_interval_minutes", 360))),
@@ -509,8 +513,12 @@ class AutomationRunner:
             if row.get("base_predictions") and row.get("actual_outcome") in {"home", "draw", "away"}
         ]
         model_keys = tuple(sorted({key for row in rows for key in row["models"]}))
-        if not rows or len(model_keys) < 2:
-            return {"status": "insufficient_sample", "reason": "少于两个模型有可评估样本", "item_count": 0}
+        if not rows or "poisson" not in model_keys or not any(key != "poisson" for key in model_keys):
+            return {
+                "status": "insufficient_sample",
+                "reason": "缺少 Poisson 与至少一个 LLM 的配对样本",
+                "item_count": 0,
+            }
         protocol = run_model_protocol(rows, model_keys)
         weights = protocol.get("weights") or {}
         fingerprint = protocol.get("dataset_fingerprint") or dataset_fingerprint(rows)
@@ -559,6 +567,52 @@ class AutomationRunner:
             "test_samples": test_samples,
             "improvement": improvement,
             "item_count": 1,
+        }
+
+    async def _run_fd_confirmatory_research(self) -> dict[str, Any]:
+        """Archive the pre-registered FD LLM-vs-Poisson report after 30 pairs."""
+
+        from .research_engine import filter_settlement_rows_by_source, run_research, validate_hypothesis
+        from .prediction_intelligence import build_backtest_rows
+
+        settlements = self.repository.fixture_settlements(
+            competition_id=getattr(self.settings, "simulation_competition_id", None)
+        )
+        filtered = filter_settlement_rows_by_source(
+            settlements,
+            source="football-data",
+            fixture_reader=getattr(self.repository, "fixture", None),
+        )
+        sample_size = len(build_backtest_rows(filtered))
+        if sample_size < 30:
+            return {
+                "status": "insufficient_sample",
+                "source": "football-data",
+                "sample_size": sample_size,
+                "required_samples": 30,
+                "item_count": 0,
+            }
+        hypothesis = validate_hypothesis(
+            statement="Football-Data 历史样本中，LLM 1X2 预测与 Poisson 基线进行预注册配对比较",
+            kind="confirmatory",
+            selection_rule="按预测创建时间排序，固定使用结算前冻结概率；仅报告配对 Brier、Log Loss，以及存在完整执行链时的 ROI/CLV，不自动晋升模型。",
+        )
+        run = run_research(
+            filtered,
+            hypothesis=hypothesis,
+            mode="model_comparison",
+            job_id="fd-confirmatory-llm-vs-poisson",
+            created_by="automation",
+            competition_scope="football-data",
+            repository=self.repository,
+        )
+        return {
+            "status": run.get("status"),
+            "run_id": run.get("run_id"),
+            "source": "football-data",
+            "sample_size": sample_size,
+            "required_samples": 30,
+            "item_count": 1 if run.get("run_id") else 0,
         }
 
     async def _notify_predictions(self) -> dict[str, Any]:

@@ -139,6 +139,9 @@ def _seed_two_model_settlements(repository: PredictionRepository, count: int = 1
                     "prediction_created_at": created.isoformat(),
                     "actual_outcome": actual,
                     "model_probabilities": probs,
+                    "baseline": {
+                        "probabilities": {"home": 0.40, "draw": 0.30, "away": 0.30}
+                    },
                 }
             )
 

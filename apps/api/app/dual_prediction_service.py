@@ -12,11 +12,18 @@ logger = logging.getLogger(__name__)
 
 
 class DualPredictionService:
-    def __init__(self, services: dict[str, Any], competition_id: str, player_name_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        services: dict[str, Any],
+        competition_id: str,
+        player_name_service: Any | None = None,
+        model_registry_service: Any | None = None,
+    ) -> None:
         self.services = services
         self.model_keys = tuple(services)
         self.competition_id = competition_id
         self.player_name_service = player_name_service
+        self.model_registry_service = model_registry_service
 
     @property
     def configured(self) -> bool:
@@ -103,11 +110,21 @@ class DualPredictionService:
             profiles = build_performance_profiles(
                 reader(competition_id=self.competition_id),
             )
+        champion = None
+        champion_reader = getattr(self.model_registry_service, "champion", None)
+        if callable(champion_reader):
+            try:
+                champion = champion_reader("ensemble")
+            except Exception:
+                logger.warning("failed to read ensemble champion", exc_info=True)
+        learned_weights = (getattr(champion, "payload", None) or {}).get("weights") if champion else None
         ensemble = weighted_ensemble(
             base_predictions,
+            weights=learned_weights,
             profiles=profiles,
             league_key=fixture.get("league_key"),
         )
+        ensemble["weights_source"] = "model_registry" if learned_weights else "defaults"
         repository = getattr(primary, "repository", None)
         metadata_updater = getattr(repository, "update_prediction", None)
         for item in predictions:

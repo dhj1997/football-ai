@@ -7,6 +7,8 @@ import pytest
 from app.database import PredictionRepository
 from app.research_engine import (
     ResearchScheduler,
+    _llm_vs_poisson_comparison,
+    filter_settlement_rows_by_source,
     leakage_audit,
     run_research,
     sample_size_status,
@@ -62,6 +64,49 @@ def test_sample_size_status_follows_p6_policy() -> None:
     assert sample_size_status(30) == "low_confidence"
     assert sample_size_status(99) == "low_confidence"
     assert sample_size_status(100) == "adequate_sample"
+
+
+def test_fd_source_filter_uses_explicit_source_or_fixture_fallback() -> None:
+    rows = [
+        {"fixture_id": "fd-1", "data_source": "football-data"},
+        {"fixture_id": "dqd-1", "data_source": "dongqiudi"},
+        {"fixture_id": "fd-2"},
+    ]
+    fixtures = {"fd-2": {"source": "football-data"}}
+
+    filtered = filter_settlement_rows_by_source(
+        rows,
+        source="fd",
+        fixture_reader=lambda fixture_id: fixtures.get(fixture_id),
+    )
+
+    assert [row["fixture_id"] for row in filtered] == ["fd-1", "fd-2"]
+    assert all(row["data_source"] == "football-data" for row in filtered)
+
+
+def test_llm_poisson_comparison_requires_paired_samples_and_keeps_strategy_honest() -> None:
+    rows = []
+    for index in range(30):
+        actual = "home" if index % 2 == 0 else "away"
+        rows.append(
+            {
+                "fixture_id": f"fd-{index}",
+                "prediction_id": f"p-{index}",
+                "prediction_created_at": f"2026-01-{(index // 2) + 1:02d}T00:00:00+00:00",
+                "settled_at": f"2026-02-{(index // 2) + 1:02d}T00:00:00+00:00",
+                "model_key": "deepseek",
+                "actual_outcome": actual,
+                "model_probabilities": {"home": 0.6, "draw": 0.1, "away": 0.3},
+                "baseline": {"probabilities": {"home": 0.4, "draw": 0.2, "away": 0.4}},
+            }
+        )
+
+    comparison = _llm_vs_poisson_comparison(rows)
+
+    assert comparison["status"] == "ok"
+    assert comparison["sample_size"] == 30
+    assert comparison["models"]["deepseek"]["paired_samples"] == 30
+    assert comparison["models"]["deepseek"]["strategy"]["status"] == "unavailable"
 
 
 def test_leakage_audit_flags_label_after_prediction() -> None:

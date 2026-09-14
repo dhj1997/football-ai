@@ -21,6 +21,7 @@ from typing import Any, Callable, Iterable, Mapping
 from .backtest_engine import (
     BACKTEST_ENGINE_VERSION,
     STRATEGY_VERSION,
+    simulate_strategy,
     run_backtest_engine,
 )
 from .model_registry import dataset_fingerprint
@@ -28,6 +29,7 @@ from .prediction_intelligence import (
     CALIBRATION_VERSION,
     FEATURE_VERSION,
     build_backtest_rows,
+    evaluate_probabilities,
     parse_timestamp,
 )
 
@@ -44,6 +46,148 @@ PIPELINE_STAGES: tuple[str, ...] = (
     "report",
     "archive",
 )
+FD_SOURCE_ALIASES = frozenset({"football-data", "football_data", "football-data.co.uk", "fd"})
+
+
+def _requires_llm_poisson_comparison(hypothesis: Mapping[str, Any]) -> bool:
+    text = " ".join(
+        str(hypothesis.get(key) or "")
+        for key in ("statement", "selection_rule")
+    ).casefold()
+    return "poisson" in text and ("llm" in text or "deepseek" in text or "chatgpt" in text)
+
+
+def filter_settlement_rows_by_source(
+    settlement_rows: Iterable[Mapping[str, Any]],
+    *,
+    source: str = "football-data",
+    fixture_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
+) -> list[dict[str, Any]]:
+    """Keep only rows whose fixture source is explicitly the requested feed.
+
+    Older settlement payloads did not persist a source. Those rows are
+    resolved through the fixture repository when possible; unresolved rows
+    are excluded so a confirmatory FD report cannot silently mix sources.
+    """
+
+    requested = str(source).strip().casefold()
+    aliases = FD_SOURCE_ALIASES if requested in FD_SOURCE_ALIASES else frozenset({requested})
+    filtered: list[dict[str, Any]] = []
+    for row in settlement_rows:
+        payload = dict(row)
+        value = payload.get("data_source") or payload.get("source")
+        if not value and callable(fixture_reader):
+            fixture = fixture_reader(str(payload.get("fixture_id") or ""))
+            value = (fixture or {}).get("source")
+        normalized = str(value or "").strip().casefold()
+        if normalized in aliases:
+            payload["data_source"] = normalized
+            filtered.append(payload)
+    return filtered
+
+
+def _market_odds_from_assessment(assessment: Mapping[str, Any] | None) -> dict[str, float]:
+    odds: dict[str, float] = {}
+    for row in (assessment or {}).get("markets") or []:
+        if row.get("market") != "1x2" or row.get("selection") not in {"home", "draw", "away"}:
+            continue
+        try:
+            price = float(row.get("price") or row.get("odds"))
+        except (TypeError, ValueError):
+            continue
+        if price > 1:
+            odds[str(row["selection"])] = price
+    return odds
+
+
+def _execution_rows(
+    settlement_rows: Iterable[Mapping[str, Any]],
+    model_key: str,
+) -> list[dict[str, Any]]:
+    """Prepare only persisted executions for the strategy simulator."""
+
+    rows: list[dict[str, Any]] = []
+    for row in settlement_rows:
+        row_model = str(row.get("model_key") or (row.get("experiment") or {}).get("model_key") or "")
+        if row_model != model_key or not (row.get("bet_id") or row.get("execution_id")):
+            continue
+        payload = dict(row)
+        if not payload.get("market_odds"):
+            odds = _market_odds_from_assessment(payload.get("market_assessment"))
+            if odds:
+                payload["market_odds"] = odds
+        rows.append(payload)
+    return rows
+
+
+def _llm_vs_poisson_comparison(settlement_rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Return paired frozen-probability and execution metrics for LLM models."""
+
+    raw_rows = [dict(row) for row in settlement_rows]
+    paired_rows = build_backtest_rows(raw_rows)
+    llm_keys = sorted(
+        {
+            str(model)
+            for row in paired_rows
+            for model in (row.get("base_predictions") or {})
+            if str(model) != "poisson"
+        }
+    )
+    paired_sample = [
+        row
+        for row in paired_rows
+        if (row.get("base_predictions") or {}).get("poisson")
+    ]
+    poisson = evaluate_probabilities(
+        paired_sample,
+        lambda row: (row.get("base_predictions") or {}).get("poisson"),
+    )
+    models: dict[str, Any] = {}
+    for model_key in llm_keys:
+        model_rows = [
+            row
+            for row in paired_sample
+            if (row.get("base_predictions") or {}).get(model_key)
+        ]
+        metrics = evaluate_probabilities(
+            model_rows,
+            lambda row, key=model_key: (row.get("base_predictions") or {}).get(key),
+        )
+        strategy_rows = _execution_rows(raw_rows, model_key)
+        strategy = simulate_strategy(
+            strategy_rows,
+            probabilities_by_fixture={
+                str(row.get("fixture_id") or ""): (row.get("model_probabilities") or row.get("probabilities") or {})
+                for row in strategy_rows
+            },
+        )
+        models[model_key] = {
+            **metrics,
+            "strategy": strategy,
+            "paired_samples": len(model_rows),
+            "brier_improvement_vs_poisson": (
+                round(float(poisson["brier"]) - float(metrics["brier"]), 6)
+                if poisson.get("brier") is not None and metrics.get("brier") is not None
+                else None
+            ),
+            "log_loss_improvement_vs_poisson": (
+                round(float(poisson["log_loss"]) - float(metrics["log_loss"]), 6)
+                if poisson.get("log_loss") is not None and metrics.get("log_loss") is not None
+                else None
+            ),
+        }
+    llm_sample_size = max(
+        (int(item.get("paired_samples") or 0) for item in models.values()),
+        default=0,
+    )
+    sample_size = min(int(poisson.get("samples") or 0), llm_sample_size)
+    return {
+        "status": "ok" if sample_size >= 30 and models else "insufficient_sample",
+        "sample_size": sample_size,
+        "required_samples": 30,
+        "poisson": poisson,
+        "models": models,
+    }
 
 
 def _stable(value: Mapping[str, Any]) -> str:
@@ -116,7 +260,13 @@ def leakage_audit(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
 def _statistical_summary(result: Mapping[str, Any]) -> dict[str, Any]:
     ensemble = result.get("ensemble_brier") or {}
-    sample_size = int(result.get("sample_size") or ensemble.get("sample_size") or 0)
+    comparison = result.get("llm_vs_poisson") or {}
+    sample_size = int(
+        comparison.get("sample_size")
+        or result.get("sample_size")
+        or ensemble.get("sample_size")
+        or 0
+    )
     return {
         "sample_size": sample_size,
         "sample_status": sample_size_status(sample_size),
@@ -152,8 +302,22 @@ def build_research_report(
         unanswerable.append("策略模拟不可用（执行链不完整）")
     if result.get("window_count", 0) == 0:
         limitations.append("没有可评估的时间窗口")
+    comparison = result.get("llm_vs_poisson") or {}
+    if hypothesis.get("kind") == "confirmatory" and _requires_llm_poisson_comparison(hypothesis) and comparison.get("status") != "ok":
+        limitations.append(f"LLM 与 Poisson 配对样本 {comparison.get('sample_size', 0)}，未达到 30 注门槛")
     conclusion = None
-    if result.get("status") == "ok" and audit["passed"] and result.get("window_count"):
+    if (
+        result.get("status") == "ok"
+        and audit["passed"]
+        and result.get("window_count")
+        and _requires_llm_poisson_comparison(hypothesis)
+        and comparison.get("status") == "ok"
+    ):
+        conclusion = (
+            f"在数据集 {manifest.get('dataset_fingerprint')} 上完成预注册的 LLM 与 Poisson 配对比较；"
+            "结果仅用于确认性复盘，不自动晋升模型"
+        )
+    elif result.get("status") == "ok" and audit["passed"] and result.get("window_count"):
         improvement = ((result.get("improvement") or {}).get("naive_baseline") or {}).get("brier_improvement")
         conclusion = (
             f"在数据集 {manifest.get('dataset_fingerprint')} 上，ensemble 相对 naive baseline 的 Brier 改进为 {improvement}（{hypothesis['kind']}）"
@@ -183,6 +347,7 @@ def build_research_report(
             "model_briers": result.get("model_briers"),
             "market_baseline_brier": result.get("market_baseline_brier"),
             "improvement": result.get("improvement"),
+            "llm_vs_poisson": comparison,
         },
         "uncertainty": statistics,
         "limitations": limitations,
@@ -209,6 +374,7 @@ def run_research(
     """Execute the full research pipeline and archive an immutable run."""
 
     stages: dict[str, Any] = {stage: None for stage in PIPELINE_STAGES}
+    settlement_rows = [dict(row) for row in settlement_rows if isinstance(row, Mapping)]
     try:
         hypothesis = validate_hypothesis(
             statement=hypothesis.get("statement") or "",
@@ -257,6 +423,7 @@ def run_research(
             "report": None,
         }
     result.pop("_test_probabilities", None)
+    result["llm_vs_poisson"] = _llm_vs_poisson_comparison(settlement_rows)
     manifest = result.get("manifest") or {}
     stages["experiment"] = {"status": "ok" if result.get("status") == "ok" else "failed", "window_count": result.get("window_count")}
     stages["backtest"] = {"status": "ok" if result.get("status") == "ok" else "failed", "mode": mode}
@@ -289,6 +456,12 @@ def run_research(
         status = "failed"
     elif experiment_failed or not result.get("window_count"):
         status = "partial"
+    elif (
+        hypothesis["kind"] == "confirmatory"
+        and _requires_llm_poisson_comparison(hypothesis)
+        and result["llm_vs_poisson"].get("status") != "ok"
+    ):
+        status = "partial"
     else:
         status = "completed"
     run = {
@@ -307,6 +480,7 @@ def run_research(
             "sample_status": statistics["sample_status"],
             "ensemble_brier": result.get("ensemble_brier"),
             "improvement": result.get("improvement"),
+            "llm_vs_poisson": result.get("llm_vs_poisson"),
         },
         "leakage_audit": {"status": audit["status"], "violation_count": audit["violation_count"], "violations": audit["violations"]},
         "created_by": created_by,

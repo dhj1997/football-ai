@@ -3,7 +3,6 @@
 import uuid
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
@@ -431,21 +430,12 @@ class BankrollService:
             league_key=fixture.get("league_key"),
         )
         fixed_stake = _fixed_stake(prediction)
-        selection_config = self.portfolio_config
-        if fixed_stake is not None:
-            # The automation fixed stake overrides single-bet sizing only;
-            # league, daily and total exposure caps still bound the placement.
-            selection_config = replace(
-                selection_config,
-                max_single_bet_fraction=1.0,
-                max_league_candidates=None,
-            )
         selected = select_portfolio(
             [candidate],
             account_snapshot=account_snapshot,
             existing_bets=account_bets,
             correlation_bets=all_bets,
-            config=selection_config,
+            config=self.portfolio_config,
             drawdown=float(self.summary().get("max_drawdown") or 0),
             requested_stake=fixed_stake,
         )
@@ -488,6 +478,11 @@ class BankrollService:
             "data_quality": selected_candidate.get("data_quality"),
             "odds_age_minutes": selected_candidate.get("odds_age_minutes"),
             "candidate_score": selected_candidate.get("candidate_score"),
+            "raw_model_probability": selected_candidate.get("raw_model_probability"),
+            "probability_source": selected_candidate.get("probability_source"),
+            "market_prior_probability": selected_candidate.get("market_prior_probability"),
+            "llm_keep_weight": selected_candidate.get("llm_keep_weight"),
+            "shrinkage_status": selected_candidate.get("shrinkage_status"),
             "correlation_group": selected_candidate.get("correlation_group") or fixture.get("id"),
             "bookmaker": selected_candidate.get("bookmaker"),
             "odds_snapshot_id": selected_candidate.get("odds_snapshot_id") or prediction.get("odds_snapshot_id"),

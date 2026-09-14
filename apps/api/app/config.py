@@ -104,8 +104,8 @@ class Settings(BaseSettings):
     portfolio_max_plausible_edge: float = 0.25
     portfolio_max_plausible_ev: float = 0.60
     portfolio_max_odds_age_minutes: float = 720.0
-    portfolio_stake_fraction: float = 0.10
-    portfolio_max_single_bet_fraction: float = 0.25
+    portfolio_stake_fraction: float = 0.01
+    portfolio_max_single_bet_fraction: float = 0.02
     portfolio_max_daily_exposure: float = 0.10
     portfolio_max_league_exposure: float = 0.04
     portfolio_max_total_exposure: float = 0.10
@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     portfolio_baseline_market_shrinkage: float = 0.35
     # ADR-015：LLM 概率在组合层向去水市场先验收缩，保留权重 0.7（市场拿 0.3）。
     portfolio_llm_keep_weight: float = 0.7
+    automation_fd_confirmatory_research_interval_minutes: int = 20160
     # Selection priority: CSL matches rank first, and the priority team above them.
     portfolio_priority_league_key: str = "csl"
     portfolio_priority_team_name: str = "武汉三镇"

@@ -11,8 +11,8 @@ from .prediction import asian_handicap_from_expected_goals
 
 MIN_EXPECTED_EDGE = 0.03
 MIN_FORECAST_CONFIDENCE = 0.60
-MIN_STAKE_FRACTION = 0.10
-MAX_STAKE_FRACTION = 0.25
+MIN_STAKE_FRACTION = 0.01
+MAX_STAKE_FRACTION = 0.02
 # Values beyond these are treated as data anomalies, not opportunities.
 MAX_PLAUSIBLE_EDGE = 0.25
 MAX_PLAUSIBLE_EV = 0.60

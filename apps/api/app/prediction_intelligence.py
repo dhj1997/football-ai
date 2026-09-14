@@ -707,6 +707,7 @@ def build_backtest_rows(settlements: Iterable[Mapping[str, Any]]) -> list[dict[s
                     "league_key": primary.get("league_key"),
                     "prediction_created_at": primary.get("prediction_created_at"),
                     "evaluation_timestamp": primary.get("settled_at"),
+                    "data_source": primary.get("data_source") or primary.get("source"),
                     "model_version": primary.get("model_version"),
                     "feature_version": primary.get("feature_version"),
                     "ensemble_version": primary.get("ensemble_version"),

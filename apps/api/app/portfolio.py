@@ -10,6 +10,8 @@ from typing import Any, Iterable, Mapping
 ACTIVE_BET_STATUSES = frozenset({"placed", "pending", "executed", "selected"})
 # Backward-compatible import name; all callers should use the shared set.
 ACTIVE_STATUSES = ACTIVE_BET_STATUSES
+PROBABILITY_KEYS = ("home", "draw", "away")
+SHORT_TERM_MAX_SINGLE_BET_FRACTION = 0.02
 
 
 def _number(value: Any, default: float | None = None) -> float | None:
@@ -140,8 +142,8 @@ class PortfolioConfig:
     max_plausible_edge: float = 0.25
     max_plausible_ev: float = 0.60
     max_odds_age_minutes: float = 720.0
-    stake_fraction: float = 0.10
-    max_single_bet_fraction: float = 0.25
+    stake_fraction: float = 0.01
+    max_single_bet_fraction: float = 0.02
     max_daily_exposure: float = 0.05
     max_league_exposure: float = 0.04
     max_total_exposure: float = 0.10
@@ -170,6 +172,14 @@ class PortfolioConfig:
             field: getattr(settings, f"portfolio_{field}", getattr(settings, field, getattr(defaults, field)))
             for field in defaults.__dict__
         }
+        values["max_single_bet_fraction"] = min(
+            max(0.0, float(values["max_single_bet_fraction"])),
+            SHORT_TERM_MAX_SINGLE_BET_FRACTION,
+        )
+        values["stake_fraction"] = min(
+            max(0.0, float(values["stake_fraction"])),
+            values["max_single_bet_fraction"],
+        )
         return cls(**values)
 
 
@@ -199,6 +209,11 @@ class BetCandidate:
     bookmaker: str | None = None
     odds_snapshot_id: str | None = None
     stake_fraction: float = 0.0
+    raw_model_probability: float | None = None
+    probability_source: str = "prediction"
+    market_prior_probability: float | None = None
+    llm_keep_weight: float | None = None
+    shrinkage_status: str = "not_applicable"
 
     @property
     def expected_edge(self) -> float:
@@ -229,13 +244,21 @@ def candidate_from_market_row(
         if historical_clv is not None
         else _number(prediction.get("historical_clv"))
     )
-    model_probability = _probability(market_row.get("model_probability"))
+    raw_model_probability = _probability(market_row.get("model_probability"))
     market_probability = _probability(market_row.get("market_probability"))
     if market_probability is None:
         market_probability = _probability(market_row.get("de_vig_probability"))
     price = _odds(market_row.get("price", market_row.get("odds")))
-    if model_probability is None or market_probability is None or price is None:
+    if raw_model_probability is None or market_probability is None or price is None:
         return None
+    model_key = str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek")
+    model_probability, shrinkage = shrink_llm_probability(
+        raw_model_probability,
+        selection=str(market_row.get("selection") or ""),
+        market=str(market_row.get("market") or ""),
+        prediction=prediction,
+        config=config,
+    )
     age = odds_age_minutes(
         market_row.get("odds_updated_at")
         or (prediction.get("market_assessment") or {}).get("odds_updated_at"),
@@ -275,7 +298,7 @@ def candidate_from_market_row(
         fixture_date=str(fixture.get("fixture_date")) if fixture.get("fixture_date") is not None else None,
         league_key=str(fixture.get("league_key")) if fixture.get("league_key") is not None else None,
         prediction_id=str(prediction.get("id") or ""),
-        model_key=str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"),
+        model_key=model_key,
         market=str(market_row.get("market") or ""),
         selection=str(market_row.get("selection") or ""),
         line=market_row.get("line"),
@@ -295,7 +318,78 @@ def candidate_from_market_row(
         bookmaker=market_row.get("bookmaker"),
         odds_snapshot_id=prediction.get("odds_snapshot_id"),
         stake_fraction=stake_fraction,
+        raw_model_probability=round(raw_model_probability, 6),
+        probability_source=shrinkage["probability_source"],
+        market_prior_probability=shrinkage["market_prior_probability"],
+        llm_keep_weight=shrinkage["llm_keep_weight"],
+        shrinkage_status=shrinkage["status"],
     )
+
+
+def shrink_llm_probability(
+    model_probability: Any,
+    *,
+    selection: str,
+    market: str,
+    prediction: Mapping[str, Any],
+    config: PortfolioConfig,
+) -> tuple[float | None, dict[str, Any]]:
+    """Shrink an LLM 1X2 probability toward the bound, fresh market prior.
+
+    This helper only changes the scoring input. The persisted prediction and
+    its frozen probability remain untouched. Missing, stale, or mismatched
+    snapshot data disables shrinkage instead of inventing a prior.
+    """
+
+    raw = _probability(model_probability)
+    model_key = str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "").casefold()
+    metadata = {
+        "status": "not_applicable",
+        "probability_source": "prediction",
+        "market_prior_probability": None,
+        "llm_keep_weight": None,
+    }
+    if raw is None:
+        return None, metadata
+    if market != "1x2" or model_key not in {"deepseek", "chatgpt", "gpt", "llm"}:
+        return raw, metadata
+    assessment = prediction.get("market_assessment") or {}
+    snapshot_id = prediction.get("odds_snapshot_id")
+    if (
+        not snapshot_id
+        or assessment.get("odds_snapshot_id") != snapshot_id
+        or assessment.get("odds_status") != "fresh"
+    ):
+        metadata["status"] = "unavailable"
+        return raw, metadata
+    prior: dict[str, float] = {}
+    for row in assessment.get("markets") or []:
+        if row.get("market") != "1x2" or row.get("selection") not in PROBABILITY_KEYS:
+            continue
+        value = _probability(row.get("market_probability", row.get("de_vig_probability")))
+        if value is not None:
+            prior[str(row["selection"])] = value
+    if set(prior) != set(PROBABILITY_KEYS):
+        metadata["status"] = "unavailable"
+        return raw, metadata
+    keep = _number(config.llm_keep_weight)
+    if keep is None:
+        keep = 0.7
+    keep = max(0.0, min(1.0, keep))
+    market_prior = prior.get(selection)
+    if market_prior is None:
+        metadata["status"] = "unavailable"
+        return raw, metadata
+    shrunk = keep * raw + (1.0 - keep) * market_prior
+    metadata.update(
+        {
+            "status": "applied",
+            "probability_source": "llm_market_shrinkage",
+            "market_prior_probability": round(market_prior, 6),
+            "llm_keep_weight": round(keep, 6),
+        }
+    )
+    return round(max(0.0, min(1.0, shrunk)), 6), metadata
 
 
 def build_candidates(
@@ -497,7 +591,7 @@ def risk_gate(
         reasons.append("candidate_ineligible")
     if drawdown >= config.max_drawdown:
         reasons.append("max_drawdown")
-    single_limit = base * config.max_single_bet_fraction
+    single_limit = base * min(config.max_single_bet_fraction, SHORT_TERM_MAX_SINGLE_BET_FRACTION)
     daily_limit = base * config.max_daily_exposure
     league_limit = base * config.max_league_exposure
     total_limit = base * config.max_total_exposure
@@ -643,7 +737,7 @@ def _candidate_stake_fraction(
     requested = _number(_value(candidate, "stake_fraction"))
     if requested is None or requested <= 0:
         requested = config.stake_fraction
-    return max(0.0, min(float(config.max_single_bet_fraction), requested))
+    return max(0.0, min(float(config.max_single_bet_fraction), SHORT_TERM_MAX_SINGLE_BET_FRACTION, requested))
 
 
 def _correlation_keys(candidate: BetCandidate | Mapping[str, Any]) -> set[str]:
