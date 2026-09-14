@@ -161,6 +161,74 @@ function RecentFormSide({ team, matches }: { team: RecentFormTeam; matches: Rece
           <b className="text-emerald-400">{goalsFor}</b> 失球{" "}
           <b className="text-rose-400">{goalsAgainst}</b>
         </p>
+        <HalfFullMatrix matches={matches} teamName={team.name} />
+      </div>
+    </div>
+  );
+}
+
+const HALF_FULL_COMBOS = [
+  "胜胜",
+  "胜平",
+  "胜负",
+  "平胜",
+  "平平",
+  "平负",
+  "负胜",
+  "负平",
+  "负负",
+] as const;
+
+function outcomeOf(teamGoals: number, opponentGoals: number): "W" | "D" | "L" {
+  return teamGoals > opponentGoals ? "W" : teamGoals === opponentGoals ? "D" : "L";
+}
+
+function HalfFullMatrix({ matches, teamName }: { matches: RecentMatch[]; teamName: string }) {
+  const withHalf = matches.filter((match) => match.half_time);
+  if (withHalf.length < 2) {
+    return null; // 半场样本不足时诚实缺席
+  }
+  const counts: Record<string, { total: number; home: number; away: number }> = {};
+  for (const combo of HALF_FULL_COMBOS) {
+    counts[combo] = { total: 0, home: 0, away: 0 };
+  }
+  for (const match of withHalf) {
+    const half = /(\d+)\s*-\s*(\d+)/.exec(match.half_time ?? "");
+    const full = /(\d+)\s*-\s*(\d+)/.exec(match.score);
+    if (!half || !full) continue;
+    const teamIsHome = match.team_is_home ?? match.home === teamName;
+    const halfTeam = teamIsHome ? Number(half[1]) : Number(half[2]);
+    const halfOpp = teamIsHome ? Number(half[2]) : Number(half[1]);
+    const fullTeam = teamIsHome ? Number(full[1]) : Number(full[2]);
+    const fullOpp = teamIsHome ? Number(full[2]) : Number(full[1]);
+    const halfOutcome = outcomeOf(halfTeam, halfOpp);
+    const fullOutcome = outcomeOf(fullTeam, fullOpp);
+    const halfChar = halfOutcome === "W" ? "胜" : halfOutcome === "D" ? "平" : "负";
+    const fullChar = fullOutcome === "W" ? "胜" : fullOutcome === "D" ? "平" : "负";
+    const combo = (halfChar + fullChar) as (typeof HALF_FULL_COMBOS)[number];
+    if (counts[combo]) {
+      counts[combo].total += 1;
+      if (teamIsHome) counts[combo].home += 1;
+      else counts[combo].away += 1;
+    }
+  }
+  return (
+    <div className="mt-3">
+      <b className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+        半全场胜负（{withHalf.length} 场有半场数据）
+      </b>
+      <div className="grid grid-cols-9 gap-px overflow-hidden rounded-lg border border-slate-800 bg-slate-800 text-center text-[10px]" role="table" aria-label="半全场胜负分布">
+        {HALF_FULL_COMBOS.map((combo) => {
+          const count = counts[combo].total;
+          return (
+            <div key={combo} className="bg-pitch-950 px-0.5 py-1">
+              <div className="text-slate-500">{combo}</div>
+              <div className={`font-mono font-bold tabular-nums ${count ? "text-amber-400" : "text-slate-600"}`}>
+                {count}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

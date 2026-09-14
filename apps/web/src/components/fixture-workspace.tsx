@@ -1361,6 +1361,111 @@ export function TeamProfiles({
   );
 }
 
+function HeadToHeadPanel({
+  matches,
+  homeName,
+  awayName,
+}: {
+  matches: Array<{ date: string; home: string; away: string; score: string }>;
+  homeName: string;
+  awayName: string;
+}) {
+  const [limit, setLimit] = useState<number>(10);
+  const ordered = [...matches].reverse(); // 时间正序里取最近
+  const visible = ordered.slice(-limit);
+  // 汇总从当前主队视角统计（雷速式"近N场交锋胜率"）。
+  let wins = 0;
+  let draws = 0;
+  let losses = 0;
+  for (const match of visible) {
+    const parsed = /(\d+)\s*-\s*(\d+)/.exec(match.score);
+    if (!parsed) continue;
+    const homeGoals = Number(parsed[1]);
+    const awayGoals = Number(parsed[2]);
+    // 视角按"历史场次中的主队是否就是本场主队"判断。
+    const homeIsCurrentHome = match.home === homeName;
+    const teamGoals = homeIsCurrentHome ? homeGoals : awayGoals;
+    const opponentGoals = homeIsCurrentHome ? awayGoals : homeGoals;
+    if (teamGoals > opponentGoals) wins += 1;
+    else if (teamGoals === opponentGoals) draws += 1;
+    else losses += 1;
+  }
+  const total = wins + draws + losses;
+  const winRate = total ? Math.round((wins / total) * 100) : 0;
+  return (
+    <Card className="p-4">
+      <SectionHeader
+        className="mb-3"
+        eyebrow="HEAD TO HEAD"
+        title="历史交锋"
+        level={3}
+        meta={`${matches.length} 场`}
+      />
+      {matches.length > 0 ? (
+        <>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-pitch-800 px-2 py-1 text-[11px] text-slate-300">
+              近 {total} 场交锋：
+              <b className="text-amber-400">{homeName}</b> 胜 {wins} 平 {draws} 负{" "}
+              {losses}，胜率 <b className="text-amber-400">{winRate}%</b>
+            </span>
+            {([5, 10, 20] as const).map((size) => (
+              <button
+                key={size}
+                type="button"
+                onClick={() => setLimit(size)}
+                aria-pressed={limit === size}
+                className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+                  limit === size
+                    ? "bg-amber-500/20 text-amber-400"
+                    : "bg-pitch-800 text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                近{size}场
+              </button>
+            ))}
+          </div>
+          <div
+            className="overflow-hidden rounded-xl border border-slate-800"
+            role="table"
+            aria-label="历史交锋记录"
+          >
+            <div
+              className="grid grid-cols-[5.5rem_minmax(0,1fr)_4rem] gap-2 border-b border-slate-800 bg-pitch-950 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-slate-400"
+              role="row"
+            >
+              <span>日期</span>
+              <span>对阵</span>
+              <span>比分</span>
+            </div>
+            {visible.map((match) => (
+              <div
+                className="grid grid-cols-[5.5rem_minmax(0,1fr)_4rem] items-center gap-2 border-b border-slate-800/60 px-3 py-2 text-xs text-slate-300 last:border-b-0 hover:bg-slate-800/30"
+                role="row"
+                key={`${match.date}-${match.home}-${match.away}`}
+              >
+                <time className="font-mono tabular-nums text-slate-500">
+                  {match.date}
+                </time>
+                <span className="min-w-0 truncate">
+                  {match.home} <i className="not-italic text-slate-500">vs</i>{" "}
+                  {match.away}
+                </span>
+                <ParsedScoreline score={match.score} />
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className={mutedNoteClass}>暂无历史交锋数据</p>
+      )}
+      <p className={sourceNoteClass}>
+        对阵双方历史交手记录，胜负按本场主队视角统计。
+      </p>
+    </Card>
+  );
+}
+
 type EvidenceSection = "form" | "h2h" | "availability" | "lineup";
 
 export function EvidenceDetails({
@@ -1413,49 +1518,7 @@ export function EvidenceDetails({
       )}
 
       {sections.includes("h2h") && (
-        <Card className="p-4">
-          <SectionHeader
-            className="mb-3"
-            eyebrow="HEAD TO HEAD"
-            title="历史交锋"
-            level={3}
-            meta={`${context.head_to_head.length} 场`}
-          />
-          {context.head_to_head.length > 0 ? (
-            <div
-              className="overflow-hidden rounded-xl border border-slate-800"
-              role="table"
-              aria-label="历史交锋记录"
-            >
-              <div
-                className="grid grid-cols-[5.5rem_minmax(0,1fr)_4rem] gap-2 border-b border-slate-800 bg-pitch-950 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-slate-400"
-                role="row"
-              >
-                <span>日期</span>
-                <span>对阵</span>
-                <span>比分</span>
-              </div>
-              {context.head_to_head.map((match) => (
-                <div
-                  className="grid grid-cols-[5.5rem_minmax(0,1fr)_4rem] items-center gap-2 border-b border-slate-800/60 px-3 py-2 text-xs text-slate-300 last:border-b-0 hover:bg-slate-800/30"
-                  role="row"
-                  key={`${match.date}-${match.home}-${match.away}`}
-                >
-                  <time className="font-mono tabular-nums text-slate-500">
-                    {match.date}
-                  </time>
-                  <span className="min-w-0 truncate">
-                    {match.home} <i className="not-italic text-slate-500">vs</i>{" "}
-                    {match.away}
-                  </span>
-                  <ParsedScoreline score={match.score} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className={mutedNoteClass}>暂无历史交锋数据</p>
-          )}
-        </Card>
+        <HeadToHeadPanel matches={context.head_to_head} homeName={fixture.home_team.name} awayName={fixture.away_team.name} />
       )}
 
       {sections.includes("availability") && (
