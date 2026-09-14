@@ -386,8 +386,9 @@ class AutomationRunner:
             twin = fixture_reader(f"dongqiudi-{match_id}") if (match_id and callable(fixture_reader)) else None
             if not twin:
                 continue
-            league_key = str(fixture.get("league_key") or "unknown")
             free_data = fixture.get("free_team_data") or {}
+            if free_data.get("home") and free_data.get("away"):
+                continue  # 双侧阵容齐的场次直接跳过
             for side in ("home", "away"):
                 if free_data.get(side):
                     continue
