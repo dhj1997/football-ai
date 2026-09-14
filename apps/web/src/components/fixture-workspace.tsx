@@ -120,11 +120,6 @@ const rowResultToneClass: Record<string, string> = {
   draw: "text-slate-400",
   pending: "text-slate-500",
 };
-const recentResultToneClass: Record<string, string> = {
-  w: "text-rose-400",
-  d: "text-slate-400",
-  l: "text-emerald-400",
-};
 const factorToneClass: Record<string, string> = {
   home: "text-rose-400",
   away: "text-emerald-400",

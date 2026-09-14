@@ -172,6 +172,31 @@ class SettlementService:
             settlement = self.repository.settlement_for_prediction(prediction["id"])
             bet = self.repository.bet_for_prediction(prediction["id"])
             clv_data = _bet_clv_data(self.repository, fixture, prediction, bet)
+            if settlement is not None and settlement.get("actual_outcome") != actual:
+                # 终场比分在结算后被数据源修正：用新赛果重算指标（预测侧
+                # 冻结字段不动），并保留修正痕迹供审计。
+                corrector = getattr(self.repository, "update_fixture_settlement_outcome", None)
+                if callable(corrector):
+                    probabilities_corr = settlement.get("model_probabilities") or settlement.get("probabilities") or {}
+                    settlement = corrector(
+                        prediction["id"],
+                        {
+                            "actual_outcome": actual,
+                            "correct": settlement.get("predicted_outcome") == actual,
+                            "brier_score": round(
+                                sum(
+                                    (float(probabilities_corr.get(key) or 0.0) - (1.0 if key == actual else 0.0)) ** 2
+                                    for key in ("home", "draw", "away")
+                                ),
+                                4,
+                            ),
+                            "log_loss": _log_loss(probabilities_corr, actual),
+                            "rps": _rps(probabilities_corr, actual),
+                            "score": {"home": home_score, "away": away_score},
+                            "score_corrected_at": settled_at,
+                            "prior_actual_outcome": settlement.get("actual_outcome"),
+                        },
+                    ) or settlement
             if settlement is None:
                 probabilities = prediction.get("model_probabilities") or prediction["probabilities"]
                 brier = sum(

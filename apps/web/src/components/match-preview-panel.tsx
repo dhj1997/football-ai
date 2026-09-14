@@ -37,7 +37,7 @@ function PositionRow({
   );
 }
 
-function UpcomingList({ rows, teamName }: { rows: MatchPreview["upcoming"]["home"]; teamName: string }) {
+function UpcomingList({ rows }: { rows: MatchPreview["upcoming"]["home"] }) {
   if (!rows.length) {
     return <p className="text-[11px] text-slate-500">暂无后续赛程</p>;
   }
@@ -96,13 +96,13 @@ export function MatchPreviewPanel({
           <b className="mb-2 block truncate text-xs font-semibold text-slate-200">
             {fixture.home_team.name} · 未来三场
           </b>
-          <UpcomingList rows={preview.upcoming.home} teamName={fixture.home_team.name} />
+          <UpcomingList rows={preview.upcoming.home} />
         </div>
         <div className="rounded-xl border border-slate-800 bg-pitch-950 p-3">
           <b className="mb-2 block truncate text-xs font-semibold text-slate-200">
             {fixture.away_team.name} · 未来三场
           </b>
-          <UpcomingList rows={preview.upcoming.away} teamName={fixture.away_team.name} />
+          <UpcomingList rows={preview.upcoming.away} />
         </div>
       </div>
     </div>

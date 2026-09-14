@@ -3592,6 +3592,32 @@ class PredictionRepository:
             )
         return settlement
 
+    def update_fixture_settlement_outcome(self, prediction_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Apply a post-settlement score correction to one evaluation row.
+
+        Only label-derived fields change (outcome/correct/brier/log_loss/rps/
+        score); the frozen forecast side stays untouched. The correction is
+        stamped so audits can tell corrected rows from first-pass ones.
+        """
+
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM fixture_settlements WHERE prediction_id = :prediction_id"),
+                {"prediction_id": prediction_id},
+            ).mappings().first()
+            if not row:
+                return None
+            payload = json.loads(row["payload"])
+            allowed = {"actual_outcome", "correct", "brier_score", "log_loss", "rps", "score"}
+            payload.update({key: updates[key] for key in updates if key in allowed})
+            payload["score_corrected_at"] = updates.get("score_corrected_at")
+            payload["prior_actual_outcome"] = updates.get("prior_actual_outcome")
+            connection.execute(
+                text("UPDATE fixture_settlements SET payload = :payload WHERE prediction_id = :prediction_id"),
+                {"payload": json.dumps(payload, ensure_ascii=False), "prediction_id": prediction_id},
+            )
+            return payload
+
     def settlement_for_prediction(self, prediction_id: str) -> dict[str, Any] | None:
         """Return one stored prediction evaluation."""
 

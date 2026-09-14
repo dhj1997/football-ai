@@ -16,7 +16,6 @@ import Link from "next/link";
 import { RecentFormCompare } from "@/components/recent-form-compare";
 import { MarketsDetailPanel } from "@/components/markets-detail-panel";
 import { MatchPreviewPanel, OddsMovementPanel } from "@/components/match-preview-panel";
-import type { TeamStatProfile } from "@/lib/types";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 

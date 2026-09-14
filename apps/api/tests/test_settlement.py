@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.bankroll import BankrollService
 from app.database import PredictionRepository
@@ -186,3 +186,72 @@ def test_over_under_settlement_uses_total_goals() -> None:
     assert _bet_return(over, 0, None, total_goals=3) == ("full_win", 37.0)
     assert _bet_return(over, 0, None, total_goals=2) == ("full_loss", 0.0)
     assert _bet_return(push_line, 0, None, total_goals=2) == ("push", 20.0)
+
+
+def test_score_correction_resettles_existing_evaluation(tmp_path, monkeypatch) -> None:
+    """A post-settlement score correction recomputes the evaluation row."""
+
+    from app.settlement import SettlementService
+    from app.database import PredictionRepository
+
+    repository = PredictionRepository(str(tmp_path / "correct.db"), "dual-model-v1")
+    repository.initialize()
+    kickoff = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    repository.replace_fixtures(
+        kickoff[:10],
+        kickoff[:10],
+        [
+            {
+                "id": "fixture-corr",
+                "provider_id": 1,
+                "league_key": "epl",
+                "fixture_date": kickoff[:10],
+                "kickoff": kickoff,
+                "status": "finished",
+                "home_team": {"name": "A"},
+                "away_team": {"name": "B"},
+                "score": {"home": 0, "away": 2},
+                "is_demo": False,
+                "external_ids": {},
+            }
+        ],
+        datetime.now(UTC).isoformat(),
+    )
+    repository.save(
+        {
+            "id": "pred-corr",
+            "fixture_id": "fixture-corr",
+            "created_at": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+            "phase": "preliminary",
+            "model_key": "deepseek",
+            "model_version": "deepseek:test",
+            "competition_id": "dual-model-v1",
+            "ai": {
+                "status": "completed",
+                "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
+                "evidence_version": "fixture-evidence-v3",
+            },
+            "model_probabilities": {"home": 0.2, "draw": 0.3, "away": 0.5},
+            "probabilities": {"home": 0.2, "draw": 0.3, "away": 0.5},
+        }
+    )
+    service = SettlementService(repository, "dual-model-v1")
+
+    service.settle_finished()
+    first = repository.settlement_for_prediction("pred-corr")
+    assert first["actual_outcome"] == "away"
+    assert first["correct"] is True
+
+    # 数据源赛后修正比分为 1-1：下一次结算任务用新赛果重算。
+    fixture = repository.fixture("fixture-corr")
+    fixture["score"] = {"home": 1, "away": 1}
+    repository.upsert_fixture(fixture)
+    service.settle_finished()
+
+    corrected = repository.settlement_for_prediction("pred-corr")
+    assert corrected["actual_outcome"] == "draw"
+    assert corrected["correct"] is False
+    assert corrected["prior_actual_outcome"] == "away"
+    assert corrected["score_corrected_at"]
+    # 预测侧冻结字段不随修正改变。
+    assert corrected["model_probabilities"] == first["model_probabilities"]

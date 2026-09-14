@@ -126,8 +126,6 @@ function RecentFormSide({ team, matches }: { team: RecentFormTeam; matches: Rece
         </div>
         {matches.map((match, index) => {
           const trackedIsHome = match.team_is_home ?? match.home === team.name;
-          const trackedName = trackedIsHome ? match.home : match.away;
-          const opponentName = trackedIsHome ? match.away : match.home;
           const won = match.result === "W";
           const drew = match.result === "D";
           return (
