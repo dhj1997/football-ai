@@ -94,6 +94,24 @@ E0,20/09/2026,Nottingham,Arsenal,0,3,A,0,1,9,14,3,8,4,6,4.5,3.6,1.8
 """
 
 
+def test_football_data_team_aliases_translate_to_chinese() -> None:
+    from app.team_names import to_chinese_team_name
+
+    for alias, expected in (
+        ("Man United", "曼彻斯特联"),
+        ("Nott'm Forest", "诺丁汉森林"),
+        ("Sociedad", "皇家社会"),
+        ("Ath Bilbao", "毕尔巴鄂竞技"),
+        ("Betis", "皇家贝蒂斯"),
+        ("Celta", "维戈塞尔塔"),
+        ("Vallecano", "巴列卡诺"),
+        ("La Coruna", "拉科鲁尼亚"),
+        ("Wolves", "狼队"),
+        ("West Ham", "西汉姆联"),
+    ):
+        assert to_chinese_team_name(alias) == expected, alias
+
+
 def test_team_stat_profiles_average_only_prior_matches(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "stats.db"))
     repository.initialize()

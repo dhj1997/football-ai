@@ -461,6 +461,7 @@ def _model_input(
             for side in ("home", "away")
         },
         "player_impact": public_payload(context.get("player_impact")),
+        "team_stats": public_payload(context.get("team_stats")),
         "odds": _model_odds(context.get("odds")),
         "standings": standings,
         "data_completeness": quality,
