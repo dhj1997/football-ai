@@ -30,6 +30,9 @@ class PredictionRepository:
         self.model_keys = tuple(model_keys)
         self.initial_balance = max(0.0, float(initial_balance))
         self._fixture_revision = 0
+        # 全量 list_fixtures 的 revision 键缓存：解析 3.5k 行 payload 约 1s，
+        # 任何写操作自增 revision 后自动失效（所有写路径均已覆盖）。
+        self._fixtures_cache: tuple[int, list[dict[str, Any]]] | None = None
         connect_args = {"check_same_thread": False} if self.is_sqlite else {}
         engine_kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": not self.is_sqlite}
         if self.database_url in {"sqlite:///:memory:", "sqlite://"}:
@@ -2718,8 +2721,27 @@ class PredictionRepository:
         end_date: str | None = None,
         league_key: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List cached fixtures ordered by kickoff."""
+        """List cached fixtures ordered by kickoff.
 
+        The unfiltered full scan (every row's payload parsed) is cached per
+        fixture revision; filtered windows keep their indexed SQL path.
+        """
+
+        if start_date is None and end_date is None and league_key is None:
+            cached = self._fixtures_cache
+            if cached is not None and cached[0] == self._fixture_revision:
+                return list(cached[1])
+            rows = self._scan_fixtures(None, None, None)
+            self._fixtures_cache = (self._fixture_revision, rows)
+            return list(rows)
+        return self._scan_fixtures(start_date, end_date, league_key)
+
+    def _scan_fixtures(
+        self,
+        start_date: str | None,
+        end_date: str | None,
+        league_key: str | None,
+    ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         parameters: dict[str, str] = {}
         if start_date is not None:
