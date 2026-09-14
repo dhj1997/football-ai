@@ -34,3 +34,5 @@
 |---|---|
 | Direct GitHub push initially reset/failed | Later remote ref reflected the commit; re-verify before final delivery |
 | First manual shrinkage check used a duplicated `apps/api` path | Re-ran from the correct `.venv` path; helper returned the expected 0.78 probability |
+| First push of `4be4ab8` reset during GitHub HTTPS negotiation | Retry with Git HTTP/1.1 before treating the remote as unavailable |
+| HTTP/1.1 retry could not connect to GitHub port 443 | Checked local Git, credential helper, proxy, and `gh` availability; try SSH transport next |
