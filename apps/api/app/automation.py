@@ -718,34 +718,67 @@ class AutomationRunner:
                     if force
                     else self._prediction_window(kickoff, now, refresh_state, model_keys)
                 )
+                current_predictions: dict[str, dict[str, Any] | None] = {}
+                lineup_reprediction = False
+                if prediction_window is None and not force and (context.get("lineup") or {}).get("confirmed"):
+                    competition_id = getattr(self.prediction_service, "competition_id", None)
+                    if model_keys:
+                        current_predictions = {
+                            key: self.repository.latest_current(
+                                fixture["id"],
+                                DEFAULT_PROMPT_CONTRACT.version,
+                                key,
+                                competition_id,
+                            )
+                            for key in model_keys
+                        }
+                    else:
+                        current_predictions = {
+                            "default": self.repository.latest_current(
+                                fixture["id"],
+                                DEFAULT_PROMPT_CONTRACT.version,
+                            )
+                        }
+                    lineup_reprediction = any(
+                        self._should_predict(item, context, now)
+                        for item in current_predictions.values()
+                    )
+                    if lineup_reprediction:
+                        prediction_window = 0.0
                 if prediction_window is None:
                     continue
                 counts["candidate_count"] += 1
-                window_token = self._prediction_window_token(prediction_window)
-                marker_prefix = f"prediction_{window_token}"
-                current_predictions: dict[str, dict[str, Any] | None] = {}
-                if not model_keys:
-                    latest = self.repository.latest_current(
-                        fixture["id"],
-                        DEFAULT_PROMPT_CONTRACT.version,
-                    )
-                    current_predictions = {"default": latest} if latest else {}
-                    due_model_keys: list[str] = [] if refresh_state.get(f"{marker_prefix}_default_at") else ["default"]
-                else:
-                    competition_id = getattr(self.prediction_service, "competition_id", None)
-                    current_predictions = {
-                        key: self.repository.latest_current(
+                marker_prefix = "prediction_lineup" if lineup_reprediction else f"prediction_{self._prediction_window_token(prediction_window)}"
+                if not current_predictions:
+                    if not model_keys:
+                        latest = self.repository.latest_current(
                             fixture["id"],
                             DEFAULT_PROMPT_CONTRACT.version,
-                            key,
-                            competition_id,
                         )
-                        for key in model_keys
-                    }
+                        current_predictions = {"default": latest}
+                        due_model_keys: list[str] = [] if refresh_state.get(f"{marker_prefix}_default_at") else ["default"]
+                    else:
+                        competition_id = getattr(self.prediction_service, "competition_id", None)
+                        current_predictions = {
+                            key: self.repository.latest_current(
+                                fixture["id"],
+                                DEFAULT_PROMPT_CONTRACT.version,
+                                key,
+                                competition_id,
+                            )
+                            for key in model_keys
+                        }
+                        due_model_keys = [
+                            key for key in model_keys
+                            if not refresh_state.get(f"{marker_prefix}_{key}_at")
+                        ]
+                elif lineup_reprediction:
                     due_model_keys = [
-                        key for key in model_keys
-                        if not refresh_state.get(f"{marker_prefix}_{key}_at")
+                        key for key in (model_keys or ["default"])
+                        if self._should_predict(current_predictions.get(key), context, now)
                     ]
+                else:
+                    due_model_keys = []
                 if due_model_keys == [] and not force:
                     current = [item for item in current_predictions.values() if item]
                     counts["bet_count"] += len(self._place_predictions(current, fixture, context))

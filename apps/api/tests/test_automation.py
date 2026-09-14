@@ -439,3 +439,76 @@ async def test_forced_analysis_repredicts_an_already_marked_window(tmp_path) -> 
     assert result["status"] == "success"
     assert result["result"]["prediction_count"] == 1
     assert prediction.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_analysis_repredicts_once_after_lineup_confirmation(tmp_path) -> None:
+    kickoff = datetime.now(UTC) + timedelta(minutes=20)
+
+    class Repository:
+        def __init__(self) -> None:
+            self.fixture_data = {
+                "id": "fixture-lineup-reprediction",
+                "provider_id": 4,
+                "fixture_date": kickoff.date().isoformat(),
+                "kickoff": kickoff.isoformat(),
+                "status": "scheduled",
+                "league_key": "acl",
+                "home_team": {"name": "Home"},
+                "away_team": {"name": "Away"},
+                "evidence_synced_at": datetime.now(UTC).isoformat(),
+                "evidence": {
+                    "synced_at": datetime.now(UTC).isoformat(),
+                    "lineup": {"confirmed": True},
+                    "automation_refresh": {
+                        "prediction_30m_chatgpt_at": datetime.now(UTC).isoformat(),
+                    },
+                },
+            }
+            self.latest = {
+                "id": "prediction-before-lineup",
+                "phase": "preliminary",
+                "created_at": datetime.now(UTC).isoformat(),
+                "ai": {"status": "completed"},
+            }
+
+        def list_fixtures(self):
+            return [self.fixture_data]
+
+        def latest_current(self, *_args):
+            return self.latest
+
+        def save_fixture_evidence(self, _fixture_id, context):
+            self.fixture_data["evidence"] = context
+            return self.fixture_data
+
+    class Prediction:
+        model_keys = ("chatgpt",)
+        competition_id = "test-competition"
+
+        def __init__(self, repository):
+            self.repository = repository
+            self.calls = 0
+
+        async def create(self, _fixture, _context, model_keys=None):
+            self.calls += 1
+            self.repository.latest = {
+                "id": "prediction-after-lineup",
+                "phase": "confirmed_lineup",
+                "created_at": datetime.now(UTC).isoformat(),
+                "model_key": (model_keys or ["chatgpt"])[0],
+                "ai": {"status": "completed"},
+            }
+            return [self.repository.latest]
+
+    repository = Repository()
+    prediction = Prediction(repository)
+    automation = runner(repository, prediction=prediction)
+
+    first = await automation._analyze_upcoming()
+    second = await automation._analyze_upcoming()
+
+    assert first["prediction_count"] == 1
+    assert second["prediction_count"] == 0
+    assert prediction.calls == 1
+    assert repository.fixture_data["evidence"]["automation_refresh"]["prediction_lineup_chatgpt_at"]
