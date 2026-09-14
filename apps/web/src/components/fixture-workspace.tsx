@@ -76,6 +76,56 @@ const dateTabs: Array<{ key: DateFilter; label: string }> = [
   { key: "history", label: "历史" },
 ];
 
+function DateStrip({
+  selected,
+  onSelect,
+}: {
+  selected: string | null;
+  onSelect: (iso: string | null) => void;
+}) {
+  const today = new Date();
+  const days: Array<{ iso: string; day: string; date: string; isToday: boolean }> = [];
+  for (let offset = -3; offset <= 10; offset += 1) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + offset);
+    const iso = d.toLocaleDateString("sv-SE");
+    days.push({
+      iso,
+      day: offset === 0 ? "今天" : ["日", "一", "二", "三", "四", "五", "六"][d.getDay()],
+      date: `${d.getMonth() + 1}/${d.getDate()}`,
+      isToday: offset === 0,
+    });
+  }
+  return (
+    <div className="flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="按日期查看赛程">
+      {days.map((day) => {
+        const activeDay = selected === day.iso;
+        return (
+          <button
+            key={day.iso}
+            type="button"
+            role="tab"
+            aria-selected={activeDay}
+            onClick={() => onSelect(activeDay ? null : day.iso)}
+            className={`shrink-0 rounded-lg px-2.5 py-1.5 text-center transition-colors ${
+              activeDay
+                ? "bg-amber-500/20 text-amber-400"
+                : day.isToday
+                  ? "bg-pitch-800 text-slate-200 hover:bg-slate-700/50"
+                  : "text-slate-500 hover:bg-slate-800/40 hover:text-slate-300"
+            }`}
+          >
+            <span className="block text-[10px] leading-none">{day.day}</span>
+            <span className="mt-0.5 block font-mono text-xs font-semibold leading-none">
+              {day.date}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const evidenceMeta = [
   { key: "form", label: "近期状态", icon: Activity },
   { key: "h2h", label: "历史交锋", icon: Users },
@@ -398,6 +448,26 @@ function FixtureRow({
         </b>
         <TeamMark team={fixture.away_team} tone="away" />
       </span>
+      {fixture.odds_summary ? (
+        <span
+          className="hidden shrink-0 grid-cols-3 gap-1 font-mono text-[11px] tabular-nums md:grid"
+          aria-label="胜平负赔率"
+          title={`赔率更新 ${fixture.odds_summary.updated_at ?? "未知"}`}
+        >
+          {[fixture.odds_summary.home, fixture.odds_summary.draw, fixture.odds_summary.away].map(
+            (price, index) => (
+              <span
+                key={index}
+                className={`rounded bg-pitch-800 px-1.5 py-0.5 ${
+                  index === 0 ? "text-amber-400" : index === 1 ? "text-slate-300" : "text-sky-400"
+                }`}
+              >
+                {price.toFixed(2)}
+              </span>
+            ),
+          )}
+        </span>
+      ) : null}
       <span
         className="hidden shrink-0 flex-col items-end gap-1 sm:flex"
         aria-label="研究状态"
@@ -3085,6 +3155,8 @@ function defaultFixtureId(items: Fixture[]): string | null {
 
 export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
+  // 日期横条选中的具体日期（ISO）；设置后优先于 dateFilter 生效。
+  const [specificDate, setSpecificDate] = useState<string | null>(null);
   const leagueFilter = "all" as const;
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -3111,7 +3183,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
 
   useEffect(() => {
     let active = true;
-    const cached = readCachedFixtures(dateFilter, leagueFilter);
+    const cached = specificDate ? null : readCachedFixtures(dateFilter, leagueFilter);
     if (cached) {
       queueMicrotask(() => {
         if (!active) return;
@@ -3130,7 +3202,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         setLoading(false);
       });
     }
-    void fetchFixtures(dateFilter, leagueFilter)
+    void fetchFixtures(dateFilter, leagueFilter, specificDate ?? undefined)
       .then((response) => {
         if (!active) return;
         setFixtures(response.items);
@@ -3156,12 +3228,14 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
       .finally(() => {
         if (active) setLoading(false);
       });
-    if (dateFilter === "today") prefetchFixtures("tomorrow", "all");
-    if (dateFilter === "tomorrow") prefetchFixtures("today", "all");
+    if (!specificDate) {
+      if (dateFilter === "today") prefetchFixtures("tomorrow", "all");
+      if (dateFilter === "tomorrow") prefetchFixtures("today", "all");
+    }
     return () => {
       active = false;
     };
-  }, [dateFilter, operatorMode, reloadToken]);
+  }, [dateFilter, specificDate, operatorMode, reloadToken]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -3270,18 +3344,28 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
             title="比赛研究台"
             description="筛选值得研究的比赛，再核对证据、模型共识与风险。"
             aside={
-              <Tabs
-                ariaLabel="日期范围"
-                value={dateFilter}
-                onChange={(value) => {
-                  setLoading(true);
-                  setDateFilter(value);
-                }}
-                items={dateTabs.map((tab) => ({
-                  value: tab.key,
-                  label: tab.label,
-                }))}
-              />
+              <div className="flex flex-col items-end gap-2">
+                <DateStrip
+                  selected={specificDate}
+                  onSelect={(iso) => {
+                    setLoading(true);
+                    setSpecificDate(iso);
+                  }}
+                />
+                <Tabs
+                  ariaLabel="日期范围"
+                  value={dateFilter}
+                  onChange={(value) => {
+                    setLoading(true);
+                    setSpecificDate(null);
+                    setDateFilter(value);
+                  }}
+                  items={dateTabs.map((tab) => ({
+                    value: tab.key,
+                    label: tab.label,
+                  }))}
+                />
+              </div>
             }
           />
         </Card>
@@ -3421,16 +3505,27 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
               : "浏览四项赛事的赛程，并查看管理员已发布的赛前概率。"
           }
           aside={
-            <Tabs
-              ariaLabel="日期范围"
-              value={dateFilter}
-              onChange={(value) => {
-                setLoading(true);
-                setSuccess(null);
-                setDateFilter(value);
-              }}
-              items={dateTabs.map((tab) => ({ value: tab.key, label: tab.label }))}
-            />
+            <div className="flex flex-col items-end gap-2">
+              <DateStrip
+                selected={specificDate}
+                onSelect={(iso) => {
+                  setLoading(true);
+                  setSuccess(null);
+                  setSpecificDate(iso);
+                }}
+              />
+              <Tabs
+                ariaLabel="日期范围"
+                value={dateFilter}
+                onChange={(value) => {
+                  setLoading(true);
+                  setSuccess(null);
+                  setSpecificDate(null);
+                  setDateFilter(value);
+                }}
+                items={dateTabs.map((tab) => ({ value: tab.key, label: tab.label }))}
+              />
+            </div>
           }
         />
       </Card>

@@ -171,9 +171,14 @@ export async function readJson<T>(response: Response): Promise<T> {
 export async function fetchFixtures(
   date: DateFilter,
   league: FixtureLeagueFilter,
+  specificDate?: string,
 ): Promise<FixtureListResponse> {
+  const dateQuery =
+    specificDate
+      ? `date_from=${specificDate}&date_to=${specificDate}`
+      : `date=${date}`;
   const response = await fetch(
-    `${apiBase}/api/fixtures?date=${date}&league=${league}`,
+    `${apiBase}/api/fixtures?${dateQuery}&league=${league}`,
     { cache: "no-store" },
   );
   const payload = await readJson<FixtureListResponse>(response);

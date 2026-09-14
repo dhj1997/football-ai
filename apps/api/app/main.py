@@ -675,10 +675,27 @@ def _fixture_list_item(fixture: dict, prediction_fixture_ids: set[str]) -> dict:
             fixture_date = datetime.fromisoformat(str(fixture["kickoff"]).replace("Z", "+00:00")).astimezone(CHINA_TZ).date().isoformat()
         except ValueError:
             fixture_date = None
+    odds = (fixture.get("evidence") or {}).get("odds")
+    odds_summary = None
+    if isinstance(odds, dict):
+        prices = {}
+        for key in ("home", "draw", "away"):
+            try:
+                value = float(odds.get(key))
+            except (TypeError, ValueError):
+                continue
+            if value > 1.0:
+                prices[key] = round(value, 2)
+        if len(prices) == 3:
+            odds_summary = {
+                **prices,
+                "updated_at": odds.get("updated_at") or odds.get("captured_at"),
+            }
     return {
         **{key: fixture.get(key) for key in fields},
         "fixture_date": fixture_date,
         "evidence_summary": _fixture_evidence_summary(fixture),
+        "odds_summary": odds_summary,
         "has_prediction": str(fixture.get("id") or "") in prediction_fixture_ids,
     }
 

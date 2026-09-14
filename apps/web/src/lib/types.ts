@@ -234,6 +234,12 @@ export interface Fixture {
     updated_at: string | null;
   };
   has_prediction?: boolean;
+  odds_summary?: {
+    home: number;
+    draw: number;
+    away: number;
+    updated_at?: string | null;
+  } | null;
 }
 
 export interface TeamStatProfile {

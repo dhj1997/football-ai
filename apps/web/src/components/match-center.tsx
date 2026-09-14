@@ -1433,7 +1433,7 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
       <MatchHeader detail={detail} ranks={ranks}>
         <VerdictStrip detail={detail} ranks={ranks} />
       </MatchHeader>
-      <div className="mt-6 border-b border-slate-800 pb-2">
+      <div className="sticky top-14 z-30 -mx-4 mt-6 border-b border-slate-800 bg-pitch-900/90 px-4 pb-2 pt-2 backdrop-blur-md">
         <Tabs
           className="w-full border-none bg-transparent p-0"
           ariaLabel="比赛研究页签"
