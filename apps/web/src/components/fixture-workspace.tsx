@@ -1364,11 +1364,9 @@ export function TeamProfiles({
 function HeadToHeadPanel({
   matches,
   homeName,
-  awayName,
 }: {
   matches: Array<{ date: string; home: string; away: string; score: string }>;
   homeName: string;
-  awayName: string;
 }) {
   const [limit, setLimit] = useState<number>(10);
   const ordered = [...matches].reverse(); // 时间正序里取最近
@@ -1518,7 +1516,7 @@ export function EvidenceDetails({
       )}
 
       {sections.includes("h2h") && (
-        <HeadToHeadPanel matches={context.head_to_head} homeName={fixture.home_team.name} awayName={fixture.away_team.name} />
+        <HeadToHeadPanel matches={context.head_to_head} homeName={fixture.home_team.name} />
       )}
 
       {sections.includes("availability") && (
