@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     # Thin xG baselines get shrunk toward the de-vig market prior (weight on
     # the market) before they may enter candidate selection.
     portfolio_baseline_market_shrinkage: float = 0.35
+    # ADR-015：LLM 概率在组合层向去水市场先验收缩，保留权重 0.7（市场拿 0.3）。
+    portfolio_llm_keep_weight: float = 0.7
     # Selection priority: CSL matches rank first, and the priority team above them.
     portfolio_priority_league_key: str = "csl"
     portfolio_priority_team_name: str = "武汉三镇"

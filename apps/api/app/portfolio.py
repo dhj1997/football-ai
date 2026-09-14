@@ -149,6 +149,8 @@ class PortfolioConfig:
     min_data_completeness: float = 0.70
     max_league_candidates: int | None = 2
     baseline_market_shrinkage: float = 0.35
+    # ADR-015: LLM keep-weight toward market prior in candidate scoring.
+    llm_keep_weight: float = 0.7
     ev_weight: float = 1.0
     edge_weight: float = 1.0
     confidence_weight: float = 0.25
