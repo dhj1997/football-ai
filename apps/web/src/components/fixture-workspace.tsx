@@ -988,6 +988,41 @@ function playerNameStatus(player: { name_status?: string }) {
   return player.name_status === "machine_translated" ? "自动音译" : "";
 }
 
+function PlayerAvatar({
+  photo,
+  name,
+  size = 26,
+  fallbackTone = "text-slate-500 bg-slate-800/70",
+}: {
+  photo?: string | null;
+  name: string;
+  size?: number;
+  fallbackTone?: string;
+}) {
+  if (photo) {
+    return (
+      <Image
+        src={photo}
+        alt=""
+        width={size}
+        height={size}
+        unoptimized
+        className="shrink-0 rounded-full object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className={`grid shrink-0 place-items-center rounded-full text-[10px] font-bold ${fallbackTone}`}
+      style={{ width: size, height: size }}
+    >
+      {name.trim().slice(0, 1)}
+    </span>
+  );
+}
+
 function SquadTable({
   teamName,
   players,
@@ -1032,7 +1067,7 @@ function SquadTable({
               >
                 {group.rows.map((player) => (
                   <div
-                    className="grid grid-cols-[2rem_minmax(0,1fr)_2.5rem_4rem] items-center gap-2 px-2 py-1.5 text-xs"
+                    className="grid grid-cols-[1.75rem_2rem_minmax(0,1fr)_2.5rem_4rem] items-center gap-2 px-2 py-1.5 text-xs"
                     role="row"
                     key={
                       player.canonical_player_id ??
@@ -1041,6 +1076,7 @@ function SquadTable({
                       player.name
                     }
                   >
+                    <PlayerAvatar photo={player.photo} name={player.name} size={24} />
                     <span className="font-mono tabular-nums text-slate-500">
                       {player.number ?? "-"}
                     </span>

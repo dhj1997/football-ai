@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     automation_fd_backfill_interval_minutes: int = 360
     football_data_seasons_backfill: int = 5
     automation_clubeelo_interval_minutes: int = 1440
+    automation_squad_backfill_interval_minutes: int = 180
+    squad_backfill_limit: int = 6
     automation_failure_backoff_minutes: int = 15
     prediction_lead_hours: int = 24
     evidence_refresh_minutes: int = 180

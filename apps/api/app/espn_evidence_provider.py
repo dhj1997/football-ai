@@ -347,7 +347,7 @@ def _squad(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "position_code": None,
                     "position_order": 4,
                     "nationality": athlete.get("citizenship"),
-                    "photo": None,
+                    "photo": (athlete.get("headshot") or {}).get("href"),
                     "status": None,
                     "injuries": [],
                     "statistics": {},

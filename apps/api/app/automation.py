@@ -40,6 +40,7 @@ class AutomationRunner:
         model_registry_service: Any | None = None,
         football_data_service: Any | None = None,
         clubeelo_service: Any | None = None,
+        dongqiudi_team_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -55,6 +56,7 @@ class AutomationRunner:
         self.model_registry_service = model_registry_service
         self.football_data_service = football_data_service
         self.clubeelo_service = clubeelo_service
+        self.dongqiudi_team_service = dongqiudi_team_service
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._jobs: dict[str, tuple[int, Callable[[], Awaitable[dict[str, Any]]]]] = {
@@ -89,6 +91,11 @@ class AutomationRunner:
             self._jobs["clubeelo"] = (
                 max(60, int(getattr(settings, "automation_clubeelo_interval_minutes", 1440))),
                 self._sync_clubeelo,
+            )
+        if dongqiudi_team_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
+            self._jobs["squad_backfill"] = (
+                max(30, int(getattr(settings, "automation_squad_backfill_interval_minutes", 180))),
+                self._backfill_squads,
             )
         if dongqiudi_sync_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
             self._jobs["dongqiudi_schedule"] = (
@@ -353,6 +360,89 @@ class AutomationRunner:
 
         csv_text = await self.clubeelo_service.fetch_on()
         return sync_ratings(self.repository, csv_text, localize=to_chinese_team_name)
+
+    async def _backfill_squads(self) -> dict[str, Any]:
+        """Fill squad rosters for fixtures whose dongqiudi twin lacks one.
+
+        The roster lives on the team snapshot (one fetch per team, cached);
+        matches without a twin row simply have no dongqiudi team id yet.
+        """
+
+        limit = max(1, int(getattr(self.settings, "squad_backfill_limit", 6)))
+        reader = getattr(self.repository, "list_fixtures", None)
+        if not callable(reader):
+            return {"status": "unavailable", "reason": "repository 不支持 fixtures", "item_count": 0}
+        now = datetime.now(UTC)
+        fixture_reader = getattr(self.repository, "fixture", None)
+        targets: list[tuple[dict[str, Any], str]] = []
+        for fixture in reader():
+            if fixture.get("status") != "scheduled":
+                continue
+            kickoff = _as_utc(fixture.get("kickoff"))
+            if kickoff is None or kickoff < now:
+                continue
+            # 球队 ID 在懂球帝孪生行（数据域命名空间），canonical 行没有。
+            match_id = (fixture.get("external_ids") or {}).get("dongqiudi")
+            twin = fixture_reader(f"dongqiudi-{match_id}") if (match_id and callable(fixture_reader)) else None
+            if not twin:
+                continue
+            league_key = str(fixture.get("league_key") or "unknown")
+            free_data = fixture.get("free_team_data") or {}
+            for side in ("home", "away"):
+                if free_data.get(side):
+                    continue
+                twin_id = ((twin.get(f"{side}_team") or {}).get("provider_id") or "")
+                if twin_id:
+                    targets.append((fixture, str(twin_id)))
+            if len(targets) >= limit * 2:
+                break
+        synced = 0
+        enriched = 0
+        errors: list[str] = []
+        snapshot_by_team: dict[str, dict[str, Any]] = {}
+        for fixture, team_id in targets[: limit * 2]:
+            league_key = str(fixture.get("league_key") or "unknown")
+            cached = (
+                snapshot_by_team.get(team_id)
+                or (
+                    self.repository.team_snapshot(league_key, team_id)
+                    if callable(getattr(self.repository, "team_snapshot", None))
+                    else None
+                )
+            )
+            if cached is None:
+                try:
+                    cached = await self.dongqiudi_team_service.team(team_id)
+                    cached["league_key"] = league_key
+                    self.repository.save_team_snapshot(cached)
+                    snapshot_by_team[team_id] = cached
+                    synced += 1
+                except Exception as error:
+                    errors.append(f"{team_id}: {_bounded_error(error)}")
+                    continue
+            # 写回 fixture：与既有 _sync_teams 相同的 free_team_data 结构。
+            updated = self.repository.fixture(fixture["id"])
+            if not updated:
+                continue
+            free_data = dict(updated.get("free_team_data") or {})
+            changed = False
+            for candidate_side in ("home", "away"):
+                if free_data.get(candidate_side):
+                    continue
+                twin_match_id = (updated.get("external_ids") or {}).get("dongqiudi")
+                twin = self.repository.fixture(f"dongqiudi-{twin_match_id}") if twin_match_id else None
+                twin_team_id = str(((twin or {}).get(f"{candidate_side}_team") or {}).get("provider_id") or "")
+                if twin_team_id and twin_team_id == team_id:
+                    free_data[candidate_side] = {"profile": cached.get("team") or {}, "squad": cached.get("roster") or [], "source": "dongqiudi"}
+                    changed = True
+            if changed:
+                updated["free_team_data"] = free_data
+                updated["free_team_data_synced_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
+                self.repository.upsert_fixture(updated)
+                enriched += 1
+            if synced >= limit and enriched >= min(limit, 2):
+                break
+        return {"status": "completed", "synced": synced, "enriched": enriched, "item_count": synced, "errors": errors[:10]}
 
     def _historical_season_targets(self) -> list[tuple[str, int, int]]:
         """List (league, season, existing) pairs below the per-season cap."""

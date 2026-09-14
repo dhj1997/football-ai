@@ -325,6 +325,7 @@ automation_runner = AutomationRunner(
     model_registry_service=model_registry_service,
     football_data_service=fetch_season_csv,
     clubeelo_service=clubeelo_provider,
+    dongqiudi_team_service=dongqiudi_provider,
 )
 runtime_config_updated_at: str | None = None
 
