@@ -450,6 +450,102 @@ async def correlation_middleware(request, call_next):
     return response
 
 
+def _match_preview_context(fixture: dict) -> dict | None:
+    """League-position context and each team's next three fixtures (as-of now).
+
+    Positions come from the cached standings snapshot; upcoming fixtures from
+    the local schedule store. Both are current-state views, so this block is
+    only attached for scheduled (pre-kickoff) matches.
+    """
+
+    if fixture.get("status") != "scheduled":
+        return None
+    league_key = str(fixture.get("league_key") or "")
+    snapshot = next(
+        (row for row in repository.league_snapshots(league_key or None)),
+        None,
+    )
+    standings = (snapshot or {}).get("standings") or []
+
+    def standing_for(team: dict) -> dict | None:
+        return next(
+            (row for row in standings if str((row.get("team") or {}).get("name")) == str(team.get("name"))),
+            None,
+        )
+
+    def position_block(team: dict) -> dict | None:
+        row = standing_for(team)
+        if not row:
+            return None
+        return {
+            "rank": row.get("rank"),
+            "played": row.get("played"),
+            "points": row.get("points"),
+            "goal_difference": row.get("goal_difference"),
+            "form_note": row.get("note"),
+        }
+
+    kickoff = str(fixture.get("kickoff") or "")
+    kickoff_at = datetime.fromisoformat(kickoff.replace("Z", "+00:00")) if kickoff else None
+
+    def upcoming_for(team: dict) -> list[dict]:
+        name = str(team.get("name") or "")
+        rows = [
+            row
+            for row in repository.list_fixtures()
+            if row.get("status") == "scheduled"
+            and (
+                str((row.get("home_team") or {}).get("name")) == name
+                or str((row.get("away_team") or {}).get("name")) == name
+            )
+            and str(row.get("kickoff") or "") > kickoff
+        ]
+        rows.sort(key=lambda row: str(row.get("kickoff")))
+        result = []
+        previous = kickoff_at
+        for row in rows[:3]:
+            row_kickoff = str(row.get("kickoff") or "")
+            row_at = datetime.fromisoformat(row_kickoff.replace("Z", "+00:00")) if row_kickoff else None
+            rest_days = (
+                round((row_at - previous).total_seconds() / 86400, 1)
+                if row_at and previous
+                else None
+            )
+            previous = row_at or previous
+            opponent = (
+                row.get("away_team")
+                if str((row.get("home_team") or {}).get("name")) == name
+                else row.get("home_team")
+            )
+            result.append(
+                {
+                    "fixture_id": row.get("id"),
+                    "kickoff": row_kickoff,
+                    "opponent": (opponent or {}).get("name"),
+                    "opponent_logo": (opponent or {}).get("logo"),
+                    "is_home": str((row.get("home_team") or {}).get("name")) == name,
+                    "rest_days": rest_days,
+                }
+            )
+        return result
+
+    home_position = position_block(fixture.get("home_team") or {})
+    away_position = position_block(fixture.get("away_team") or {})
+    return {
+        "league_key": league_key,
+        "positions": {"home": home_position, "away": away_position},
+        "rank_gap": (
+            abs((home_position or {}).get("rank", 0) - (away_position or {}).get("rank", 0))
+            if home_position and away_position
+            else None
+        ),
+        "upcoming": {
+            "home": upcoming_for(fixture.get("home_team") or {}),
+            "away": upcoming_for(fixture.get("away_team") or {}),
+        },
+    }
+
+
 def _fixture_or_404(fixture_id: str) -> dict:
     fixture = repository.fixture(fixture_id)
     if fixture is None and settings.use_demo_data:
@@ -1072,6 +1168,7 @@ async def fixture_detail(fixture_id: str) -> dict:
         attach_team_stats(repository, fixture, context, prediction_timestamp=fixture.get("kickoff"))
     except Exception:
         pass
+    match_preview = _match_preview_context(fixture)
     for key, item in list(predictions.items()):
         if item and not item.get("decision"):
             # 决策在预测生成时已持久化并随版本冻结；只有缺失决策快照的
@@ -1087,6 +1184,7 @@ async def fixture_detail(fixture_id: str) -> dict:
     return public_payload({
         "fixture": fixture,
         "context": context,
+        "match_preview": match_preview,
         "prediction": prediction,
         "predictions": predictions,
         "bet": model_bets.get("deepseek") or next((item for item in model_bets.values() if item), None),

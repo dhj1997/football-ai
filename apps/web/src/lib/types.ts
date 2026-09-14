@@ -248,6 +248,58 @@ export interface TeamStatProfile {
   goals_against: number;
 }
 
+export interface MatchPreviewPosition {
+  rank: number | null;
+  played: number | null;
+  points: number | null;
+  goal_difference: number | null;
+  form_note: string | null;
+}
+
+export interface MatchPreviewUpcoming {
+  fixture_id: string;
+  kickoff: string;
+  opponent: string | null;
+  opponent_logo?: string | null;
+  is_home: boolean;
+  rest_days: number | null;
+}
+
+export interface MatchPreview {
+  league_key: string;
+  positions: { home: MatchPreviewPosition | null; away: MatchPreviewPosition | null };
+  rank_gap: number | null;
+  upcoming: { home: MatchPreviewUpcoming[]; away: MatchPreviewUpcoming[] };
+}
+
+export interface MarketTimelineEvent {
+  snapshot_id: string;
+  selection: string | null;
+  line: string | number | null;
+  decimal_odds: number | null;
+  bookmaker: string | null;
+  source: string | null;
+  captured_at: string | null;
+  usage?: string;
+}
+
+export interface MarketTimeline {
+  market: string;
+  selection: string | null;
+  opening: MarketTimelineEvent | null;
+  current: MarketTimelineEvent | null;
+  closing: MarketTimelineEvent | null;
+  movement: { absolute: number; relative: number | null; direction: string } | null;
+  post_cutoff_count: number;
+  cutoff: string | null;
+}
+
+export interface MarketReport {
+  fixture_id: string;
+  quote_count: number;
+  markets: Record<string, { timelines: Record<string, MarketTimeline>; consensus: { consensus_probabilities: Record<string, number> } | null }>;
+}
+
 export interface EvidenceContext {
   team_stats?: {
     home: TeamStatProfile;
@@ -627,6 +679,7 @@ export interface RuntimeConfigResponse {
 export interface FixtureDetail {
   fixture: Fixture;
   context: EvidenceContext;
+  match_preview?: MatchPreview | null;
   prediction: Prediction | null;
   predictions: Partial<Record<ModelKey, Prediction | null>>;
   bet: SimulatedBet | null;

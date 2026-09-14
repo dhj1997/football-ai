@@ -15,6 +15,7 @@ import Link from "next/link";
 
 import { RecentFormCompare } from "@/components/recent-form-compare";
 import { MarketsDetailPanel } from "@/components/markets-detail-panel";
+import { MatchPreviewPanel, OddsMovementPanel } from "@/components/match-preview-panel";
 import type { TeamStatProfile } from "@/lib/types";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -492,6 +493,22 @@ function DecisionReport({
             </div>
           </div>
         </Card>
+
+        {detail.match_preview ? (
+          <Card className="p-5" aria-labelledby="preview-context-title">
+            <SectionTitle
+              className="mb-4"
+              eyebrow="01 / PREVIEW"
+              title="赛前态势"
+              titleId="preview-context-title"
+              meta="排名 · 赛程密度 · 赔率走势"
+            />
+            <MatchPreviewPanel preview={detail.match_preview} fixture={detail.fixture} />
+            <div className="mt-4">
+              <OddsMovementPanel fixtureId={detail.fixture.id} />
+            </div>
+          </Card>
+        ) : null}
 
         <Card
           className="p-5"
