@@ -129,6 +129,9 @@ def test_team_stat_profiles_average_only_prior_matches(tmp_path) -> None:
 
 
 def test_attach_team_stats_injects_context_for_supported_league(tmp_path) -> None:
+    from app import team_stats as team_stats_module
+
+    team_stats_module._CACHE.clear()
     repository = PredictionRepository(str(tmp_path / "stats-inject.db"))
     repository.initialize()
     sync_season(repository, SAMPLE_FD_CSV_WITH_STATS, "epl", 2026)

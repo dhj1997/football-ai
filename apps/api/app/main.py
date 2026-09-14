@@ -167,6 +167,17 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="足球赛前分析 API", version="0.1.0", lifespan=lifespan)
 settings = get_settings()
 request_metrics = MetricsRegistry(window_size=500)
+# 比赛详情只读派生视图的短缓存：详情 payload 本身语义冻结，
+# 30 秒内重复打开同一比赛直接命中，避免重复全表扫描与重算。
+_fixture_detail_cache: dict[str, tuple[float, dict]] = {}
+FIXTURE_DETAIL_CACHE_TTL_SECONDS = 30.0
+
+
+def _invalidate_fixture_detail_cache(fixture_id: str | None = None) -> None:
+    if fixture_id is None:
+        _fixture_detail_cache.clear()
+    else:
+        _fixture_detail_cache.pop(fixture_id, None)
 repository = PredictionRepository(
     settings.database_url,
     settings.simulation_competition_id,
@@ -450,12 +461,13 @@ async def correlation_middleware(request, call_next):
     return response
 
 
-def _match_preview_context(fixture: dict) -> dict | None:
+def _match_preview_context(fixture: dict, all_fixtures: list[dict] | None = None) -> dict | None:
     """League-position context and each team's next three fixtures (as-of now).
 
     Positions come from the cached standings snapshot; upcoming fixtures from
     the local schedule store. Both are current-state views, so this block is
-    only attached for scheduled (pre-kickoff) matches.
+    only attached for scheduled (pre-kickoff) matches. ``all_fixtures`` lets
+    callers share one list_fixtures() scan with other context builders.
     """
 
     if fixture.get("status") != "scheduled":
@@ -492,7 +504,7 @@ def _match_preview_context(fixture: dict) -> dict | None:
         name = str(team.get("name") or "")
         rows = [
             row
-            for row in repository.list_fixtures()
+            for row in (all_fixtures if all_fixtures is not None else repository.list_fixtures())
             if row.get("status") == "scheduled"
             and (
                 str((row.get("home_team") or {}).get("name")) == name
@@ -1127,6 +1139,11 @@ async def team_detail(
 async def fixture_detail(fixture_id: str) -> dict:
     """Return a fixture, its current evidence, and its latest prediction."""
 
+    import time as _time
+
+    cached_entry = _fixture_detail_cache.get(fixture_id)
+    if cached_entry and _time.monotonic() - cached_entry[0] < FIXTURE_DETAIL_CACHE_TTL_SECONDS:
+        return cached_entry[1]
     fixture = _public_fixture_for_detail(fixture_id)
     fixture = await _ensure_fixture_team_data(fixture)
     fixture_id = fixture["id"]
@@ -1162,13 +1179,22 @@ async def fixture_detail(fixture_id: str) -> dict:
     await player_name_service.enrich(context, resolve_missing=False)
     await player_value_service.enrich(context, str(fixture.get("league_key") or ""))
     apply_player_impact(context)
+    shared_fixtures: list[dict] | None = None
+    if fixture.get("status") == "scheduled" and not fixture.get("is_demo") and str(fixture.get("league_key") or "") in {"epl", "laliga"}:
+        shared_fixtures = repository.list_fixtures()
     try:
         from .team_stats import attach_team_stats
 
-        attach_team_stats(repository, fixture, context, prediction_timestamp=fixture.get("kickoff"))
+        attach_team_stats(
+            repository,
+            fixture,
+            context,
+            prediction_timestamp=fixture.get("kickoff"),
+            fixtures_rows=shared_fixtures,
+        )
     except Exception:
         pass
-    match_preview = _match_preview_context(fixture)
+    match_preview = _match_preview_context(fixture, all_fixtures=shared_fixtures)
     for key, item in list(predictions.items()):
         if item and not item.get("decision"):
             # 决策在预测生成时已持久化并随版本冻结；只有缺失决策快照的
@@ -1181,7 +1207,7 @@ async def fixture_detail(fixture_id: str) -> dict:
         model_bets[key] = linked_bet
         if item:
             item["execution"] = bankroll_service.execution_for_prediction(item, fixture)
-    return public_payload({
+    detail_payload = public_payload({
         "fixture": fixture,
         "context": context,
         "match_preview": match_preview,
@@ -1201,6 +1227,12 @@ async def fixture_detail(fixture_id: str) -> dict:
         "evidence_error": evidence_error,
         "prediction_error": prediction_error,
     })
+    _fixture_detail_cache[fixture_id] = (_time.monotonic(), detail_payload)
+    if len(_fixture_detail_cache) > 200:
+        oldest = sorted(_fixture_detail_cache.items(), key=lambda item: item[1][0])[:50]
+        for key, _ in oldest:
+            _fixture_detail_cache.pop(key, None)
+    return detail_payload
 
 
 def _restore_dongqiudi_odds_capture_time(fixture: dict, context: dict) -> None:
@@ -2108,6 +2140,7 @@ async def run_prediction(fixture_id: str) -> dict:
     bets = bankroll_service.place_for_predictions(results, fixture, context)
     for item in results:
         item["execution"] = bankroll_service.execution_for_prediction(item, fixture)
+    _invalidate_fixture_detail_cache(fixture_id)
     return public_payload({
         "predictions": results,
         "bets": bets,
@@ -2151,6 +2184,7 @@ async def sync_fixture_evidence(fixture_id: str) -> dict:
     updated = repository.save_fixture_evidence(fixture_id, context)
     if updated is None:
         raise HTTPException(status_code=404, detail="未找到比赛")
+    _invalidate_fixture_detail_cache(fixture_id)
     return public_payload({"status": "synced", "fixture": updated, "context": context})
 
 
@@ -2170,6 +2204,7 @@ async def sync_fixture_dongqiudi(fixture_id: str) -> dict:
     except Exception as error:
         raise HTTPException(status_code=502, detail=f"懂球帝同步失败：{error}") from error
     updated = repository.fixture(fixture_id)
+    _invalidate_fixture_detail_cache(fixture_id)
     return public_payload({"status": "synced", **result, "fixture": updated})
 
 

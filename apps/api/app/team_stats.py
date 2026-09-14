@@ -23,13 +23,16 @@ def team_stat_profiles(
     before_iso: str,
     leagues: tuple[str, ...] = SUPPORTED_LEAGUES,
     min_matches: int = 8,
+    fixtures_rows: list | None = None,
 ) -> dict[str, dict[str, float]]:
     """Profiles for every team with enough history before ``before_iso``."""
 
+    # 缓存键按日取整：同一天内多次请求命中同一份画像（画像只来自
+    # 历史完赛，当日新完赛对均值的边际影响可忽略）。
     cache_key = f"{before_iso[:10]}|{','.join(leagues)}|{min_matches}"
     cached = _CACHE.get(cache_key)
     if cached is None:
-        cached = _scan(repository, before_iso, leagues, min_matches)
+        cached = _scan(repository, before_iso, leagues, min_matches, fixtures_rows)
         _CACHE.clear()
         _CACHE[cache_key] = cached
     return cached
@@ -42,6 +45,7 @@ def attach_team_stats(
     *,
     prediction_timestamp: Any = None,
     min_matches: int = 8,
+    fixtures_rows: list | None = None,
 ) -> None:
     """Inject the two teams' stat profiles into the prediction context.
 
@@ -55,7 +59,12 @@ def attach_team_stats(
         if str(fixture.get("league_key") or "") not in SUPPORTED_LEAGUES:
             return
         before = parse_timestamp(prediction_timestamp) or datetime.now(UTC)
-        profiles = team_stat_profiles(repository, before_iso=before.isoformat(), min_matches=min_matches)
+        profiles = team_stat_profiles(
+            repository,
+            before_iso=before.isoformat(),
+            min_matches=min_matches,
+            fixtures_rows=fixtures_rows,
+        )
         home_name = str(((fixture.get("home_team") or {}).get("name")) or "")
         away_name = str(((fixture.get("away_team") or {}).get("name")) or "")
         home = profiles.get(home_name)
@@ -75,10 +84,14 @@ def _scan(
     before_iso: str,
     leagues: tuple[str, ...],
     min_matches: int,
+    fixtures_rows: list | None = None,
 ) -> dict[str, dict[str, float]]:
     before = parse_timestamp(before_iso) or datetime.now(UTC)
-    reader = getattr(repository, "list_fixtures", None)
-    rows = reader() if callable(reader) else []
+    if fixtures_rows is not None:
+        rows = fixtures_rows
+    else:
+        reader = getattr(repository, "list_fixtures", None)
+        rows = reader() if callable(reader) else []
     accumulated: dict[str, dict[str, list[float]]] = {}
     for row in rows or []:
         if row.get("status") != "finished" or row.get("source") != "football-data":
