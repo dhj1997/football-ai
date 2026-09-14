@@ -195,10 +195,17 @@ api_football_evidence_provider = ApiFootballEvidenceProvider(
 espn_evidence_provider = EspnEvidenceProvider(
     settings.espn_base_url,
 )
+dongqiudi_provider = DongqiudiProvider(
+    settings.dongqiudi_base_url if settings.dongqiudi_enabled else "",
+    settings.dongqiudi_sport_data_base_url,
+    settings.dongqiudi_api_base_url,
+    settings.dongqiudi_timeout_seconds,
+)
 evidence_provider = EvidenceProviderChain(
     api_football_evidence_provider,
     espn_evidence_provider,
     api_football_evidence_provider,
+    dongqiudi_provider,
 )
 schedule_provider = TheSportsDbProvider(settings.thesportsdb_api_key, settings.thesportsdb_base_url)
 league_provider = EspnLeagueProvider(settings.espn_base_url)
@@ -308,12 +315,6 @@ league_sync = LeagueSyncService(
 )
 team_provider = EspnTeamProvider(settings.espn_base_url)
 team_sync = TeamSyncService(team_provider, repository, settings.team_cache_ttl_minutes)
-dongqiudi_provider = DongqiudiProvider(
-    settings.dongqiudi_base_url if settings.dongqiudi_enabled else "",
-    settings.dongqiudi_sport_data_base_url,
-    settings.dongqiudi_api_base_url,
-    settings.dongqiudi_timeout_seconds,
-)
 dongqiudi_sync = DongqiudiSyncService(
     dongqiudi_provider,
     repository,

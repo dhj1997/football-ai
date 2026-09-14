@@ -71,6 +71,54 @@ async def test_dongqiudi_match_result_maps_detail_sample() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dongqiudi_fetch_lineup_maps_real_lineups_and_ignores_forecasts() -> None:
+    class Provider(DongqiudiProvider):
+        async def _get_json(self, url, *, params):
+            assert url.endswith("/soccer/biz/dqd/v1/match/lineup/54565712")
+            assert params == {"app": "dqd", "lang": "zh-cn"}
+            return {
+                "persons": {
+                    "team_A": {
+                        "formation": "4-3-3",
+                        "lineups": [{"person_id": 1, "person": "John Doe", "shirtnumber": "9", "position": "前锋"}],
+                        "sub": [{"person_id": 2, "person": "替补甲", "shirtnumber": "12", "position": "门将"}],
+                        "forecasts": [{"person_id": 3, "person": "预测甲"}],
+                    },
+                    "team_B": {
+                        "formation": "4-2-3-1",
+                        "lineups": [{"person_id": 4, "person": "首发乙", "shirtnumber": "10", "position": "中场"}],
+                        "sub": None,
+                        "forecasts": [{"person_id": 5, "person": "预测乙"}],
+                    },
+                }
+            }
+
+    result = await Provider().fetch_lineup({"external_ids": {"dongqiudi": "54565712"}})
+
+    lineup = result["lineup"]
+    assert result["source"] == "dongqiudi-lineup"
+    assert lineup["confirmed"] is True
+    assert lineup["home_formation"] == "4-3-3"
+    assert [row["starter"] for row in lineup["home_players"]] == [True, False]
+    assert lineup["home_players"][0]["provider_player_id"] == "1"
+    assert lineup["home_players"][0]["name"] != "John Doe"
+    assert all(row["name"] != "预测甲" for row in lineup["home_players"])
+
+
+@pytest.mark.asyncio
+async def test_dongqiudi_fetch_lineup_keeps_unpublished_lineup_unconfirmed() -> None:
+    class Provider(DongqiudiProvider):
+        async def _get_json(self, url, *, params):
+            return {"persons": {"team_A": {"lineups": None}, "team_B": {"lineups": []}}}
+
+    result = await Provider().fetch_lineup({"id": "dongqiudi-54565712"})
+
+    assert result["lineup"]["confirmed"] is False
+    assert result["lineup"]["home_players"] == []
+    assert result["lineup"]["updated_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_dongqiudi_score_sync_updates_existing_fixture_only() -> None:
     # The score sync only touches fixtures inside the rolling window
     # (Beijing yesterday -> +36h), so the fixture must be dated in-window.

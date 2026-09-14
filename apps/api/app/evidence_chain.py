@@ -7,12 +7,13 @@ from .player_identity import link_evidence_players
 
 
 class EvidenceProviderChain:
-    """Try API-Football, then ESPN, then TheSportsDB partial evidence."""
+    """Try API-Football, then ESPN, with Dongqiudi as lineup fallback."""
 
-    def __init__(self, primary: Any, secondary: Any, public: Any) -> None:
+    def __init__(self, primary: Any, secondary: Any, public: Any, lineup_fallback: Any | None = None) -> None:
         self.primary = primary
         self.secondary = secondary
         self.public = public
+        self.lineup_fallback = lineup_fallback
 
     @property
     def configured(self) -> bool:
@@ -30,7 +31,9 @@ class EvidenceProviderChain:
                 ("api-football", self.primary),
                 ("espn", self.secondary),
                 ("thesportsdb-partial", self.public),
+                ("dongqiudi-lineup", self.lineup_fallback),
             )
+            if provider is not None
             if bool(getattr(provider, "configured", False)) or bool(getattr(provider, "public_configured", False))
         ]
 
@@ -67,7 +70,14 @@ class EvidenceProviderChain:
         """Fetch only lineup data, falling back across configured providers."""
 
         failures: list[dict[str, str]] = []
-        for name, provider in (("api-football", self.primary), ("espn", self.secondary)):
+        unconfirmed: dict[str, Any] | None = None
+        for name, provider in (
+            ("api-football", self.primary),
+            ("espn", self.secondary),
+            ("dongqiudi", self.lineup_fallback),
+        ):
+            if provider is None:
+                continue
             if not bool(getattr(provider, "configured", False)):
                 continue
             method = getattr(provider, "fetch_lineup", None)
@@ -75,9 +85,14 @@ class EvidenceProviderChain:
                 failures.append({"provider": name, "error": "lineup-only endpoint unavailable"})
                 continue
             try:
-                return _with_failures(await method(fixture), failures)
+                result = await method(fixture)
+                if bool((result.get("lineup") or {}).get("confirmed")):
+                    return _with_failures(result, failures)
+                unconfirmed = result
             except Exception as error:
                 failures.append({"provider": name, "error": _bounded_error(error)})
+        if unconfirmed is not None:
+            return _with_failures(unconfirmed, failures)
         raise RuntimeError("lineup providers failed: " + "; ".join(item["provider"] for item in failures))
 
 

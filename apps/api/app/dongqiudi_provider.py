@@ -127,6 +127,34 @@ class DongqiudiProvider:
             "captured_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         }
 
+    async def fetch_lineup(self, fixture: dict[str, Any]) -> dict[str, Any]:
+        """Fetch confirmed lineups from Dongqiudi's public match endpoint."""
+
+        if not self.configured:
+            raise RuntimeError("懂球帝证据源未配置")
+        external_id = (fixture.get("external_ids") or {}).get("dongqiudi")
+        if not external_id:
+            fixture_id = str(fixture.get("id") or "")
+            if fixture_id.startswith("dongqiudi-"):
+                external_id = fixture_id.removeprefix("dongqiudi-")
+        if not external_id:
+            raise RuntimeError("当前比赛没有懂球帝比赛 ID，先同步赛程")
+        match_id = str(external_id)
+        payload = await self._get_json(
+            f"{self.sport_data_base_url}/soccer/biz/dqd/v1/match/lineup/{match_id}",
+            params={"app": "dqd", "lang": "zh-cn"},
+        )
+        persons = payload.get("persons") or {}
+        home = persons.get("team_A") or {}
+        away = persons.get("team_B") or {}
+        updated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        return {
+            "lineup": _lineup(home, away, updated_at),
+            "source": "dongqiudi-lineup",
+            "synced_at": updated_at,
+            "dongqiudi_match_id": match_id,
+        }
+
     async def odds(self, match_id: str | int) -> dict[str, Any]:
         """Return only the two primary market sources' European/Asian/over-under odds."""
 
@@ -371,6 +399,45 @@ def _over_under_line(state: dict[str, Any]) -> float | None:
             return round(sum(parts) / len(parts), 4)
         return None
     return _number(raw)
+
+
+def _lineup(home: dict[str, Any], away: dict[str, Any], updated_at: str) -> dict[str, Any]:
+    """Map Dongqiudi's real starters and substitutes without using forecasts."""
+
+    home_starters = _lineup_players(home.get("lineups"), starter=True)
+    away_starters = _lineup_players(away.get("lineups"), starter=True)
+    home_players = [*home_starters, *_lineup_players(home.get("sub"), starter=False)]
+    away_players = [*away_starters, *_lineup_players(away.get("sub"), starter=False)]
+    confirmed = bool(home_starters and away_starters)
+    return {
+        "confirmed": confirmed,
+        "home_strength": 1.0 if confirmed else 0.88,
+        "away_strength": 1.0 if confirmed else 0.86,
+        "home_formation": home.get("formation") or None,
+        "away_formation": away.get("formation") or None,
+        "home_players": home_players,
+        "away_players": away_players,
+        "updated_at": updated_at if confirmed else None,
+    }
+
+
+def _lineup_players(rows: Any, *, starter: bool) -> list[dict[str, Any]]:
+    mapped: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        original_name = str(row.get("person") or "未知球员")
+        mapped.append(
+            {
+                "provider_player_id": str(row["person_id"]) if row.get("person_id") is not None else None,
+                "name": to_chinese_player_name(original_name),
+                "original_name": original_name,
+                "number": _integer(row.get("shirtnumber")),
+                "position": row.get("position") or "",
+                "starter": starter,
+            }
+        )
+    return mapped
 
 
 def _number(value: Any) -> float | None:

@@ -103,6 +103,59 @@ async def test_provider_chain_lineup_falls_back_without_full_evidence_fetch() ->
     assert result["provider_failures"] == [{"provider": "api-football", "error": "quota"}]
 
 
+@pytest.mark.asyncio
+async def test_provider_chain_lineup_falls_back_to_dongqiudi_after_api_and_espn() -> None:
+    class Primary:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            raise RuntimeError("API-Football unavailable")
+
+    class ESPN:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            raise RuntimeError("ESPN event not found")
+
+    class Dongqiudi:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            return {"lineup": {"confirmed": True}, "source": "dongqiudi-lineup", "synced_at": "2026-09-14T00:00:00+00:00"}
+
+    result = await EvidenceProviderChain(Primary(), ESPN(), object(), Dongqiudi()).fetch_lineup({})
+
+    assert result["source"] == "dongqiudi-lineup"
+    assert result["fallback_from"] == "espn"
+    assert [item["provider"] for item in result["provider_failures"]] == ["api-football", "espn"]
+
+
+@pytest.mark.asyncio
+async def test_provider_chain_lineup_continues_after_unconfirmed_provider_result() -> None:
+    class Primary:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            return {"lineup": {"confirmed": False}, "source": "api-football-lineup"}
+
+    class ESPN:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            return {"lineup": {"confirmed": False}, "source": "espn-lineup"}
+
+    class Dongqiudi:
+        configured = True
+
+        async def fetch_lineup(self, _fixture):
+            return {"lineup": {"confirmed": True}, "source": "dongqiudi-lineup"}
+
+    result = await EvidenceProviderChain(Primary(), ESPN(), object(), Dongqiudi()).fetch_lineup({})
+
+    assert result["source"] == "dongqiudi-lineup"
+    assert "provider_failures" not in result
+
+
 def test_incomplete_form_is_enriched_without_discarding_existing_fields() -> None:
     previous = {
         "source": "api-football-single-fixture",
