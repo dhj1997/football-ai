@@ -4,7 +4,7 @@ import pytest
 
 from app.dongqiudi_provider import DongqiudiProvider
 from app.data import CHINA_TZ
-from app.dongqiudi_sync import DongqiudiSyncService, _dongqiudi_recent_matches
+from app.dongqiudi_sync import DongqiudiSyncService, _dongqiudi_recent_matches, odds_fingerprint
 
 
 def test_dongqiudi_does_not_map_malaysia_fa_cup_to_china_fa_cup() -> None:
@@ -414,6 +414,28 @@ def test_dongqiudi_sync_matches_provider_aliases() -> None:
     assert DongqiudiSyncService( object(), Repository())._find_existing(incoming) == existing
 
 
+def test_dongqiudi_sync_matches_zhejiang_suffix_alias() -> None:
+    incoming = {
+        "league_key": "csl",
+        "kickoff": "2026-09-18T11:35:00+00:00",
+        "home_team": {"name": "浙江"},
+        "away_team": {"name": "武汉三镇"},
+    }
+    existing = {
+        "id": "sportsdb-2434546",
+        "league_key": "csl",
+        "kickoff": "2026-09-18T11:35:00+00:00",
+        "home_team": {"name": "浙江队"},
+        "away_team": {"name": "武汉三镇"},
+    }
+
+    class Repository:
+        def list_fixtures(self, league_key=None):
+            return [existing]
+
+    assert DongqiudiSyncService(object(), Repository())._find_existing(incoming) == existing
+
+
 @pytest.mark.asyncio
 async def test_dongqiudi_prematch_due_uses_24h_phase() -> None:
     kickoff = datetime.now(UTC) + timedelta(hours=12)
@@ -421,7 +443,16 @@ async def test_dongqiudi_prematch_due_uses_24h_phase() -> None:
     class Provider:
         configured = True
 
+        def __init__(self):
+            self.odds_calls = 0
+            self.enrich_calls = 0
+
+        async def odds(self, match_id):
+            self.odds_calls += 1
+            return {"match_id": match_id}
+
         async def enrich_match(self, match_id):
+            self.enrich_calls += 1
             return {"odds": {"match_id": match_id}, "dongqiudi_analysis": {}}
 
     class Repository:
@@ -456,6 +487,91 @@ async def test_dongqiudi_prematch_due_uses_24h_phase() -> None:
 
     assert result["candidate_count"] == 1
     assert repository.fixture_data["dongqiudi_sync"]["prematch_24h_synced_at"]
+
+
+def test_odds_fingerprint_ignores_capture_time_but_tracks_price_changes() -> None:
+    first = {
+        "bookmaker": "市场参考A",
+        "home": 1.8,
+        "draw": 3.6,
+        "away": 4.2,
+        "asian_handicap": -0.5,
+        "asian_handicap_home_odd": 0.9,
+        "asian_handicap_away_odd": 0.9,
+        "captured_at": "2026-09-15T00:00:00+00:00",
+        "updated_at": "2026-09-15T00:00:00+00:00",
+    }
+    same_prices = {**first, "captured_at": "2026-09-15T00:15:00+00:00", "updated_at": "2026-09-15T00:15:00+00:00"}
+    changed_price = {**same_prices, "home": 1.75}
+
+    assert odds_fingerprint(first) == odds_fingerprint(same_prices)
+    assert odds_fingerprint(first) != odds_fingerprint(changed_price)
+
+
+@pytest.mark.asyncio
+async def test_dongqiudi_prematch_due_repeats_inside_expanded_window() -> None:
+    kickoff = datetime.now(UTC) + timedelta(hours=5)
+
+    class Provider:
+        configured = True
+
+        def __init__(self):
+            self.odds_calls = 0
+            self.enrich_calls = 0
+
+        async def odds(self, match_id):
+            self.odds_calls += 1
+            return {"match_id": match_id}
+
+        async def enrich_match(self, match_id):
+            self.enrich_calls += 1
+            return {"odds": {"match_id": match_id}, "dongqiudi_analysis": {}}
+
+    class Repository:
+        def __init__(self):
+            self.fixture_data = {
+                "id": "sportsdb-prematch-window",
+                "external_ids": {"dongqiudi": "54577352"},
+                "kickoff": kickoff.isoformat(),
+                "dongqiudi_sync": {},
+                "evidence": {},
+            }
+
+        def list_fixtures(self):
+            return [self.fixture_data]
+
+        def fixture(self, fixture_id):
+            return self.fixture_data if fixture_id == self.fixture_data["id"] else None
+
+        def upsert_fixture(self, fixture, synced_at=None):
+            self.fixture_data = fixture
+
+        def save_odds_snapshot(self, snapshot):
+            pass
+
+        def team_snapshot(self, league_key, team_id):
+            return None
+
+    provider = Provider()
+    repository = Repository()
+    service = DongqiudiSyncService(
+        provider,
+        repository,
+        prematch_window_minutes=360,
+        prematch_refresh_minutes=15,
+    )
+
+    first = await service.sync_prematch_due()
+    assert first["candidate_count"] == 1
+    assert repository.fixture_data["dongqiudi_sync"]["prematch_synced_at"]
+
+    repository.fixture_data["dongqiudi_sync"]["prematch_synced_at"] = (
+        datetime.now(UTC) - timedelta(minutes=16)
+    ).isoformat()
+    second = await service.sync_prematch_due()
+    assert second["candidate_count"] == 1
+    assert provider.odds_calls == 2
+    assert provider.enrich_calls == 0
 
 
 @pytest.mark.asyncio
@@ -500,13 +616,15 @@ async def test_fixtures_fetch_future_days_from_schedule_list() -> None:
     assert all("2099-08-26" <= row["fixture_date"] <= "2099-08-28" for row in rows)
 
 
-def test_dongqiudi_henan_native_name_normalizes_to_storage_name() -> None:
-    """Dongqiudi lists the club as 河南 while fixtures store 河南队."""
+def test_dongqiudi_native_csl_names_normalize_to_storage_names() -> None:
+    """Dongqiudi omits the 队 suffix used by canonical CSL fixtures."""
 
     from app.team_names import to_chinese_team_name
 
     assert to_chinese_team_name("河南") == "河南队"
     assert to_chinese_team_name("Henan") == "河南队"
+    assert to_chinese_team_name("浙江") == "浙江队"
+    assert to_chinese_team_name("Zhejiang FC") == "浙江队"
 
 
 def test_dongqiudi_over_under_state_normalizes_water_and_line() -> None:

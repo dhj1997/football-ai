@@ -662,6 +662,14 @@ class DualBankrollService:
             candidate = service.candidate_for_prediction(prediction, fixture, context)
             if candidate is not None:
                 candidate_entries.append((candidate, service, prediction))
+            else:
+                # A later odds/lineup refresh can invalidate a previously
+                # placed open bet. Release that model's fixture exposure so
+                # the next valid candidate does not inherit a stale position.
+                repository = getattr(service, "repository", None)
+                discard = getattr(repository, "discard_open_fixture_bets", None)
+                if callable(discard):
+                    discard(fixture["id"], str(model_key), self.competition_id)
         # The existing baseline is a candidate input only; it never creates a prediction row.
         for prediction in predictions:
             # A Poisson baseline may explain a degraded forecast, but it must

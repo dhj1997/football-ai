@@ -8,6 +8,12 @@ def test_dongqiudi_schedule_sync_runs_hourly_by_default() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.automation_dongqiudi_schedule_interval_minutes == 60
+    assert settings.dongqiudi_lookahead_hours == 168
+    assert settings.automation_squad_backfill_interval_minutes == 60
+    assert settings.squad_backfill_limit == 12
+    assert settings.dongqiudi_prematch_window_minutes == 360
+    assert settings.dongqiudi_prematch_refresh_minutes == 15
+    assert settings.automation_odds_reprediction_interval_minutes == 15
 
 
 def test_chatgpt_has_a_fallback_model_for_timeouts() -> None:

@@ -47,9 +47,14 @@ class Settings(BaseSettings):
     dongqiudi_sport_data_base_url: str = "https://beta-sport-data.dongdianqiu.com"
     dongqiudi_api_base_url: str = "https://beta-api.dongdianqiu.com"
     dongqiudi_timeout_seconds: float = 20
-    dongqiudi_lookahead_hours: int = 36
-    dongqiudi_prematch_window_minutes: int = 50
+    # Match the public seven-day fixture horizon so team IDs and rosters are
+    # available before a match enters the final prediction windows.
+    dongqiudi_lookahead_hours: int = 168
+    # Keep odds fresh for the full six-hour execution horizon. The final
+    # decision still remains subject to the portfolio freshness gate.
+    dongqiudi_prematch_window_minutes: int = 360
     dongqiudi_prematch_lead_hours: int = 24
+    dongqiudi_prematch_refresh_minutes: int = 15
     dongqiudi_concurrency: int = 2
     # Dongqiudi's public match_list only serves the current match cycle, so
     # schedule mapping must run often enough to catch newly published cycles.
@@ -69,6 +74,7 @@ class Settings(BaseSettings):
     prediction_refresh_offsets_hours: str = "24,12,6,1,0.5"
     automation_standings_interval_minutes: int = 360
     automation_analysis_interval_minutes: int = 5
+    automation_odds_reprediction_interval_minutes: int = 15
     automation_settlement_interval_minutes: int = 15
     automation_historical_accumulation_interval_minutes: int = 1440
     # 模型质量三件套（P17 治理）：多赛季历史回填 + 周度集成权重学习。
@@ -80,8 +86,8 @@ class Settings(BaseSettings):
     automation_fd_backfill_interval_minutes: int = 360
     football_data_seasons_backfill: int = 5
     automation_clubeelo_interval_minutes: int = 1440
-    automation_squad_backfill_interval_minutes: int = 180
-    squad_backfill_limit: int = 6
+    automation_squad_backfill_interval_minutes: int = 60
+    squad_backfill_limit: int = 12
     automation_failure_backoff_minutes: int = 15
     prediction_lead_hours: int = 24
     evidence_refresh_minutes: int = 180

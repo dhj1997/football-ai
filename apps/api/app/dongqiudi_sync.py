@@ -11,7 +11,7 @@ from .data import CHINA_TZ, unavailable_context
 from .data_quality_engine import record_fixture_conflicts
 
 # 临近开球窗口内 prematch 富化（赔率/让球价/分析）的重刷节流。
-PREMATCH_REFRESH_MINUTES = 10
+PREMATCH_REFRESH_MINUTES = 15
 from .dongqiudi_provider import DongqiudiProvider
 from .team_names import to_chinese_player_name, to_chinese_team_name
 
@@ -27,12 +27,14 @@ class DongqiudiSyncService:
         prematch_window_minutes: int = 50,
         concurrency: int = 2,
         prematch_lead_hours: int = 24,
+        prematch_refresh_minutes: int = PREMATCH_REFRESH_MINUTES,
     ) -> None:
         self.provider = provider
         self.repository = repository
         self.lookahead_hours = max(1, int(lookahead_hours))
         self.prematch_window = timedelta(minutes=max(1, int(prematch_window_minutes)))
         self.prematch_lead = timedelta(hours=max(1, int(prematch_lead_hours)))
+        self.prematch_refresh = timedelta(minutes=max(1, int(prematch_refresh_minutes)))
         self._semaphore = asyncio.Semaphore(max(1, int(concurrency)))
         self._lock = asyncio.Lock()
         self._team_locks: dict[str, asyncio.Lock] = {}
@@ -172,7 +174,7 @@ class DongqiudiSyncService:
                 # 临近开球赔率与让球价持续变化：窗口内按 PREMATCH_REFRESH_MINUTES
                 # 节流重刷，而不是进入 50 分钟窗口时只跑一次。
                 synced_at = _as_utc(state.get("prematch_synced_at"))
-                if synced_at is None or (now - synced_at) >= timedelta(minutes=PREMATCH_REFRESH_MINUTES):
+                if synced_at is None or (now - synced_at) >= self.prematch_refresh:
                     due.append((fixture, "prematch"))
             elif delta > self.prematch_window and not state.get("prematch_24h_synced_at"):
                 due.append((fixture, "prematch_24h"))
@@ -199,10 +201,21 @@ class DongqiudiSyncService:
             return {"status": "skipped", "fixture_id": fixture_id}
         async with self._semaphore:
             try:
-                enriched = await self.provider.enrich_match(match_id)
+                odds_fetcher = getattr(self.provider, "odds", None)
+                if phase == "prematch" and callable(odds_fetcher):
+                    # The high-frequency window only needs prices. Keep the
+                    # heavier analysis and squad requests on the initial and
+                    # 24-hour enrichment paths to avoid provider throttling.
+                    enriched = {
+                        "odds": await odds_fetcher(match_id),
+                        "dongqiudi_analysis": {},
+                    }
+                else:
+                    enriched = await self.provider.enrich_match(match_id)
                 fixture = self._apply_match_data(fixture, enriched, phase)
                 self.repository.upsert_fixture(fixture)
-                await self._sync_teams(fixture, match_id)
+                if phase != "prematch":
+                    await self._sync_teams(fixture, match_id)
                 return {"status": "synced", "fixture_id": fixture_id, "match_id": match_id, "phase": phase}
             except Exception as error:
                 state = self._state(fixture)
@@ -230,6 +243,7 @@ class DongqiudiSyncService:
                 preferred = {**preferred, **over_under}
         if preferred:
             context["odds"] = preferred
+            context["odds_fingerprint"] = odds_fingerprint(preferred)
         _apply_dongqiudi_analysis(context, analysis, now)
         context["dongqiudi_analysis"] = analysis
         context["source"] = _join_sources(context.get("source"), "dongqiudi")
@@ -384,6 +398,26 @@ def _preferred_over_under(bookmakers: dict[str, Any], *, captured_at: str | None
                 "source": "dongqiudi",
             }
     return None
+
+
+def odds_fingerprint(odds: dict[str, Any]) -> str:
+    """Return a stable identity for the priced fields, excluding capture time."""
+
+    fields = (
+        "bookmaker",
+        "home",
+        "draw",
+        "away",
+        "asian_handicap",
+        "asian_handicap_home_odd",
+        "asian_handicap_away_odd",
+        "over_under",
+        "over_odd",
+        "under_odd",
+    )
+    payload = {field: odds.get(field) for field in fields if odds.get(field) is not None}
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:32]
 
 
 def _number(value: Any) -> float | None:

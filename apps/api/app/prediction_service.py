@@ -139,6 +139,7 @@ class PredictionService:
         baseline["evidence_hash"] = snapshot["content_hash"]
         baseline["evidence_version"] = snapshot.get("evidence_version") or EVIDENCE_CONTRACT_VERSION
         baseline["odds_snapshot_id"] = odds_snapshot["id"] if odds_snapshot else None
+        baseline["odds_fingerprint"] = context.get("odds_fingerprint")
         baseline["prompt_version"] = DEFAULT_PROMPT_CONTRACT.version
         baseline["data_completeness"] = quality["score"]
         baseline["evidence_fields"] = quality["fields"]

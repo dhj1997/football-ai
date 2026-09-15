@@ -322,6 +322,7 @@ dongqiudi_sync = DongqiudiSyncService(
     settings.dongqiudi_prematch_window_minutes,
     settings.dongqiudi_concurrency,
     prematch_lead_hours=settings.dongqiudi_prematch_lead_hours,
+    prematch_refresh_minutes=settings.dongqiudi_prematch_refresh_minutes,
 )
 automation_runner = AutomationRunner(
     settings,

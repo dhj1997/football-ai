@@ -108,6 +108,9 @@ Copy-Item .env.example .env
 - `PREDICTION_REFRESH_OFFSETS_HOURS`：自动预测窗口，默认 `24,12,6,1,0.5` 小时；每个窗口成功后只执行一次。
 - `AUTOMATION_FIXED_STAKE`：自动模拟下注固定金额，默认每场 `100`；余额不足或缺少有效赔率时不透支、不下注。
 - `AUTOMATION_DONGQIUDI_SCORE_INTERVAL_MINUTES`：懂球帝实时比分和比赛状态刷新间隔，默认 `5` 分钟。
+- `DONGQIUDI_PREMATCH_WINDOW_MINUTES`：懂球帝赔率高频刷新窗口，默认 `360` 分钟，即开赛前 6 小时进入持续刷新。
+- `DONGQIUDI_PREMATCH_REFRESH_MINUTES`：高频窗口内的赔率抓取节流，默认 `15` 分钟。
+- `AUTOMATION_ODDS_REPREDICTION_INTERVAL_MINUTES`：赔率实质变化后触发预测重算的最短间隔，默认 `15` 分钟；同一价格的重复抓取不会重复调用模型。
 - `LINEUP_REFRESH_OFFSETS_MINUTES`：首发刷新窗口，默认 `60,30`，表示开赛前 60 分钟和 30 分钟。
 - `AUTOMATION_FAILURE_BACKOFF_MINUTES`：失败或部分成功后的退避时间。
 - `AUTOMATION_EVIDENCE_REFRESH_LIMIT`：每日证据任务单轮最多刷新场数，默认 `32`，覆盖四个联赛未来七天的常见规模；供应商限流时会逐场记录失败并在后续周期重试。

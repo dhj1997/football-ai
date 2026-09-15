@@ -225,6 +225,40 @@ def test_failed_ai_does_not_place_poisson_fallback_bet() -> None:
     assert dual.place_for_predictions([failed_prediction], fixture(), {}) == []
 
 
+def test_invalidated_candidate_releases_previous_open_fixture_bet(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "stale-bet.db"), "dual", ("chatgpt",))
+    repository.initialize()
+    repository.place_bet(
+        {
+            "id": "bet-old",
+            "prediction_id": "prediction-old",
+            "fixture_id": "dual-fixture",
+            "fixture_date": "2099-08-27",
+            "placed_at": datetime.now(UTC).isoformat(),
+            "model_key": "chatgpt",
+            "competition_id": "dual",
+            "odds": 2.1,
+            "stake": 100.0,
+        }
+    )
+
+    class Service:
+        def __init__(self, repository):
+            self.repository = repository
+
+        def candidate_for_prediction(self, *_args):
+            return None
+
+        def candidate_for_poisson(self, *_args):
+            return None
+
+    dual = DualBankrollService({"chatgpt": Service(repository)}, "dual")
+    current = prediction("chatgpt", "prediction-new")
+
+    assert dual.place_for_predictions([current], fixture(), {}) == []
+    assert repository.bets(model_key="chatgpt", competition_id="dual") == []
+
+
 def test_poisson_fallback_cannot_bet_against_ai_predicted_outcome() -> None:
     """The deterministic baseline is a calculator, not an opinion: it may not
     bet against the direction the AI research concluded (e.g. laying a huge

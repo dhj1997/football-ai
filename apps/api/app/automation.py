@@ -98,7 +98,7 @@ class AutomationRunner:
             )
         if dongqiudi_team_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
             self._jobs["squad_backfill"] = (
-                max(30, int(getattr(settings, "automation_squad_backfill_interval_minutes", 180))),
+                max(30, int(getattr(settings, "automation_squad_backfill_interval_minutes", 60))),
                 self._backfill_squads,
             )
         if dongqiudi_sync_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
@@ -372,7 +372,10 @@ class AutomationRunner:
         matches without a twin row simply have no dongqiudi team id yet.
         """
 
-        limit = max(1, int(getattr(self.settings, "squad_backfill_limit", 6)))
+        limit = max(1, int(getattr(self.settings, "squad_backfill_limit", 12)))
+        roster_ttl = timedelta(
+            minutes=max(1, int(getattr(self.settings, "team_cache_ttl_minutes", 360)))
+        )
         reader = getattr(self.repository, "list_fixtures", None)
         if not callable(reader):
             return {"status": "unavailable", "reason": "repository 不支持 fixtures", "item_count": 0}
@@ -391,21 +394,20 @@ class AutomationRunner:
             if not twin:
                 continue
             free_data = fixture.get("free_team_data") or {}
-            if free_data.get("home") and free_data.get("away"):
+            if _has_fixture_squad(free_data.get("home")) and _has_fixture_squad(free_data.get("away")):
                 continue  # 双侧阵容齐的场次直接跳过
             for side in ("home", "away"):
-                if free_data.get(side):
+                if _has_fixture_squad(free_data.get(side)):
                     continue
                 twin_id = ((twin.get(f"{side}_team") or {}).get("provider_id") or "")
                 if twin_id:
                     targets.append((fixture, str(twin_id)))
-            if len(targets) >= limit * 2:
-                break
         synced = 0
         enriched = 0
+        fetch_attempts = 0
         errors: list[str] = []
         snapshot_by_team: dict[str, dict[str, Any]] = {}
-        for fixture, team_id in targets[: limit * 2]:
+        for fixture, team_id in targets:
             league_key = str(fixture.get("league_key") or "unknown")
             cached = (
                 snapshot_by_team.get(team_id)
@@ -415,16 +417,26 @@ class AutomationRunner:
                     else None
                 )
             )
-            if cached is None:
+            if _team_snapshot_needs_roster_refresh(cached, now, roster_ttl):
+                if fetch_attempts >= limit:
+                    continue
+                fetch_attempts += 1
                 try:
                     cached = await self.dongqiudi_team_service.team(team_id)
                     cached["league_key"] = league_key
                     self.repository.save_team_snapshot(cached)
                     snapshot_by_team[team_id] = cached
-                    synced += 1
+                    if _snapshot_roster(cached):
+                        synced += 1
+                    else:
+                        errors.append(f"{team_id}: 懂球帝返回空球员名单")
+                        continue
                 except Exception as error:
                     errors.append(f"{team_id}: {_bounded_error(error)}")
                     continue
+            roster = _snapshot_roster(cached)
+            if not roster:
+                continue
             # 写回 fixture：与既有 _sync_teams 相同的 free_team_data 结构。
             updated = self.repository.fixture(fixture["id"])
             if not updated:
@@ -432,22 +444,27 @@ class AutomationRunner:
             free_data = dict(updated.get("free_team_data") or {})
             changed = False
             for candidate_side in ("home", "away"):
-                if free_data.get(candidate_side):
+                if _has_fixture_squad(free_data.get(candidate_side)):
                     continue
                 twin_match_id = (updated.get("external_ids") or {}).get("dongqiudi")
                 twin = self.repository.fixture(f"dongqiudi-{twin_match_id}") if twin_match_id else None
                 twin_team_id = str(((twin or {}).get(f"{candidate_side}_team") or {}).get("provider_id") or "")
                 if twin_team_id and twin_team_id == team_id:
-                    free_data[candidate_side] = {"profile": cached.get("team") or {}, "squad": cached.get("roster") or [], "source": "dongqiudi"}
+                    free_data[candidate_side] = {"profile": cached.get("team") or {}, "squad": roster, "source": "dongqiudi"}
                     changed = True
             if changed:
                 updated["free_team_data"] = free_data
                 updated["free_team_data_synced_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
                 self.repository.upsert_fixture(updated)
                 enriched += 1
-            if synced >= limit and enriched >= min(limit, 2):
-                break
-        return {"status": "completed", "synced": synced, "enriched": enriched, "item_count": synced, "errors": errors[:10]}
+        return {
+            "status": "completed",
+            "synced": synced,
+            "enriched": enriched,
+            "fetch_attempts": fetch_attempts,
+            "item_count": synced,
+            "errors": errors[:10],
+        }
 
     def _historical_season_targets(self) -> list[tuple[str, int, int]]:
         """List (league, season, existing) pairs below the per-season cap."""
@@ -720,7 +737,8 @@ class AutomationRunner:
                 )
                 current_predictions: dict[str, dict[str, Any] | None] = {}
                 lineup_reprediction = False
-                if prediction_window is None and not force and (context.get("lineup") or {}).get("confirmed"):
+                odds_reprediction = False
+                if prediction_window is None and not force:
                     competition_id = getattr(self.prediction_service, "competition_id", None)
                     if model_keys:
                         current_predictions = {
@@ -739,16 +757,28 @@ class AutomationRunner:
                                 DEFAULT_PROMPT_CONTRACT.version,
                             )
                         }
-                    lineup_reprediction = any(
-                        self._should_predict(item, context, now)
+                    if (context.get("lineup") or {}).get("confirmed"):
+                        lineup_reprediction = any(
+                            self._should_predict(item, context, now, reason="lineup")
+                            for item in current_predictions.values()
+                        )
+                    odds_reprediction = any(
+                        self._should_predict(item, context, now, reason="odds")
                         for item in current_predictions.values()
+                        if item is not None
                     )
-                    if lineup_reprediction:
+                    if lineup_reprediction or odds_reprediction:
                         prediction_window = 0.0
                 if prediction_window is None:
                     continue
                 counts["candidate_count"] += 1
-                marker_prefix = "prediction_lineup" if lineup_reprediction else f"prediction_{self._prediction_window_token(prediction_window)}"
+                marker_prefix = (
+                    "prediction_lineup"
+                    if lineup_reprediction
+                    else "prediction_odds"
+                    if odds_reprediction
+                    else f"prediction_{self._prediction_window_token(prediction_window)}"
+                )
                 if not current_predictions:
                     if not model_keys:
                         latest = self.repository.latest_current(
@@ -772,10 +802,11 @@ class AutomationRunner:
                             key for key in model_keys
                             if not refresh_state.get(f"{marker_prefix}_{key}_at")
                         ]
-                elif lineup_reprediction:
+                elif lineup_reprediction or odds_reprediction:
+                    event_reason = "lineup" if lineup_reprediction else "odds"
                     due_model_keys = [
                         key for key in (model_keys or ["default"])
-                        if self._should_predict(current_predictions.get(key), context, now)
+                        if self._should_predict(current_predictions.get(key), context, now, reason=event_reason)
                     ]
                 else:
                     due_model_keys = []
@@ -889,12 +920,27 @@ class AutomationRunner:
         latest: dict[str, Any] | None,
         context: dict[str, Any],
         now: datetime,
+        reason: str | None = None,
     ) -> bool:
         if latest is None:
             return True
         lineup_confirmed = bool((context.get("lineup") or {}).get("confirmed"))
-        if lineup_confirmed and latest.get("phase") != "confirmed_lineup":
+        if reason in (None, "lineup") and lineup_confirmed and latest.get("phase") != "confirmed_lineup":
             return True
+        if reason in (None, "odds"):
+            current_fingerprint = context.get("odds_fingerprint")
+            if current_fingerprint and latest.get("odds_fingerprint") != current_fingerprint:
+                model_key = str(latest.get("model_key") or (latest.get("ai") or {}).get("provider") or "default")
+                marker = (context.get("automation_refresh") or {}).get(f"prediction_odds_{model_key}_at")
+                last_reprediction = _as_utc(marker)
+                min_interval = max(
+                    1,
+                    int(getattr(self.settings, "automation_odds_reprediction_interval_minutes", 15)),
+                )
+                if last_reprediction is None or now - last_reprediction >= timedelta(minutes=min_interval):
+                    return True
+        if reason in {"lineup", "odds"}:
+            return False
         ai_status = (latest.get("ai") or {}).get("status")
         if not ai_status:
             return True
@@ -916,6 +962,33 @@ def _as_utc(value: Any) -> datetime | None:
         return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
     except (TypeError, ValueError):
         return None
+
+
+def _has_fixture_squad(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    squad = value.get("squad")
+    return isinstance(squad, list) and bool(squad)
+
+
+def _snapshot_roster(snapshot: Any) -> list[dict[str, Any]]:
+    if not isinstance(snapshot, dict):
+        return []
+    roster = snapshot.get("roster")
+    return roster if isinstance(roster, list) else []
+
+
+def _team_snapshot_needs_roster_refresh(
+    snapshot: Any,
+    now: datetime,
+    ttl: timedelta,
+) -> bool:
+    if not isinstance(snapshot, dict):
+        return True
+    if _snapshot_roster(snapshot):
+        return False
+    updated_at = _as_utc(snapshot.get("updated_at"))
+    return updated_at is None or now - updated_at >= ttl
 
 
 def _bounded_error(error: Exception) -> str:
