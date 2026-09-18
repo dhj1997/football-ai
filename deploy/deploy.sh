@@ -16,10 +16,10 @@ cd "$(dirname "$0")/.."
 echo "[1/6] 打包本地代码（排除 .venv / node_modules / .next / .env / 数据库）"
 tar -czf "/tmp/${PKG}" \
   --exclude='.git' --exclude='.venv' --exclude='node_modules' --exclude='.next' \
-  --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' \
+  --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' --exclude='.tmp' --exclude='.pytest_tmp' --exclude='.pytest_cache' --exclude='__pycache__' \
   apps deploy docs AGENTS.md DESIGN.md PRODUCT.md README.md package.json pnpm-workspace.yaml 2>/dev/null \
   || tar -czf "/tmp/${PKG}" --exclude='.git' --exclude='.venv' --exclude='node_modules' --exclude='.next' \
-      --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' \
+      --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' --exclude='.tmp' --exclude='.pytest_tmp' --exclude='.pytest_cache' --exclude='__pycache__' \
       apps deploy AGENTS.md README.md package.json pnpm-workspace.yaml
 
 echo "[2/6] 上传到服务器"

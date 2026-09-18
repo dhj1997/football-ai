@@ -1357,26 +1357,39 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
                     <td className={cellClasses}>
                       <StatusBadge
                         variant={
-                          bet.status === "placed"
-                            ? "partial"
-                            : bet.settlement_result === "full_win" ||
-                                bet.settlement_result === "half_win"
-                              ? "ready"
-                              : bet.settlement_result === "half_loss" ||
-                                  bet.settlement_result === "full_loss"
-                                ? "danger"
-                                : "neutral"
+                          bet.status === "voided"
+                            ? "neutral"
+                            : bet.status === "placed"
+                              ? "partial"
+                              : bet.settlement_result === "full_win" ||
+                                  bet.settlement_result === "half_win"
+                                ? "ready"
+                                : bet.settlement_result === "half_loss" ||
+                                    bet.settlement_result === "full_loss"
+                                  ? "danger"
+                                  : "neutral"
+                        }
+                        title={
+                          bet.status === "voided"
+                            ? "管理员作废：本金已退还模拟账户，不计入盈亏与命中率统计"
+                            : undefined
                         }
                       >
-                        {bet.status === "placed"
-                          ? "未结"
-                          : settlementLabel(bet.settlement_result)}
+                        {bet.status === "voided"
+                          ? "已作废"
+                          : bet.status === "placed"
+                            ? "未结"
+                            : settlementLabel(bet.settlement_result)}
                       </StatusBadge>
                     </td>
                     <td className={moneyClass(bet.net_profit ?? 0)}>
-                      {bet.net_profit === null
-                        ? "-"
-                        : signedMoney(bet.net_profit)}
+                      {bet.status === "voided" ? (
+                        <span className="text-slate-500">本金已退还</span>
+                      ) : bet.net_profit === null ? (
+                        "-"
+                      ) : (
+                        signedMoney(bet.net_profit)
+                      )}
                     </td>
                     <td className={numberCellClasses}>{formatDate(bet.placed_at)}</td>
                   </tr>

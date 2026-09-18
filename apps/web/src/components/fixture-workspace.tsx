@@ -2501,9 +2501,11 @@ export function ProbabilityPanel({
           </strong>
           <small className="mt-0.5 block font-mono text-[11px] tabular-nums text-slate-500">
             金额 {currentBet.stake.toFixed(2)} ·{" "}
-            {currentBet.status === "placed"
-              ? "未结算"
-              : `${currentBet.settlement_result ?? "已结算"} · 盈亏 ${currentBet.net_profit?.toFixed(2) ?? "-"}`}
+            {currentBet.status === "voided"
+              ? "已作废 · 本金已退还"
+              : currentBet.status === "placed"
+                ? "未结算"
+                : `${currentBet.settlement_result ?? "已结算"} · 盈亏 ${currentBet.net_profit?.toFixed(2) ?? "-"}`}
           </small>
         </div>
       )}

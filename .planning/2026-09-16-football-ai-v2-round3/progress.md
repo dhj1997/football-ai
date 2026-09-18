@@ -1,0 +1,31 @@
+# Progress
+
+- 2026-09-16: User approved the Round 3 architecture, storage, formulas, API, error handling, and validation design.
+- 2026-09-16: Design spec was self-reviewed, passed staged `git diff --check`, and was committed alone as `4951f8d`.
+- 2026-09-16: User approved implementation.
+- 2026-09-16: Loaded the `planning-with-files` fallback because the brainstorming skill's preferred `writing-plans` skill is unavailable.
+- 2026-09-16: Restored Round 2 and no-ML roadmap planning context; confirmed Round 2 work is complete, verified, dirty, and must be preserved.
+- 2026-09-16: Created and activated the isolated Round 3 implementation plan.
+- 2026-09-16: Audited Round 2 schema/write/audit contracts, production migrations, prediction service wiring, provider feature fields, and existing tests.
+- 2026-09-16: Confirmed current sources lack real xG/xPoints and that legacy LLM/learned numeric paths require a scoped v2 deny gate.
+- 2026-09-16: First baseline attempt could not import pytest from bundled Python; selected the functioning project `.venv` interpreter instead.
+- 2026-09-16: Focused Round 2/feature/recent-form/Elo/player/prediction/migration baseline passed 70 tests with four existing marker warnings.
+- 2026-09-16: Completed Phase 1 and started Phase 2 persistence, migration, and registry work.
+- 2026-09-16: Initial combined storage patch was rejected before writing because it targeted one file twice; split the implementation into module-scoped patches.
+- 2026-09-16: Added Feature Registry definitions, Round 3 repository tables/columns/methods, enriched immutable value persistence, and the structured 0006 migration.
+- 2026-09-16: Storage code compiled and passed diff formatting; P15 exposed one expected stale test assumption about the last migration ID.
+- 2026-09-16: Reworked migration tests around explicit historical boundaries and added Round 3 schema, registry, player-rule, and enriched-value contracts.
+- 2026-09-16: New storage/migration tests passed 12/12; Round 2 repository regression passed 26/26.
+- 2026-09-16: Completed Phase 2 and started Phase 3 calculation framework and core features.
+- 2026-09-16: Resumed Phase 3, reran the storage suite (4 passed) and focused prediction/API regression suite (46 passed), then audited the unfinished v2 calculation and integration boundaries.
+- 2026-09-16: Added v2 repository-aware snapshot delegation with legacy input sanitization retained, fixed core calculation/provenance issues, and passed 25 focused feature/prediction tests.
+- 2026-09-16: Completed calculator hardening, explanation API audit selection, coverage selection, and nested no-ML deny behavior.
+- 2026-09-16: Added all seven required cutoff/reproducibility tests plus rule, coverage, API, migration, registry, and no-ML coverage; the Round 3 suite passed 15/15.
+- 2026-09-16: Focused API, prediction, Round 2 repository, and migration integration passed 81 tests with five pre-existing warnings.
+- 2026-09-16: Confirmed the current local persisted databases contain zero Feature Engine v2 snapshots, so the generated coverage report must state `no_snapshots` rather than claim test-data coverage.
+- 2026-09-16: First full suite found one legacy/demo team-identity compatibility regression; added deterministic team-code fallback and the targeted dual-model test passed.
+- 2026-09-16: Second full API run passed 557/557 tests with five existing warnings in 438.74 seconds.
+- 2026-09-16: Read-only configured-MySQL inspection found the Round 2 snapshot table with zero rows and no Round 3 Registry table; generated truthful no-snapshot coverage and implementation reports without applying migrations.
+- 2026-09-16: Final `compileall`, tracked and untracked whitespace checks, coverage test, and strict scope scan passed. Marked all Round 3 phases complete.
+- 2026-09-16: User requested a minimal continuation without over-testing or over-design. Re-ran only the 15 Round 3 tests, `compileall`, and `git diff --check`; all passed.
+- 2026-09-16: Aligned `AI_ROUND3_REPORT.md` with the required nine-section output by adding an explicit source-provenance section; no business logic changed.

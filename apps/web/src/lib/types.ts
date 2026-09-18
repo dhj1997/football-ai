@@ -585,7 +585,7 @@ export interface SimulatedBet {
   handicap_line: number | null;
   odds: number;
   stake: number;
-  status: "placed" | "settled";
+  status: "placed" | "settled" | "voided";
   league_key: Exclude<LeagueFilter, "all">;
   kickoff: string;
   home_team: string;

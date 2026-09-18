@@ -1,0 +1,23 @@
+# Progress
+
+- 2026-09-15: Started Round 2 with scope restricted to P0 Data Integrity, Feature Snapshot, Prediction Revision History, freeze/retention protection, reproducibility, and leakage audit.
+- 2026-09-15: Restored Round 1 audit context, inspected current worktree, and started focused feature and retention audits.
+- 2026-09-15: Confirmed the incremental migration surface in `PredictionRepository.initialize()` and the current PredictionService save/prune order.
+- 2026-09-15: Audited feature/model flow, rolling-form availability, team-stat cutoff caching, post-kickoff API behavior, and historical write barriers.
+- 2026-09-15: `session-catchup.py` could not run because `python` is not on PATH; repository state and planning files were restored directly instead.
+- 2026-09-15: Implemented result-availability-aware recent form with last 3/5/8/10 and season aggregates, exact-cutoff team-stat caching, and cutoff-aware Elo/standings reads.
+- 2026-09-15: Added per-feature snapshot metadata, deterministic snapshot IDs, cutoff-safe model inputs, `LeakageAuditService`, pre-model leakage gating, and kickoff freeze guards.
+- 2026-09-15: Updated historical backfill/write barriers and persisted feature reads so audit snapshots remain tied to their original prediction context.
+- 2026-09-15: Focused feature/recent-form/prediction/repository run reached 23 passed; fixed one stale tuple unpack and one player-name exposure in the model-facing snapshot. PredictionService then passed 6/6 tests.
+- 2026-09-15: Kept the dual-model ensemble as a derived response annotation instead of mutating the already persisted prediction, and added bounded retry for concurrent scoped revision allocation. Repository/prediction/retention/dual focused suite passed 37/37.
+- 2026-09-15: Initial strict Round 2 rerun from repository root failed during pytest collection because `apps/api` was not on `PYTHONPATH`; rerun from `apps/api` with the bundled Python runtime.
+- 2026-09-15: All 9 explicitly requested Round 2 tests passed (`9 passed`).
+- 2026-09-15: Core repository, prediction, feature, historical, retention, and migration suite passed (`81 passed`, four pre-existing pytest marker warnings).
+- 2026-09-15: Expanded integration run found two stale-contract failures. Updated the post-kickoff API expectation and fixed evidence-snapshot observation-time fallback without weakening explicit future-data checks.
+- 2026-09-15: The two integration regressions then passed (`2 passed`); the future-feature and strict referenced-snapshot boundary checks also remained green (`6 passed` in the preceding focused run).
+- 2026-09-15: Restored the interrupted Round 2 session, confirmed the implementation remains uncommitted in the dirty worktree, and reactivated this scoped plan before final repository, migration, and report verification.
+- 2026-09-15: The planning skill catch-up script located an older Claude transcript but hit a Windows GBK `UnicodeEncodeError`; no workspace state was changed, so recovery continues from repository evidence.
+- 2026-09-15: Repository gate review closed the direct-save/revision bypass: standard predictions route atomically, orphan references and non-PASS audits roll back, and shared feature snapshots remain owner-neutral.
+- 2026-09-15: Added canonical re-audit before revision admission so a forged PASS row cannot hide future feature availability; `test_round2_repository.py` passed `26` tests.
+- 2026-09-15: Selected cross-module regression passed `104` tests; the final full API suite after re-audit hardening passed `540` tests with five pre-existing warnings.
+- 2026-09-15: Wrote `docs/AI_ROUND2_REPORT.md`; migration focus passed `3` tests, `compileall` passed, and `git diff --check` passed. Round 2 implementation is complete and intentionally uncommitted/unpushed/undeployed.
