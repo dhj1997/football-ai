@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+from copy import deepcopy
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any, Callable, Iterable, Mapping
 
 
-FEATURE_VERSION = "p3-v1"
+FEATURE_VERSION = "round2-point-in-time-v1"
 ENSEMBLE_VERSION = "p3-ensemble-v1"
 CALIBRATION_VERSION = "p3-temperature-v1"
 PROBABILITY_KEYS = ("home", "draw", "away")
@@ -44,26 +47,101 @@ def normalize_probabilities(value: Mapping[str, Any] | None) -> dict[str, float]
     return {key: round(values[key] / total, 6) for key in PROBABILITY_KEYS}
 
 
+def build_feature_snapshot_v2(
+    repository: Any,
+    fixture: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    prediction_timestamp: Any,
+    *,
+    standings: Mapping[str, Any] | None = None,
+    evidence_snapshot_id: str | None = None,
+    odds_snapshot_id: str | None = None,
+) -> dict[str, Any]:
+    """Compatibility entry point for the Round 3 Feature Engine."""
+
+    from .feature_engine import FeatureEngine
+
+    return FeatureEngine(repository).calculate_snapshot(
+        fixture,
+        evidence,
+        prediction_timestamp,
+        standings=standings,
+        evidence_snapshot_id=evidence_snapshot_id,
+        odds_snapshot_id=odds_snapshot_id,
+    )
+
+
 def build_feature_snapshot(
     fixture: Mapping[str, Any],
     evidence: Mapping[str, Any],
     prediction_timestamp: Any | None = None,
     *,
     standings: Mapping[str, Any] | None = None,
+    evidence_snapshot_id: str | None = None,
+    odds_snapshot_id: str | None = None,
+    repository: Any | None = None,
 ) -> dict[str, Any]:
-    """Build a versioned, as-of feature view without reading future evidence."""
+    """Build an immutable point-in-time snapshot with per-feature boundaries."""
 
-    as_of = parse_timestamp(prediction_timestamp) or datetime.now(UTC)
+    if (
+        repository is not None
+        and callable(getattr(repository, "list_fixtures", None))
+        and callable(getattr(repository, "feature_registry", None))
+    ):
+        return build_feature_snapshot_v2(
+            repository,
+            fixture,
+            evidence,
+            prediction_timestamp,
+            standings=standings,
+            evidence_snapshot_id=evidence_snapshot_id,
+            odds_snapshot_id=odds_snapshot_id,
+        )
+
+    if prediction_timestamp is None:
+        as_of = datetime.now(UTC)
+    else:
+        as_of = parse_timestamp(prediction_timestamp)
+        if as_of is None:
+            raise ValueError("prediction_timestamp must be an ISO timestamp")
+    computed_at = datetime.now(UTC).isoformat()
     rejected: list[str] = []
+    warnings: list[str] = []
     for field in ("captured_at", "synced_at"):
         captured = parse_timestamp(evidence.get(field))
         if captured and captured > as_of:
             rejected.append(field)
+    evidence_available = _latest_timestamp(evidence.get("captured_at"), evidence.get("synced_at"))
+    if evidence_available is None and evidence_snapshot_id:
+        # The immutable evidence snapshot proves these values were observed at
+        # the cutoff even when an individual provider omitted its own timestamp.
+        # Explicit nested timestamps still take precedence and can fail the
+        # point-in-time audit when they are later than the cutoff.
+        evidence_available = as_of
     recent = evidence.get("recent_form") or {}
+    recent_available = _feature_available_at(recent, evidence_available)
     recent_features = {
-        side: _recent_form_features(recent.get(side) or [], as_of, rejected, side)
+        side: _recent_form_features(
+            recent.get(side) or [],
+            as_of,
+            rejected,
+            warnings,
+            side,
+            recent_available,
+        )
         for side in ("home", "away")
     }
+    for side in ("home", "away"):
+        persisted = ((recent.get("snapshot") or {}).get(side) or {}) if isinstance(recent, Mapping) else {}
+        if persisted.get("rolling"):
+            recent_features[side]["windows"] = deepcopy(persisted["rolling"])
+        if persisted.get("season_average"):
+            recent_features[side]["season_average"] = deepcopy(persisted["season_average"])
+            recent_features[side]["season_matches_used"] = persisted.get("season_matches_used")
+            recent_features[side]["season_available_at"] = persisted.get("season_available_at")
+            recent_features[side]["season_source_record_ids"] = deepcopy(
+                persisted.get("season_source_record_ids") or []
+            )
     table = standings or evidence.get("standings") or {}
     standings_updated = parse_timestamp(table.get("updated_at")) if isinstance(table, Mapping) else None
     if standings_updated and standings_updated > as_of:
@@ -81,12 +159,198 @@ def build_feature_snapshot(
         (evidence.get("lineup") or {}).get("updated_at"),
         table.get("updated_at") if isinstance(table, Mapping) else None,
     )
-    return {
+    source = str(evidence.get("source") or "evidence_snapshot")
+    source_record_id = (
+        evidence_snapshot_id
+        or str(evidence.get("snapshot_id") or evidence.get("id") or fixture.get("id") or "unknown")
+    )
+    features: list[dict[str, Any]] = []
+    for side in ("home", "away"):
+        side_features = recent_features[side]
+        for window in (3, 5, 8, 10):
+            key = f"last_{window}"
+            _append_feature(
+                features,
+                feature_name=f"rolling_form.{side}.{key}",
+                feature_value=(side_features.get("windows") or {}).get(key),
+                source="match_results",
+                source_record_ids=side_features.get("source_record_ids", [])[:window],
+                available_at=side_features.get("available_at"),
+                cutoff=as_of,
+                computed_at=computed_at,
+                rejected=rejected,
+                warnings=warnings,
+            )
+        _append_feature(
+            features,
+            feature_name=f"rolling_form.{side}.season_average",
+            feature_value=side_features.get("season_average"),
+            source="match_results",
+            source_record_ids=side_features.get("season_source_record_ids") or side_features.get("source_record_ids", []),
+            available_at=side_features.get("season_available_at") or side_features.get("available_at"),
+            cutoff=as_of,
+            computed_at=computed_at,
+            rejected=rejected,
+            warnings=warnings,
+        )
+        _append_feature(
+            features,
+            feature_name=f"model_input.recent_form.{side}_points_per_game",
+            feature_value=recent.get(f"{side}_points_per_game"),
+            source="match_results",
+            source_record_ids=side_features.get("source_record_ids", []),
+            available_at=side_features.get("available_at"),
+            cutoff=as_of,
+            computed_at=computed_at,
+            rejected=rejected,
+            warnings=warnings,
+        )
+        _append_feature(
+            features,
+            feature_name=f"standings.{side}",
+            feature_value=table.get(side) if isinstance(table, Mapping) else None,
+            source=str((table.get("source") if isinstance(table, Mapping) else None) or "standings"),
+            source_record_ids=[
+                str((table.get("snapshot_id") if isinstance(table, Mapping) else None) or source_record_id)
+            ],
+            available_at=standings_updated,
+            cutoff=as_of,
+            computed_at=computed_at,
+            rejected=rejected,
+            warnings=warnings,
+        )
+
+    lineup = evidence.get("lineup") if isinstance(evidence.get("lineup"), Mapping) else {}
+    lineup_available = _feature_available_at(lineup, evidence_available)
+    lineup_record_ids = lineup.get("source_record_ids") or [source_record_id]
+    for name in ("confirmed", "home_strength", "away_strength"):
+        _append_feature(
+            features,
+            feature_name=f"model_input.lineup.{name}",
+            feature_value=lineup.get(name) if lineup else None,
+            source=str(lineup.get("source") or "lineup"),
+            source_record_ids=lineup_record_ids,
+            available_at=lineup_available,
+            cutoff=as_of,
+            computed_at=computed_at,
+            rejected=rejected,
+            warnings=warnings,
+        )
+
+    impact = evidence.get("player_impact") if isinstance(evidence.get("player_impact"), Mapping) else {}
+    player_inputs_available = _feature_available_at(
+        {
+            "squads": evidence.get("squads"),
+            "availability": evidence.get("availability"),
+            "lineup": evidence.get("lineup"),
+        },
+        evidence_available,
+    )
+    player_record_ids = sorted(
+        {
+            *(_source_record_ids((evidence.get("availability") or {}).get("source_record_ids")) if isinstance(evidence.get("availability"), Mapping) else []),
+            *(_source_record_ids((evidence.get("lineup") or {}).get("source_record_ids")) if isinstance(evidence.get("lineup"), Mapping) else []),
+            source_record_id,
+        }
+    )
+    for side in ("home", "away"):
+        side_impact = impact.get(side) if isinstance(impact.get(side), Mapping) else {}
+        for name in ("attack_retention", "defense_retention", "resolved_absence_count"):
+            _append_feature(
+                features,
+                feature_name=f"model_input.player_impact.{side}.{name}",
+                feature_value=side_impact.get(name) if side_impact else None,
+                source="player_impact",
+                source_record_ids=player_record_ids,
+                available_at=player_inputs_available,
+                cutoff=as_of,
+                computed_at=computed_at,
+                rejected=rejected,
+                warnings=warnings,
+            )
+
+    elo = evidence.get("elo") if isinstance(evidence.get("elo"), Mapping) else {}
+    elo_available = _feature_available_at(elo, evidence_available)
+    for side in ("home", "away"):
+        team = fixture.get(f"{side}_team") or {}
+        team_name = str(team.get("name") or team.get("original_name") or "") if isinstance(team, Mapping) else str(team or "")
+        _append_feature(
+            features,
+            feature_name=f"model_input.elo.{side}_rating",
+            feature_value=elo.get(team_name) if team_name else None,
+            source=str(elo.get("source") or "elo"),
+            source_record_ids=elo.get("source_record_ids") or [source_record_id],
+            available_at=elo_available,
+            cutoff=as_of,
+            computed_at=computed_at,
+            rejected=rejected,
+            warnings=warnings,
+        )
+
+    category_features = (
+        ("team_statistics", evidence.get("team_stats"), "team_statistics"),
+        ("player_statistics", {"teams": evidence.get("teams"), "squads": evidence.get("squads")}, "player_statistics"),
+        ("injuries", evidence.get("availability"), "injuries"),
+        ("lineup", evidence.get("lineup"), "lineup"),
+        ("odds", evidence.get("odds"), "odds"),
+        ("weather", evidence.get("weather"), "weather"),
+        ("referee", evidence.get("referee") or fixture.get("referee"), "referee"),
+        ("head_to_head", evidence.get("head_to_head"), "match_results"),
+        ("news_evidence", evidence.get("news") or evidence.get("news_evidence"), "news_evidence"),
+        ("elo", evidence.get("elo"), "elo"),
+    )
+    for name, value, default_source in category_features:
+        value_mapping = value if isinstance(value, Mapping) else {}
+        value_source = value_mapping.get("source") if isinstance(value_mapping, Mapping) else None
+        record_ids = value_mapping.get("source_record_ids") if isinstance(value_mapping, Mapping) else None
+        _append_feature(
+            features,
+            feature_name=name,
+            feature_value=value,
+            source=str(value_source or default_source or source),
+            source_record_ids=record_ids or [source_record_id],
+            available_at=_feature_available_at(value, evidence_available),
+            cutoff=as_of,
+            computed_at=computed_at,
+            rejected=rejected,
+            warnings=warnings,
+        )
+
+    identity = {
+        "fixture_id": str(fixture.get("canonical_fixture_id") or fixture.get("id") or ""),
+        "prediction_cutoff_at": as_of.isoformat(),
+        "feature_version": FEATURE_VERSION,
+        "evidence_snapshot_id": evidence_snapshot_id,
+        "odds_snapshot_id": odds_snapshot_id,
+        "features": [
+            {
+                key: item.get(key)
+                for key in ("feature_name", "feature_value", "source", "source_record_id", "available_at", "status")
+            }
+            for item in features
+        ],
+    }
+    encoded = json.dumps(identity, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
+    snapshot_id = f"feature:{hashlib.sha256(encoded).hexdigest()}"
+    for item in features:
+        item["snapshot_id"] = snapshot_id
+    rejected = list(dict.fromkeys(rejected))
+    warnings = list(dict.fromkeys(warnings))
+    snapshot = {
+        "snapshot_id": snapshot_id,
+        "feature_snapshot_id": snapshot_id,
         "fixture_id": str(fixture.get("id") or ""),
+        "canonical_fixture_id": str(fixture.get("canonical_fixture_id") or fixture.get("id") or ""),
         "captured_at": as_of.isoformat(),
         "prediction_timestamp": as_of.isoformat(),
+        "prediction_cutoff_at": as_of.isoformat(),
+        "computed_at": computed_at,
         "source_captured_at": source_captured.isoformat() if source_captured else None,
         "feature_version": FEATURE_VERSION,
+        "dataset_version": evidence.get("dataset_version"),
+        "evidence_snapshot_id": evidence_snapshot_id,
+        "odds_snapshot_id": odds_snapshot_id,
+        "features": features,
         "team_strength": strength,
         "recent_form": recent_features,
         "home_away": {
@@ -96,43 +360,71 @@ def build_feature_snapshot(
         "squad_status": squad,
         "schedule_context": schedule,
         "market_context": market,
+        "leakage_detected": bool(rejected),
         "leakage_check": {
             "passed": not rejected,
             "rejected_future_fields": rejected,
+            "violations": [
+                {
+                    "feature_name": item["feature_name"],
+                    "available_at": item["available_at"],
+                    "prediction_cutoff_at": item["prediction_cutoff_at"],
+                    "reason": (
+                        "available_at_missing"
+                        if item["status"] == "unverifiable"
+                        else "available_after_prediction_cutoff"
+                    ),
+                }
+                for item in features
+                if item["status"] in {"future", "unverifiable"}
+            ],
+            "warnings": warnings,
         },
     }
+    snapshot["quality_payload"] = {
+        "features_total": len(features),
+        "features_available": sum(item["status"] == "available" for item in features),
+        "features_missing": sum(item["status"] == "missing" for item in features),
+        "features_unverifiable": sum(item["status"] == "unverifiable" for item in features),
+    }
+    snapshot["leakage_payload"] = deepcopy(snapshot["leakage_check"])
+    return snapshot
 
 
 def _recent_form_features(
     rows: list[Mapping[str, Any]],
     as_of: datetime,
     rejected: list[str],
+    warnings: list[str],
     side: str,
+    default_available_at: datetime | None,
 ) -> dict[str, Any]:
-    usable: list[tuple[Mapping[str, Any], float, int]] = []
-    # P7 supplies an as-of, bounded fifteen-match snapshot. Keep P3's
-    # existing decay calculation and only widen the consumed window.
-    for raw_row in rows[:15]:
+    usable: list[tuple[Mapping[str, Any], float, int, datetime]] = []
+    for raw_row in rows:
         row = raw_row if isinstance(raw_row, Mapping) else {"result": str(raw_row)}
         occurred = parse_timestamp(row.get("date"))
-        if occurred is None:
-            usable.append((row, 1.0, 3 if row.get("result") == "W" else 1 if row.get("result") == "D" else 0))
-            continue
-        if occurred > as_of:
+        available_at = _feature_available_at(row, default_available_at)
+        if occurred and occurred > as_of:
             rejected.append(f"recent_form.{side}")
             continue
-        age_days = max(0.0, (as_of - occurred).total_seconds() / 86400)
+        if available_at and available_at > as_of:
+            rejected.append(f"recent_form.{side}")
+            continue
+        if available_at is None:
+            warnings.append(f"recent_form.{side}:available_at_missing")
+            continue
+        age_days = max(0.0, (as_of - (occurred or available_at)).total_seconds() / 86400)
         points = 3 if row.get("result") == "W" else 1 if row.get("result") == "D" else 0
-        usable.append((row, math.exp(-FORM_DECAY_LAMBDA * age_days), points))
+        usable.append((row, math.exp(-FORM_DECAY_LAMBDA * age_days), points, available_at))
 
-    def aggregate(items: list[tuple[Mapping[str, Any], float, int]]) -> dict[str, Any] | None:
+    def aggregate(items: list[tuple[Mapping[str, Any], float, int, datetime]]) -> dict[str, Any] | None:
         if not items:
             return None
-        weight_total = sum(weight for _, weight, _ in items)
+        weight_total = sum(weight for _, weight, _, _ in items)
         goals_for = 0.0
         goals_against = 0.0
         points = 0.0
-        for row, weight, result_points in items:
+        for row, weight, result_points, _ in items:
             scored, conceded = _score_pair(row.get("score"), bool(row.get("team_is_home")))
             if scored is not None:
                 goals_for += scored * weight
@@ -149,12 +441,234 @@ def _recent_form_features(
     home_split = aggregate([item for item in usable if item[0].get("team_is_home") is True])
     away_split = aggregate([item for item in usable if item[0].get("team_is_home") is False])
     aggregate_all = aggregate(usable)
+    source_ids = [
+        str(item[0].get("canonical_fixture_id") or item[0].get("fixture_id") or "")
+        for item in usable
+    ]
     return {
         "sample_size": len(usable),
         "weighted": aggregate_all,
+        "windows": {f"last_{window}": aggregate(usable[:window]) for window in (3, 5, 8, 10)},
+        "season_average": aggregate(usable),
+        "season_matches_used": len(usable),
         "home_split": home_split,
         "away_split": away_split,
+        "available_at": max((item[3] for item in usable), default=None).isoformat() if usable else None,
+        "season_available_at": max((item[3] for item in usable), default=None).isoformat() if usable else None,
+        "source_record_ids": [value for value in source_ids if value],
+        "season_source_record_ids": [value for value in source_ids if value],
         "status": "missing" if not usable else "complete",
+    }
+
+
+def _append_feature(
+    features: list[dict[str, Any]],
+    *,
+    feature_name: str,
+    feature_value: Any,
+    source: str,
+    source_record_ids: Any,
+    available_at: Any,
+    cutoff: datetime,
+    computed_at: str,
+    rejected: list[str],
+    warnings: list[str],
+) -> None:
+    ids = _source_record_ids(source_record_ids)
+    available = parse_timestamp(available_at)
+    if _missing_value(feature_value):
+        status = "missing"
+    elif available is None:
+        status = "unverifiable"
+        rejected.append(feature_name)
+        warnings.append(f"{feature_name}:available_at_missing")
+    elif available > cutoff:
+        status = "future"
+        rejected.append(feature_name)
+    else:
+        status = "available"
+    identity = "|".join(ids) or "unknown"
+    if len(identity) > 255:
+        identity = f"sha256:{hashlib.sha256(identity.encode()).hexdigest()}"
+    features.append(
+        {
+            "feature_name": feature_name,
+            "feature_value": deepcopy(feature_value),
+            "source": source,
+            "source_record_id": identity,
+            "source_record_ids": ids,
+            "computed_at": computed_at,
+            "available_at": available.isoformat() if available else None,
+            "prediction_cutoff_at": cutoff.isoformat(),
+            "feature_version": FEATURE_VERSION,
+            "snapshot_id": None,
+            "status": status,
+        }
+    )
+
+
+def _source_record_ids(value: Any) -> list[str]:
+    raw = value if isinstance(value, (list, tuple, set)) else [value]
+    return sorted({str(item) for item in raw if item not in (None, "")})
+
+
+def _feature_available_at(value: Any, fallback: datetime | None = None) -> datetime | None:
+    timestamps: list[datetime] = []
+    if isinstance(value, Mapping):
+        direct = _latest_timestamp(
+            value.get("available_at"),
+            value.get("result_captured_at"),
+            value.get("completed_at"),
+            value.get("captured_at"),
+            value.get("source_captured_at"),
+            value.get("source_updated_at"),
+            value.get("retrieved_at"),
+            value.get("published_at"),
+            value.get("observed_at"),
+            value.get("market_value_as_of"),
+            value.get("value_as_of"),
+            value.get("ingested_at"),
+            value.get("cached_at"),
+            value.get("updated_at"),
+            value.get("synced_at"),
+        )
+        if direct:
+            timestamps.append(direct)
+        for nested_value in value.values():
+            if isinstance(nested_value, (Mapping, list)):
+                nested = _feature_available_at(nested_value)
+                if nested:
+                    timestamps.append(nested)
+    if isinstance(value, list):
+        nested = [_feature_available_at(item) for item in value]
+        timestamps.extend(item for item in nested if item is not None)
+    return max(timestamps) if timestamps else fallback
+
+
+def _missing_value(value: Any) -> bool:
+    if value is None or value == "":
+        return True
+    if isinstance(value, Mapping):
+        return not value or all(_missing_value(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return not value or all(_missing_value(item) for item in value)
+    return False
+
+
+def cutoff_safe_prediction_inputs(
+    context: Mapping[str, Any],
+    standings: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Remove non-empty inputs whose availability cannot be proven at cutoff."""
+
+    safe = deepcopy(dict(context))
+
+    def feature_rows(prefix: str) -> list[Mapping[str, Any]]:
+        return [
+            item
+            for item in snapshot.get("features") or []
+            if isinstance(item, Mapping)
+            if str(item.get("feature_name") or "") == prefix
+            or str(item.get("feature_name") or "").startswith(f"{prefix}.")
+        ]
+
+    def usable(prefix: str) -> bool:
+        return any(item.get("status") == "available" for item in feature_rows(prefix))
+
+    recent = deepcopy(safe.get("recent_form") or {})
+    retained_recent_times: list[datetime] = []
+    for side in ("home", "away"):
+        rows = feature_rows(f"rolling_form.{side}")
+        if any(item.get("status") == "available" for item in rows):
+            retained_recent_times.extend(
+                parsed
+                for item in rows
+                if item.get("status") == "available"
+                and (parsed := parse_timestamp(item.get("available_at"))) is not None
+            )
+            continue
+        recent[side] = []
+        recent[f"{side}_points_per_game"] = 0.0
+        if isinstance(recent.get("snapshot"), Mapping):
+            recent["snapshot"] = {**recent["snapshot"], side: {}}
+    latest_recent = max(retained_recent_times, default=None)
+    recent["updated_at"] = latest_recent.isoformat() if latest_recent else None
+    recent["available_at"] = recent["updated_at"]
+    safe["recent_form"] = recent
+    if not usable("team_statistics"):
+        safe.pop("team_stats", None)
+    if not usable("player_statistics"):
+        safe["teams"] = {"home": {}, "away": {}}
+        safe["squads"] = {"home": [], "away": []}
+    if not usable("injuries"):
+        safe["availability"] = {"players": [], "notes": [], "updated_at": None}
+    if not usable("lineup"):
+        safe["lineup"] = {
+            "confirmed": False,
+            "home_strength": None,
+            "away_strength": None,
+            "home_players": [],
+            "away_players": [],
+            "updated_at": None,
+        }
+    # ``player_impact`` is derived from squads, injuries and lineup. Always
+    # discard the pre-audit value; the prediction service recomputes it from
+    # the sanitized dependencies so an unverifiable input cannot survive via
+    # a derived retention score.
+    safe.pop("player_impact", None)
+    if not usable("odds"):
+        safe["odds"] = None
+    for name in ("weather", "referee", "head_to_head", "news_evidence", "elo"):
+        if not usable(name):
+            safe.pop("news" if name == "news_evidence" else name, None)
+            if name == "news_evidence":
+                safe.pop("news_evidence", None)
+    safe_standings = deepcopy(dict(standings)) if usable("standings") else {}
+    return safe, safe_standings
+
+
+def cutoff_safe_fixture(
+    fixture: Mapping[str, Any],
+    prediction_cutoff_at: Any,
+) -> dict[str, Any]:
+    """Return the pre-match fixture view that a model may consume."""
+
+    safe = deepcopy(dict(fixture))
+    cutoff = parse_timestamp(prediction_cutoff_at)
+    kickoff = parse_timestamp(fixture.get("kickoff"))
+    if cutoff is not None and kickoff is not None and cutoff < kickoff:
+        safe["status"] = "scheduled"
+        safe["score"] = None
+        for field in ("minute", "elapsed", "match_minute"):
+            safe[field] = None
+    return safe
+
+
+def model_feature_manifest(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose feature provenance to a model without duplicating raw values."""
+
+    keys = (
+        "feature_name",
+        "source",
+        "source_record_id",
+        "computed_at",
+        "available_at",
+        "prediction_cutoff_at",
+        "feature_version",
+        "snapshot_id",
+        "status",
+    )
+    return {
+        "snapshot_id": snapshot.get("snapshot_id"),
+        "prediction_cutoff_at": snapshot.get("prediction_cutoff_at"),
+        "feature_version": snapshot.get("feature_version"),
+        "leakage_detected": bool(snapshot.get("leakage_detected")),
+        "features": [
+            {key: item.get(key) for key in keys}
+            for item in snapshot.get("features") or []
+            if isinstance(item, Mapping)
+        ],
     }
 
 

@@ -18,10 +18,10 @@ from .historical_validation import (
 from .league_data_pipeline import SUPPORTED_LEAGUES, normalize_league_code
 from .prediction import MODEL_VERSION, predict
 from .prediction_intelligence import build_feature_snapshot
-from .recent_form import RecentFormService
+from .recent_form import RecentFormService, result_available_at
 
 
-P7_2_VERSION = "p7.2-historical-backfill-v1"
+P7_2_VERSION = "p7.2-historical-backfill-v2"
 HISTORICAL_COMPETITION_ID = "p7.2-historical"
 _CAPTURE_METADATA_KEYS = frozenset(
     {
@@ -165,13 +165,13 @@ class HistoricalPredictionBackfillService:
         if recent is None or not recent.get("home") or not recent.get("away"):
             return self._excluded(fixture, "recent_form_unavailable")
         context = self._historical_context(fixture, as_of, recent)
+        historical_fixture = _historical_fixture(fixture)
         feature_snapshot = build_feature_snapshot(
-            fixture,
+            historical_fixture,
             context,
             as_of,
             standings=context.get("standings"),
         )
-        historical_fixture = _historical_fixture(fixture)
         evidence_snapshot = _build_evidence_snapshot(
             historical_fixture,
             context,
@@ -218,6 +218,19 @@ class HistoricalPredictionBackfillService:
             else:
                 snapshot_saver(snapshot)
         prediction = await self._prediction(fixture, context, feature_snapshot, evidence_snapshot, snapshot, as_of)
+        feature_snapshot["prediction_id"] = prediction["id"]
+        feature_snapshot["evidence_snapshot_id"] = evidence_snapshot["id"]
+        feature_saver = getattr(self.repository, "save_feature_snapshot", None)
+        if callable(feature_saver):
+            existing_feature_reader = getattr(self.repository, "feature_snapshot", None)
+            existing_feature = (
+                existing_feature_reader(feature_snapshot["snapshot_id"])
+                if callable(existing_feature_reader)
+                else None
+            )
+            feature_snapshot = existing_feature or feature_saver(feature_snapshot)
+            prediction["feature_snapshot"] = deepcopy(feature_snapshot)
+            prediction["feature_snapshot_id"] = feature_snapshot["snapshot_id"]
         existing_reader = getattr(self.repository, "historical_predictions", None)
         existing = existing_reader(fixture_id=str(fixture["id"]), model_key="poisson", limit=20) if callable(existing_reader) else []
         key_matches = [
@@ -256,12 +269,12 @@ class HistoricalPredictionBackfillService:
         as_of: str,
     ) -> dict[str, Any]:
         if self.prediction_runner is not None:
-            result = self.prediction_runner(fixture, context)
+            result = self.prediction_runner(_historical_fixture(fixture), context)
             if hasattr(result, "__await__"):
                 result = await result
             prediction = dict(result)
         else:
-            prediction = predict(fixture, context)
+            prediction = predict(_historical_fixture(fixture), context)
         prediction["created_at"] = as_of
         prediction["prediction_id"] = prediction.get("prediction_id") or prediction.get("id") or str(uuid.uuid4())
         prediction["id"] = prediction["prediction_id"]
@@ -274,9 +287,10 @@ class HistoricalPredictionBackfillService:
         prediction["league_key"] = str(prediction["canonical_league"] or "").casefold()
         prediction["canonical_fixture_id"] = str(fixture["canonical_fixture_id"])
         prediction["actual_outcome"] = _actual_outcome(fixture.get("score"))
-        prediction["actual_completed_at"] = parse_timestamp(fixture.get("kickoff")).isoformat()
+        completed_at = result_available_at(fixture)
+        prediction["actual_completed_at"] = completed_at.isoformat() if completed_at else None
         prediction["feature_snapshot"] = feature_snapshot
-        prediction["feature_snapshot_id"] = _stable_snapshot_id("feature", fixture, as_of)
+        prediction["feature_snapshot_id"] = feature_snapshot["snapshot_id"]
         prediction["evidence_snapshot_id"] = evidence_snapshot["id"]
         prediction["evidence_hash"] = evidence_snapshot["content_hash"]
         prediction["evidence_version"] = evidence_snapshot["evidence_version"]
@@ -322,8 +336,8 @@ class HistoricalPredictionBackfillService:
             seen_fixtures.add(fixture_key)
             if str(row.get("status") or "").casefold() != "finished" or not _valid_score(row.get("score")):
                 continue
-            occurred = parse_timestamp(row.get("kickoff"))
-            if cutoff is None or occurred is None or occurred > cutoff:
+            available_at = result_available_at(row)
+            if cutoff is None or available_at is None or available_at > cutoff:
                 continue
             home_id = _team_identifier(row.get("home_team"))
             away_id = _team_identifier(row.get("away_team"))
@@ -386,13 +400,32 @@ def _build_evidence_snapshot(
 
 
 def _historical_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
-    """Keep fixture identity/result while excluding retrieval-time metadata."""
+    """Return the target fixture exactly as it was knowable before kickoff."""
 
-    return {
+    result = {
         key: value
         for key, value in dict(fixture).items()
         if key not in _CAPTURE_METADATA_KEYS
     }
+    result["status"] = "scheduled"
+    result["score"] = None
+    for field in (
+        "minute",
+        "elapsed",
+        "match_minute",
+        "result",
+        "winner",
+        "events",
+        "match_stats",
+        "statistics",
+        "referee",
+        "lineup",
+        "lineups",
+        "lineup_confirmed",
+        "evidence",
+    ):
+        result.pop(field, None)
+    return result
 
 
 class HistoricalEvaluationRepository:

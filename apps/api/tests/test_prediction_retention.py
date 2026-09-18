@@ -1,6 +1,4 @@
 """Current PromptContract retention and simulated-ledger cleanup tests."""
-
-import pytest
 from sqlalchemy import text
 
 from app.database import PredictionRepository
@@ -87,7 +85,7 @@ def repository(tmp_path) -> PredictionRepository:
     return result
 
 
-def test_prune_removes_old_dependencies_and_rebuilds_balance(tmp_path) -> None:
+def test_prune_preserves_old_dependencies_and_ledger(tmp_path) -> None:
     repo = repository(tmp_path)
     old = prediction("old", "2026-08-27T01:00:00+00:00", "football-forecast-v2")
     current = prediction("current", "2026-08-27T02:00:00+00:00", CURRENT_VERSION)
@@ -114,27 +112,31 @@ def test_prune_removes_old_dependencies_and_rebuilds_balance(tmp_path) -> None:
     preview = repo.prediction_retention_preview(CURRENT_VERSION)
     result = repo.prune_prediction_history(CURRENT_VERSION)
 
-    assert preview["delete_counts"] == {
+    assert all(count == 0 for count in preview["delete_counts"].values())
+    assert preview["protected_counts"] == {
         "predictions": 1,
         "bets": 1,
         "fixture_settlements": 1,
         "bankroll_transactions": 2,
         "evidence_snapshots": 1,
+        "feature_snapshots": 0,
+        "prediction_revisions": 0,
+        "leakage_audits": 0,
     }
     assert result["delete_counts"] == preview["delete_counts"]
-    assert [item["id"] for item in repo.predictions_for_fixture("fixture-1")] == ["current"]
-    assert repo.bet_for_prediction("old") is None
-    assert repo.settlement_for_prediction("old") is None
-    assert repo.evidence_snapshot("snapshot-old") is None
+    assert [item["id"] for item in repo.predictions_for_fixture("fixture-1")] == ["old", "current"]
+    assert repo.bet_for_prediction("old") is not None
+    assert repo.settlement_for_prediction("old") is not None
+    assert repo.evidence_snapshot("snapshot-old") is not None
     current_bet = repo.bet_for_prediction("current")
-    assert current_bet["balance_before"] == 1000.0
-    assert current_bet["balance_after_placement"] == 980.0
-    assert repo.current_balance("deepseek", "retention-test") == 980.0
-    assert repo.prediction_retention_preview(CURRENT_VERSION)["history_count"] == 0
-    assert repo.prune_prediction_history(CURRENT_VERSION)["history_count"] == 0
+    assert current_bet["balance_before"] == 1027.0
+    assert current_bet["balance_after_placement"] == 1007.0
+    assert repo.current_balance("deepseek", "retention-test") == 1007.0
+    assert repo.prediction_retention_preview(CURRENT_VERSION)["history_count"] == 1
+    assert repo.prune_prediction_history(CURRENT_VERSION)["history_count"] == 1
 
 
-def test_latest_current_ignores_newer_legacy_and_keeps_only_latest_compatible(tmp_path) -> None:
+def test_latest_current_ignores_newer_legacy_without_deleting_history(tmp_path) -> None:
     repo = repository(tmp_path)
     first_current = prediction("current-1", "2026-08-27T01:00:00+00:00", CURRENT_VERSION)
     latest_current = prediction("current-2", "2026-08-27T02:00:00+00:00", CURRENT_VERSION)
@@ -150,14 +152,19 @@ def test_latest_current_ignores_newer_legacy_and_keeps_only_latest_compatible(tm
     assert repo.latest_current("fixture-1", CURRENT_VERSION, "deepseek", "retention-test")["id"] == "current-2"
     preview = repo.prediction_retention_preview(CURRENT_VERSION)
     assert preview["history_count"] == 2
-    assert preview["delete_counts"]["evidence_snapshots"] == 1
+    assert preview["delete_counts"]["evidence_snapshots"] == 0
+    assert preview["protected_counts"]["evidence_snapshots"] == 1
 
     repo.prune_prediction_history(CURRENT_VERSION)
 
-    assert [item["id"] for item in repo.predictions_for_fixture("fixture-1")] == ["current-2"]
+    assert [item["id"] for item in repo.predictions_for_fixture("fixture-1")] == [
+        "current-1",
+        "current-2",
+        "legacy-newest",
+    ]
 
 
-def test_prune_rolls_back_when_ledger_rebuild_fails(tmp_path, monkeypatch) -> None:
+def test_prune_never_calls_ledger_rebuild(tmp_path, monkeypatch) -> None:
     repo = repository(tmp_path)
     old = prediction("old", "2026-08-27T01:00:00+00:00", "football-forecast-v2")
     current = prediction("current", "2026-08-27T02:00:00+00:00", CURRENT_VERSION)
@@ -170,15 +177,15 @@ def test_prune_rolls_back_when_ledger_rebuild_fails(tmp_path, monkeypatch) -> No
 
     monkeypatch.setattr(repo, "_rebuild_simulation_ledger", fail_rebuild)
 
-    with pytest.raises(RuntimeError, match="rebuild failed"):
-        repo.prune_prediction_history(CURRENT_VERSION)
+    result = repo.prune_prediction_history(CURRENT_VERSION)
 
+    assert result["balances"] == []
     assert repo.latest("fixture-1", "deepseek", "retention-test")["id"] == "current"
     assert repo.bet_for_prediction("old") is not None
     assert repo.evidence_snapshot("snapshot-old") is not None
 
 
-def test_new_no_bet_prediction_removes_old_open_bet_and_restores_balance(tmp_path) -> None:
+def test_operational_discard_removes_old_open_bet_and_restores_balance(tmp_path) -> None:
     repo = repository(tmp_path)
     old = prediction("pre-lineup", "2026-08-27T01:00:00+00:00", CURRENT_VERSION)
     current = prediction("confirmed-no-bet", "2026-08-27T02:00:00+00:00", CURRENT_VERSION)
@@ -193,20 +200,22 @@ def test_new_no_bet_prediction_removes_old_open_bet_and_restores_balance(tmp_pat
     place_bet(repo, old, "bet-pre-lineup", 20.0)
     save_prediction(repo, current)
 
-    result = repo.prune_prediction_history(
-        CURRENT_VERSION,
-        competition_id="retention-test",
-        fixture_id="fixture-1",
-        model_key="deepseek",
+    result = repo.discard_open_fixture_bets(
+        "fixture-1",
+        "deepseek",
+        "retention-test",
+        keep_prediction_id=current["id"],
     )
 
-    assert result["delete_counts"]["bets"] == 1
+    assert result == 1
     assert repo.bet_for_prediction("pre-lineup") is None
+    assert repo.prediction("pre-lineup") is not None
+    assert repo.evidence_snapshot("snapshot-pre-lineup") is not None
     assert repo.bets(status="placed", model_key="deepseek", competition_id="retention-test") == []
     assert repo.current_balance("deepseek", "retention-test") == 1000.0
 
 
-def test_prune_removes_orphan_bet_left_by_a_concurrent_prediction(tmp_path) -> None:
+def test_retention_preserves_orphan_bet_left_by_a_concurrent_prediction(tmp_path) -> None:
     repo = repository(tmp_path)
     old = prediction("orphaned", "2026-08-27T01:00:00+00:00", CURRENT_VERSION)
     save_prediction(repo, old)
@@ -216,10 +225,10 @@ def test_prune_removes_orphan_bet_left_by_a_concurrent_prediction(tmp_path) -> N
 
     result = repo.prune_prediction_history(CURRENT_VERSION)
 
-    assert result["delete_counts"]["bets"] == 1
-    assert result["delete_counts"]["bankroll_transactions"] == 1
-    assert repo.bets() == []
-    assert repo.current_balance("deepseek", "retention-test") == 1000.0
+    assert result["delete_counts"]["bets"] == 0
+    assert result["delete_counts"]["bankroll_transactions"] == 0
+    assert len(repo.bets()) == 1
+    assert repo.current_balance("deepseek", "retention-test") == 980.0
 
 
 def test_scoped_prune_preserves_other_fixture_bets(tmp_path) -> None:

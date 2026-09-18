@@ -81,6 +81,13 @@ def test_fit_from_repository_registers_and_loads(tmp_path) -> None:
     assert fitted["dataset"]["finished_matches"] == 120
     assert set(fitted["leagues"]) == {"epl", "laliga"}
     assert fitted["leagues"]["epl"]["n"] == 60
+    assert fitted["dataset"]["training_cutoff"] == (
+        max(
+            datetime.fromisoformat(item["kickoff"])
+            for item in repository.list_fixtures()
+        )
+        + timedelta(hours=3)
+    ).isoformat()
 
     loaded = load_fitted_params(repository)
     assert loaded is not None
@@ -100,6 +107,7 @@ def test_prediction_uses_fitted_params_version_suffix() -> None:
         set_fitted_params_provider(
             lambda: {
                 "fitted_version": "dc-fit-test",
+                "training_cutoff": "2026-08-31T00:00:00+00:00",
                 "leagues": {"epl": {"home_xg": 1.7, "away_xg": 1.0, "rho": -0.08, "n": 120, "status": "ok"}},
             }
         )
@@ -111,6 +119,43 @@ def test_prediction_uses_fitted_params_version_suffix() -> None:
 
     fallback = predict(fixture, context)
     assert fallback["model_version"] == "poisson-pure-v0.2"
+
+
+def test_prediction_rejects_fitted_params_trained_after_cutoff() -> None:
+    fixture = {"id": "f1", "league_key": "epl", "is_demo": False}
+    context = {
+        "recent_form": {
+            "home": [],
+            "away": [],
+            "as_of": "2026-09-01T00:00:00+00:00",
+            "updated_at": "2026-09-01T00:00:00+00:00",
+        },
+        "lineup": {"confirmed": False, "home_strength": None, "away_strength": None, "updated_at": None},
+        "availability": {"updated_at": None},
+        "player_impact": {},
+    }
+    try:
+        set_fitted_params_provider(
+            lambda: {
+                "fitted_version": "dc-fit-future",
+                "training_cutoff": "2026-09-02T00:00:00+00:00",
+                "leagues": {
+                    "epl": {
+                        "home_xg": 1.9,
+                        "away_xg": 0.8,
+                        "rho": -0.08,
+                        "n": 120,
+                        "status": "ok",
+                    }
+                },
+            }
+        )
+
+        result = predict(fixture, context)
+
+        assert result["model_version"] == "poisson-pure-v0.2"
+    finally:
+        set_fitted_params_provider(None)
 
 
 def _seed_two_model_settlements(repository: PredictionRepository, count: int = 180) -> None:

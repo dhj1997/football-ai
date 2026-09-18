@@ -174,6 +174,15 @@ _RAW_TEAM_NAMES = {
     "Real Madrid": "皇家马德里",
     "Villarreal": "比利亚雷亚尔",
     "Real Valladolid": "巴拉多利德",
+    "Zhejiang Professional FC": "浙江队",
+    "Shenzhen Xinpengcheng": "深圳新鹏城",
+    "Qingdao West Coast": "青岛西海岸",
+    "Dalian Yingbo": "大连英博",
+    "Chengdu Rongcheng": "成都蓉城",
+    "Liaoning Tieren": "辽宁铁人",
+    "Qingdao Hainiu": "青岛海牛",
+    "Chongqing Tonglianglong": "重庆铜梁龙",
+    "Tianjin Jinmen Tiger FC": "天津津门虎",
 }
 
 TEAM_NAMES_ZH = {_normalize(name): chinese_name for name, chinese_name in _RAW_TEAM_NAMES.items()}

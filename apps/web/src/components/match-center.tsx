@@ -1036,7 +1036,7 @@ function DecisionReport({
       </div>
 
       <aside
-        className="flex min-w-0 flex-col gap-4 lg:col-span-4"
+        className="flex min-w-0 flex-col gap-4 lg:col-span-4 lg:sticky lg:top-24 lg:self-start"
         aria-label="研究进度"
       >
         <section>
@@ -1378,6 +1378,18 @@ export function MatchCenter({ fixtureId }: { fixtureId: string }) {
       active = false;
     };
   }, [fixtureId]);
+
+  // 进行中比赛每 60s 静默刷新比分与状态（不闪加载态）。
+  const liveStatus = detail?.fixture.status;
+  useEffect(() => {
+    if (liveStatus !== "live") return;
+    const timer = setInterval(() => {
+      void fetchFixtureDetail(fixtureId)
+        .then((response) => setDetail(response))
+        .catch(() => undefined);
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [fixtureId, liveStatus]);
 
   const ranks = useLeagueRanks(detail);
 

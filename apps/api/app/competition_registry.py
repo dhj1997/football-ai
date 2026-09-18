@@ -192,6 +192,9 @@ _ALIASES: dict[str, str] = {
     "亚冠": "acl",
     "亚冠精英": "acl",
     "亚冠精英联赛": "acl",
+    "亚冠二级": "acl",
+    "亚冠二级联赛": "acl",
+    "afc champions league 2": "acl",
     "afc champions league": "acl",
 }
 

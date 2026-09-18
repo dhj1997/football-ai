@@ -12,8 +12,9 @@ from datetime import UTC, datetime
 from typing import Any, Mapping
 
 from .historical_validation import parse_timestamp
+from .recent_form import result_available_at
 
-_CACHE: dict[str, dict[str, dict[str, float]]] = {}
+_CACHE: dict[str, dict[str, dict[str, Any]]] = {}
 SUPPORTED_LEAGUES: tuple[str, ...] = ("epl", "laliga")
 
 
@@ -24,12 +25,12 @@ def team_stat_profiles(
     leagues: tuple[str, ...] = SUPPORTED_LEAGUES,
     min_matches: int = 8,
     fixtures_rows: list | None = None,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, Any]]:
     """Profiles for every team with enough history before ``before_iso``."""
 
-    # 缓存键按日取整：同一天内多次请求命中同一份画像（画像只来自
-    # 历史完赛，当日新完赛对均值的边际影响可忽略）。
-    cache_key = f"{before_iso[:10]}|{','.join(leagues)}|{min_matches}"
+    before = parse_timestamp(before_iso)
+    cache_cutoff = before.isoformat() if before else str(before_iso)
+    cache_key = f"{cache_cutoff}|{','.join(leagues)}|{min_matches}"
     cached = _CACHE.get(cache_key)
     if cached is None:
         cached = _scan(repository, before_iso, leagues, min_matches, fixtures_rows)
@@ -74,6 +75,14 @@ def attach_team_stats(
                 "home": home,
                 "away": away,
                 "as_of": before.isoformat(),
+                "available_at": max(
+                    str(home.get("available_at") or ""),
+                    str(away.get("available_at") or ""),
+                ) or None,
+                "source": "football-data",
+                "source_record_ids": sorted(
+                    set((home.get("source_record_ids") or []) + (away.get("source_record_ids") or []))
+                ),
             }
     except Exception:
         return
@@ -85,7 +94,7 @@ def _scan(
     leagues: tuple[str, ...],
     min_matches: int,
     fixtures_rows: list | None = None,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, Any]]:
     before = parse_timestamp(before_iso) or datetime.now(UTC)
     if fixtures_rows is not None:
         rows = fixtures_rows
@@ -93,13 +102,15 @@ def _scan(
         reader = getattr(repository, "list_fixtures", None)
         rows = reader() if callable(reader) else []
     accumulated: dict[str, dict[str, list[float]]] = {}
+    available_times: dict[str, list[datetime]] = {}
+    source_record_ids: dict[str, set[str]] = {}
     for row in rows or []:
         if row.get("status") != "finished" or row.get("source") != "football-data":
             continue
         if str(row.get("league_key") or "") not in leagues:
             continue
-        kickoff = parse_timestamp(row.get("kickoff"))
-        if kickoff is None or kickoff >= before:
+        available_at = result_available_at(row)
+        if available_at is None or available_at > before:
             continue
         stats = row.get("match_stats") if isinstance(row.get("match_stats"), Mapping) else None
         if not stats:
@@ -108,6 +119,10 @@ def _scan(
             team = str(((row.get(f"{side}_team") or {}).get("name")) or "")
             if not team:
                 continue
+            available_times.setdefault(team, []).append(available_at)
+            source_record_ids.setdefault(team, set()).add(
+                str(row.get("canonical_fixture_id") or row.get("id") or "")
+            )
             bucket = accumulated.setdefault(
                 team,
                 {"shots_for": [], "shots_against": [], "shots_on_target_for": [], "shots_on_target_against": [], "corners_for": [], "corners_against": [], "goals_for": [], "goals_against": []},
@@ -125,13 +140,15 @@ def _scan(
             ):
                 if value is not None:
                     bucket[key].append(float(value))
-    profiles: dict[str, dict[str, float]] = {}
+    profiles: dict[str, dict[str, Any]] = {}
     for team, bucket in accumulated.items():
         if len(bucket["goals_for"]) < min_matches:
             continue
-        profile: dict[str, float] = {"matches": float(len(bucket["goals_for"]))}
+        profile: dict[str, Any] = {"matches": float(len(bucket["goals_for"]))}
         for key, values in bucket.items():
             profile[key] = round(sum(values) / len(values), 3) if values else 0.0
+        profile["available_at"] = max(available_times.get(team) or []).isoformat()
+        profile["source"] = "football-data"
+        profile["source_record_ids"] = sorted(value for value in source_record_ids.get(team, set()) if value)
         profiles[team] = profile
     return profiles
-

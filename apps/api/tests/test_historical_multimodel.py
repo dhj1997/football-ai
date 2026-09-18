@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 from app.database import PredictionRepository
@@ -37,8 +38,10 @@ class _FakeProvider:
         self.model = f"{provider_name}-historical-test"
         self.configured = not fail
         self.fail = fail
+        self.model_inputs: list[dict] = []
 
-    async def assess(self, _model_input: dict) -> dict:
+    async def assess(self, model_input: dict) -> dict:
+        self.model_inputs.append(deepcopy(model_input))
         if self.fail:
             raise RuntimeError("provider test failure")
         return {
@@ -87,9 +90,11 @@ def test_multimodel_backfill_reuses_p72_snapshots_and_enters_p6(tmp_path) -> Non
     _seed(repository)
     asyncio.run(HistoricalPredictionBackfillService(repository).run())
 
+    chatgpt = _FakeProvider("chatgpt")
+    deepseek = _FakeProvider("deepseek")
     service = HistoricalMultiModelBackfillService(
         repository,
-        {"chatgpt": _FakeProvider("chatgpt"), "deepseek": _FakeProvider("deepseek")},
+        {"chatgpt": chatgpt, "deepseek": deepseek},
     )
     first = asyncio.run(service.run())
     second = asyncio.run(service.run())
@@ -115,6 +120,10 @@ def test_multimodel_backfill_reuses_p72_snapshots_and_enters_p6(tmp_path) -> Non
     assert repository.fixture_settlements() == []
     assert repository.bets() == []
     assert repository.bet_executions() == []
+    for model_input in chatgpt.model_inputs + deepseek.model_inputs:
+        assert model_input["fixture"]["status"] == "scheduled"
+        assert model_input["fixture"]["score"] is None
+        assert model_input["fixture"]["minute"] is None
 
     evaluation_rows = HistoricalPredictionBackfillService(repository).evaluation_rows()
     evaluation = ModelEvaluationService(HistoricalEvaluationRepository(repository)).evaluate(evaluation_rows)

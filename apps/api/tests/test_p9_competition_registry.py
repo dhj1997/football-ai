@@ -78,6 +78,7 @@ def test_normalize_competition_key_unifies_all_vocabularies() -> None:
     assert normalize_competition_key("中国足协杯") == "cfa_cup"
     assert normalize_competition_key("欧冠") == "ucl"
     assert normalize_competition_key("亚冠") == "acl"
+    assert normalize_competition_key("亚冠二级联赛") == "acl"
     assert normalize_competition_key("") is None
     assert normalize_competition_key("bogus") is None
 

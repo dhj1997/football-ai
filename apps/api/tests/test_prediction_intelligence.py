@@ -6,6 +6,7 @@ from app.prediction_intelligence import (
     FEATURE_VERSION,
     build_feature_snapshot,
     build_performance_profiles,
+    cutoff_safe_prediction_inputs,
     evaluate_probabilities,
     fit_temperature,
     resolve_model_weights,
@@ -74,6 +75,11 @@ def test_feature_snapshot_rejects_future_rows_and_is_versioned() -> None:
     assert snapshot["market_context"]["used_for_probability"] is False
 
 
+def test_feature_snapshot_rejects_invalid_explicit_prediction_timestamp() -> None:
+    with pytest.raises(ValueError, match="prediction_timestamp must be an ISO timestamp"):
+        build_feature_snapshot(_fixture(), _evidence(), "not-a-timestamp")
+
+
 def test_feature_snapshot_rejects_future_standings() -> None:
     snapshot = build_feature_snapshot(
         _fixture(),
@@ -88,6 +94,62 @@ def test_feature_snapshot_rejects_future_standings() -> None:
 
     assert snapshot["team_strength"]["home"]["status"] == "missing"
     assert "standings" in snapshot["leakage_check"]["rejected_future_fields"]
+
+
+def test_cutoff_safe_inputs_remove_only_unverifiable_rolling_side() -> None:
+    context = {
+        "recent_form": {
+            "home": [{"fixture_id": "available-home"}],
+            "away": [{"fixture_id": "unverifiable-away"}],
+            "home_points_per_game": 2.0,
+            "away_points_per_game": 1.0,
+            "snapshot": {
+                "home": {"matches": [{"fixture_id": "available-home"}]},
+                "away": {"matches": [{"fixture_id": "unverifiable-away"}]},
+            },
+        }
+    }
+    snapshot = {
+        "features": [
+            {"feature_name": "rolling_form.home.last_3", "status": "available"},
+            {"feature_name": "rolling_form.away.last_3", "status": "unverifiable"},
+        ]
+    }
+
+    safe, _ = cutoff_safe_prediction_inputs(context, {}, snapshot)
+
+    assert safe["recent_form"]["away"] == []
+    assert safe["recent_form"]["away_points_per_game"] == 0.0
+    assert "unverifiable-away" not in str(safe["recent_form"])
+
+
+@pytest.mark.parametrize(
+    "unverifiable_dependency",
+    ["player_statistics", "injuries", "lineup"],
+)
+def test_player_impact_requires_all_point_in_time_dependencies(
+    unverifiable_dependency: str,
+) -> None:
+    context = {
+        "teams": {"home": {"id": "home"}, "away": {"id": "away"}},
+        "squads": {"home": [{"id": "player-home"}], "away": []},
+        "availability": {"players": [], "updated_at": "2026-09-15T03:00:00+00:00"},
+        "lineup": {"confirmed": True, "home_players": [], "away_players": []},
+        "player_impact": {"sentinel": "must-not-reach-model"},
+    }
+    snapshot = {
+        "features": [
+            {
+                "feature_name": dependency,
+                "status": "unverifiable" if dependency == unverifiable_dependency else "available",
+            }
+            for dependency in ("player_statistics", "injuries", "lineup")
+        ]
+    }
+
+    safe, _ = cutoff_safe_prediction_inputs(context, {}, snapshot)
+
+    assert "player_impact" not in safe
 
 
 def test_weighted_ensemble_matches_documented_weighted_average() -> None:

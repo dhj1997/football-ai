@@ -102,6 +102,7 @@ def runner(
     bankroll=None,
     dongqiudi=None,
     dongqiudi_team=None,
+    squad_fallback=None,
 ) -> AutomationRunner:
     return AutomationRunner(
         settings(),
@@ -114,6 +115,7 @@ def runner(
         SettlementService(),
         dongqiudi_sync_service=dongqiudi,
         dongqiudi_team_service=dongqiudi_team,
+        squad_fallback_provider=squad_fallback,
     )
 
 
@@ -507,6 +509,46 @@ async def test_squad_backfill_retries_empty_snapshot_only_after_cache_ttl(tmp_pa
     assert repository.fixture(canonical["id"])["free_team_data"]["home"]["squad"] == [
         {"name": "主队球员"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_squad_backfill_uses_espn_when_dongqiudi_returns_empty_roster(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "squad-espn-fallback.db"))
+    repository.initialize()
+    kickoff = datetime.now(UTC) + timedelta(days=2)
+    canonical, twin = squad_fixture_pair(kickoff, [])
+    repository.upsert_fixture(canonical)
+    repository.upsert_fixture(twin)
+
+    class EmptyDongqiudi:
+        async def team(self, team_id):
+            return {
+                "team_id": str(team_id),
+                "updated_at": datetime.now(UTC).isoformat(),
+                "team": {"name": "主队"},
+                "roster": [],
+                "source": "dongqiudi",
+            }
+
+    class EspnFallback:
+        async def fetch(self, fixture):
+            return {
+                "synced_at": datetime.now(UTC).isoformat(),
+                "teams": {"home": fixture["home_team"], "away": fixture["away_team"]},
+                "squads": {"home": [{"name": "ESPN主队球员"}], "away": []},
+            }
+
+    result = await runner(
+        repository,
+        dongqiudi_team=EmptyDongqiudi(),
+        squad_fallback=EspnFallback(),
+    )._backfill_squads()
+
+    stored = repository.fixture(canonical["id"])
+    assert result["synced"] == 1
+    assert result["enriched"] == 1
+    assert stored["free_team_data"]["home"]["squad"] == [{"name": "ESPN主队球员"}]
+    assert stored["free_team_data"]["home"]["source"] == "espn-evidence-fallback"
 
 
 def test_prediction_windows_cover_requested_offsets() -> None:

@@ -3,12 +3,15 @@
 import json
 import uuid
 import hashlib
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.pool import StaticPool
 
 from .team_names import to_chinese_team_name
@@ -16,6 +19,9 @@ from .team_names import to_chinese_team_name
 
 class PredictionRepository:
     """Store prediction versions and fixtures on SQLite or MySQL."""
+
+    _REVISION_WRITE_ATTEMPTS = 4
+    _REVISION_RETRY_DELAY_SECONDS = 0.02
 
     def __init__(
         self,
@@ -327,6 +333,134 @@ class PredictionRepository:
             connection.execute(
                 text(
                     """
+                    CREATE TABLE IF NOT EXISTS feature_registry (
+                        id VARCHAR(255) PRIMARY KEY,
+                        feature_name VARCHAR(255) NOT NULL,
+                        feature_group VARCHAR(32) NOT NULL,
+                        entity_type VARCHAR(32) NOT NULL,
+                        description TEXT NOT NULL,
+                        formula TEXT NOT NULL,
+                        source VARCHAR(255) NOT NULL,
+                        calculation_version VARCHAR(128) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        created_at VARCHAR(64) NOT NULL,
+                        deprecated_at VARCHAR(64) NULL,
+                        payload LONGTEXT NOT NULL,
+                        UNIQUE (feature_name, calculation_version)
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS feature_snapshots (
+                        snapshot_id VARCHAR(255) PRIMARY KEY,
+                        fixture_id VARCHAR(255) NOT NULL,
+                        prediction_id VARCHAR(255) NULL,
+                        evidence_snapshot_id VARCHAR(255) NULL,
+                        prediction_cutoff_at VARCHAR(64) NOT NULL,
+                        computed_at VARCHAR(64) NOT NULL,
+                        feature_version VARCHAR(128) NOT NULL,
+                        leakage_detected BOOLEAN NOT NULL,
+                        payload LONGTEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS feature_values (
+                        feature_value_id VARCHAR(255) PRIMARY KEY,
+                        snapshot_id VARCHAR(255) NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        feature_name VARCHAR(255) NOT NULL,
+                        feature_value LONGTEXT NOT NULL,
+                        source VARCHAR(255) NOT NULL,
+                        source_record_id VARCHAR(255) NOT NULL,
+                        computed_at VARCHAR(64) NOT NULL,
+                        available_at VARCHAR(64) NULL,
+                        prediction_cutoff_at VARCHAR(64) NOT NULL,
+                        feature_version VARCHAR(128) NOT NULL,
+                        payload LONGTEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS player_impact_rules (
+                        id VARCHAR(255) PRIMARY KEY,
+                        player_id VARCHAR(255) NOT NULL,
+                        role VARCHAR(64) NOT NULL,
+                        impact_type VARCHAR(64) NOT NULL,
+                        impact_value DECIMAL(12, 6) NOT NULL,
+                        confidence DECIMAL(8, 6) NOT NULL,
+                        source VARCHAR(255) NOT NULL,
+                        available_at VARCHAR(64) NOT NULL,
+                        rule_version VARCHAR(128) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        created_at VARCHAR(64) NOT NULL,
+                        deprecated_at VARCHAR(64) NULL,
+                        payload LONGTEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS prediction_revisions (
+                        prediction_id VARCHAR(255) NOT NULL,
+                        revision_number INTEGER NOT NULL,
+                        fixture_id VARCHAR(255) NOT NULL,
+                        competition_id VARCHAR(128) NOT NULL,
+                        model_key VARCHAR(64) NOT NULL,
+                        prediction_cutoff_at VARCHAR(64) NOT NULL,
+                        model_version VARCHAR(128) NOT NULL,
+                        feature_version VARCHAR(128) NOT NULL,
+                        feature_snapshot_id VARCHAR(255) NOT NULL,
+                        evidence_snapshot_id VARCHAR(255) NOT NULL,
+                        probability_home DECIMAL(10, 8) NOT NULL,
+                        probability_draw DECIMAL(10, 8) NOT NULL,
+                        probability_away DECIMAL(10, 8) NOT NULL,
+                        expected_home_goals DECIMAL(10, 6) NULL,
+                        expected_away_goals DECIMAL(10, 6) NULL,
+                        uncertainty TEXT NULL,
+                        data_quality TEXT NULL,
+                        model_agreement TEXT NULL,
+                        created_at VARCHAR(64) NOT NULL,
+                        payload LONGTEXT NOT NULL,
+                        PRIMARY KEY (prediction_id, revision_number),
+                        UNIQUE (competition_id, fixture_id, model_key, revision_number)
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS leakage_audits (
+                        audit_id VARCHAR(255) PRIMARY KEY,
+                        prediction_id VARCHAR(255) NOT NULL,
+                        feature_snapshot_id VARCHAR(255) NULL,
+                        status VARCHAR(16) NOT NULL,
+                        prediction_cutoff_at VARCHAR(64) NULL,
+                        violations LONGTEXT NOT NULL,
+                        features_checked INTEGER NOT NULL,
+                        features_passed INTEGER NOT NULL,
+                        features_failed INTEGER NOT NULL,
+                        audited_at VARCHAR(64) NOT NULL,
+                        payload LONGTEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
                     CREATE TABLE IF NOT EXISTS historical_backfill_runs (
                         run_id VARCHAR(255) PRIMARY KEY,
                         started_at VARCHAR(64) NOT NULL,
@@ -500,6 +634,14 @@ class PredictionRepository:
             self._ensure_column(connection, "evidence_snapshots", "evidence_version", "VARCHAR(128) NULL")
             self._ensure_column(connection, "evidence_snapshots", "hash_algorithm", "VARCHAR(32) NULL")
             self._ensure_column(connection, "odds_snapshots", "source_updated_at", "VARCHAR(64) NULL")
+            self._ensure_column(connection, "feature_values", "registry_id", "VARCHAR(255) NULL")
+            self._ensure_column(connection, "feature_values", "entity_type", "VARCHAR(32) NULL")
+            self._ensure_column(connection, "feature_values", "entity_id", "VARCHAR(255) NULL")
+            self._ensure_column(connection, "feature_values", "value_type", "VARCHAR(32) NULL")
+            self._ensure_column(connection, "feature_values", "calculation_version", "VARCHAR(128) NULL")
+            self._ensure_column(connection, "feature_values", "source_record_ids", "LONGTEXT NULL")
+            self._ensure_column(connection, "feature_values", "quality_score", "DECIMAL(8, 6) NULL")
+            self._ensure_column(connection, "feature_values", "missing_reason", "VARCHAR(255) NULL")
             self._ensure_column(connection, "bets", "model_key", "VARCHAR(64) NULL")
             self._ensure_column(connection, "bets", "competition_id", "VARCHAR(128) NULL")
             self._ensure_column(connection, "bets", "bet_odds", "DECIMAL(14, 6) NULL")
@@ -606,12 +748,14 @@ class PredictionRepository:
                         fixture_id VARCHAR(255) NOT NULL,
                         market VARCHAR(64) NOT NULL,
                         captured_at VARCHAR(64) NOT NULL,
+                        persisted_at VARCHAR(64) NULL,
                         overround DECIMAL(10, 6) NULL,
                         payload TEXT NOT NULL
                     )
                     """
                 )
             )
+            self._ensure_column(connection, "market_snapshots", "persisted_at", "VARCHAR(64) NULL")
             connection.execute(
                 text(
                     """
@@ -642,6 +786,12 @@ class PredictionRepository:
                     "fixture_settlements",
                     "historical_snapshots",
                     "historical_predictions",
+                    "feature_registry",
+                    "feature_snapshots",
+                    "feature_values",
+                    "player_impact_rules",
+                    "prediction_revisions",
+                    "leakage_audits",
                     "historical_backfill_runs",
                     "raw_data_records",
                     "data_sync_runs",
@@ -734,6 +884,48 @@ class PredictionRepository:
             )
             self._ensure_index(
                 connection,
+                "idx_feature_registry_group_status",
+                "feature_registry",
+                "CREATE INDEX idx_feature_registry_group_status ON feature_registry (feature_group, status, feature_name)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_feature_snapshots_fixture_cutoff",
+                "feature_snapshots",
+                "CREATE INDEX idx_feature_snapshots_fixture_cutoff ON feature_snapshots (fixture_id, prediction_cutoff_at)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_feature_values_snapshot_available",
+                "feature_values",
+                "CREATE INDEX idx_feature_values_snapshot_available ON feature_values (snapshot_id, available_at)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_feature_values_entity_name",
+                "feature_values",
+                "CREATE INDEX idx_feature_values_entity_name ON feature_values (entity_type, entity_id, feature_name)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_player_impact_rules_player_cutoff",
+                "player_impact_rules",
+                "CREATE INDEX idx_player_impact_rules_player_cutoff ON player_impact_rules (player_id, available_at, status)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_prediction_revisions_fixture_model",
+                "prediction_revisions",
+                "CREATE INDEX idx_prediction_revisions_fixture_model ON prediction_revisions (competition_id, fixture_id, model_key, revision_number)",
+            )
+            self._ensure_index(
+                connection,
+                "idx_leakage_audits_prediction",
+                "leakage_audits",
+                "CREATE INDEX idx_leakage_audits_prediction ON leakage_audits (prediction_id, audited_at)",
+            )
+            self._ensure_index(
+                connection,
                 "idx_historical_backfill_runs_started",
                 "historical_backfill_runs",
                 "CREATE INDEX idx_historical_backfill_runs_started ON historical_backfill_runs (started_at, run_id)",
@@ -793,6 +985,9 @@ class PredictionRepository:
             if self.is_sqlite:
                 self._migrate_provider_id_constraint(connection)
             self._localize_cached_fixtures(connection)
+        from .feature_registry import FeatureRegistry
+
+        FeatureRegistry(self).seed()
 
     @staticmethod
     def _ensure_index(connection: Connection, name: str, table: str, ddl: str) -> None:
@@ -1094,39 +1289,1450 @@ class PredictionRepository:
                 )
 
     def save(self, prediction: dict[str, Any]) -> None:
-        """Insert one immutable prediction version."""
+        """Insert a legacy prediction or route a Round 2 prediction atomically."""
 
+        if "feature_snapshot_id" in prediction:
+            self.save_prediction_with_revision(prediction)
+            return
+
+        with self.engine.begin() as connection:
+            self._insert_prediction(connection, prediction)
+
+    def _insert_prediction(
+        self,
+        connection: Connection,
+        prediction: dict[str, Any],
+        *,
+        idempotent: bool = False,
+    ) -> None:
+        phase = str(prediction.get("phase") or "").casefold()
+        if phase.startswith("live"):
+            raise ValueError(
+                "Live predictions must use a separate live_prediction store"
+            )
+        payload = json.dumps(prediction, ensure_ascii=False)
+        if idempotent:
+            existing = connection.execute(
+                text("SELECT payload FROM predictions WHERE id = :id"),
+                {"id": prediction["id"]},
+            ).mappings().first()
+            if existing:
+                if json.loads(existing["payload"]) != prediction:
+                    raise ValueError(f"Prediction {prediction['id']} is immutable")
+                return
+        connection.execute(
+            text(
+                """
+                INSERT INTO predictions (
+                    id, fixture_id, created_at, phase, model_version, model_key, competition_id,
+                    prompt_version, evidence_snapshot_id, evidence_hash, evidence_version,
+                    odds_snapshot_id, payload
+                ) VALUES (
+                    :id, :fixture_id, :created_at, :phase, :model_version, :model_key, :competition_id,
+                    :prompt_version, :evidence_snapshot_id, :evidence_hash, :evidence_version,
+                    :odds_snapshot_id, :payload
+                )
+                """
+            ),
+            {
+                "id": prediction["id"],
+                "fixture_id": prediction["fixture_id"],
+                "created_at": prediction["created_at"],
+                "phase": prediction["phase"],
+                "model_version": prediction["model_version"],
+                "model_key": prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek",
+                "competition_id": prediction.get("competition_id") or self.competition_id,
+                "prompt_version": prediction.get("prompt_version") or (prediction.get("ai") or {}).get("prompt_version"),
+                "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
+                "evidence_hash": prediction.get("evidence_hash"),
+                "evidence_version": prediction.get("evidence_version") or (prediction.get("ai") or {}).get("evidence_version"),
+                "odds_snapshot_id": prediction.get("odds_snapshot_id"),
+                "payload": payload,
+            },
+        )
+
+    def save_feature_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Persist one immutable point-in-time feature snapshot and its values."""
+
+        snapshot_id = str(snapshot.get("snapshot_id") or snapshot.get("id") or "")
+        fixture_id = str(snapshot.get("fixture_id") or snapshot.get("match_id") or "")
+        prediction_cutoff_at = str(snapshot.get("prediction_cutoff_at") or "")
+        computed_at = str(snapshot.get("computed_at") or snapshot.get("captured_at") or "")
+        feature_version = str(snapshot.get("feature_version") or "")
+        required = {
+            "snapshot_id": snapshot_id,
+            "fixture_id": fixture_id,
+            "prediction_cutoff_at": prediction_cutoff_at,
+            "computed_at": computed_at,
+            "feature_version": feature_version,
+        }
+        missing = [key for key, value in required.items() if not value]
+        if missing:
+            raise ValueError(f"Feature snapshot fields are required: {', '.join(missing)}")
+        raw_features = snapshot.get("features")
+        if not isinstance(raw_features, list):
+            raise ValueError("Feature snapshot features must be a list")
+
+        normalized_features: list[dict[str, Any]] = []
+        for ordinal, raw_feature in enumerate(raw_features):
+            if not isinstance(raw_feature, dict):
+                raise ValueError(f"Feature at index {ordinal} must be an object")
+            feature_name = str(raw_feature.get("feature_name") or "")
+            source = str(raw_feature.get("source") or "")
+            source_record_id = raw_feature.get("source_record_id")
+            available_at = raw_feature.get("available_at")
+            if "feature_value" in raw_feature:
+                feature_value = raw_feature["feature_value"]
+            elif "value" in raw_feature:
+                feature_value = raw_feature["value"]
+            else:
+                raise ValueError(f"Feature {feature_name or ordinal} is missing feature_value")
+            feature_required = {
+                "feature_name": feature_name,
+                "source": source,
+                "source_record_id": source_record_id,
+            }
+            feature_missing = [
+                key for key, value in feature_required.items()
+                if value is None or (isinstance(value, str) and not value)
+            ]
+            if feature_missing:
+                raise ValueError(
+                    f"Feature {feature_name or ordinal} fields are required: {', '.join(feature_missing)}"
+                )
+            if "available_at" not in raw_feature:
+                raise ValueError(f"Feature {feature_name or ordinal} fields are required: available_at")
+            identity = "|".join(
+                (snapshot_id, str(ordinal), feature_name, source, str(source_record_id))
+            )
+            source_record_ids = raw_feature.get("source_record_ids")
+            if not isinstance(source_record_ids, list):
+                source_record_ids = [source_record_id]
+            source_record_ids = [
+                str(value) for value in source_record_ids if value not in (None, "")
+            ]
+            quality_score = raw_feature.get("quality_score")
+            if quality_score is not None:
+                quality_score = float(quality_score)
+                if not 0 <= quality_score <= 1:
+                    raise ValueError(
+                        f"Feature {feature_name or ordinal} quality_score must be between 0 and 1"
+                    )
+            normalized_features.append(
+                {
+                    **raw_feature,
+                    "feature_value_id": "feature-" + hashlib.sha256(identity.encode()).hexdigest(),
+                    "snapshot_id": snapshot_id,
+                    "feature_name": feature_name,
+                    "feature_value": feature_value,
+                    "source": source,
+                    "source_record_id": str(source_record_id),
+                    "source_record_ids": source_record_ids,
+                    "registry_id": raw_feature.get("registry_id"),
+                    "entity_type": raw_feature.get("entity_type"),
+                    "entity_id": raw_feature.get("entity_id"),
+                    "value_type": raw_feature.get("value_type") or _feature_value_type(feature_value),
+                    "calculation_version": raw_feature.get("calculation_version")
+                    or raw_feature.get("feature_version")
+                    or feature_version,
+                    "quality_score": quality_score,
+                    "missing_reason": raw_feature.get("missing_reason"),
+                    "computed_at": str(raw_feature.get("computed_at") or computed_at),
+                    "available_at": available_at,
+                    "prediction_cutoff_at": str(
+                        raw_feature.get("prediction_cutoff_at") or prediction_cutoff_at
+                    ),
+                    "feature_version": str(raw_feature.get("feature_version") or feature_version),
+                }
+            )
+        normalized_snapshot = {
+            **snapshot,
+            "snapshot_id": snapshot_id,
+            "fixture_id": fixture_id,
+            "prediction_id": None,
+            "prediction_cutoff_at": prediction_cutoff_at,
+            "computed_at": computed_at,
+            "feature_version": feature_version,
+            "leakage_detected": bool(snapshot.get("leakage_detected", False)),
+            "features": normalized_features,
+        }
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text("SELECT payload FROM feature_snapshots WHERE snapshot_id = :snapshot_id"),
+                {"snapshot_id": snapshot_id},
+            ).mappings().first()
+            if existing:
+                persisted = json.loads(existing["payload"])
+                persisted_features = [
+                    json.loads(row["payload"])
+                    for row in connection.execute(
+                        text(
+                            "SELECT payload FROM feature_values WHERE snapshot_id = :snapshot_id "
+                            "ORDER BY ordinal ASC, feature_value_id ASC"
+                        ),
+                        {"snapshot_id": snapshot_id},
+                    ).mappings().all()
+                ]
+                persisted["features"] = persisted_features
+                if self._feature_snapshot_identity(persisted) != self._feature_snapshot_identity(
+                    normalized_snapshot
+                ):
+                    raise ValueError(f"Feature snapshot {snapshot_id} is immutable")
+                return persisted
+            connection.execute(
+                text(
+                    "INSERT INTO feature_snapshots "
+                    "(snapshot_id, fixture_id, prediction_id, evidence_snapshot_id, prediction_cutoff_at, "
+                    "computed_at, feature_version, leakage_detected, payload) VALUES "
+                    "(:snapshot_id, :fixture_id, :prediction_id, :evidence_snapshot_id, :prediction_cutoff_at, "
+                    ":computed_at, :feature_version, :leakage_detected, :payload)"
+                ),
+                {
+                    **normalized_snapshot,
+                    "prediction_id": None,
+                    "evidence_snapshot_id": snapshot.get("evidence_snapshot_id"),
+                    "payload": json.dumps(normalized_snapshot, ensure_ascii=False),
+                },
+            )
+            for ordinal, feature in enumerate(normalized_features):
+                connection.execute(
+                    text(
+                        "INSERT INTO feature_values "
+                        "(feature_value_id, snapshot_id, ordinal, feature_name, feature_value, source, "
+                        "source_record_id, registry_id, entity_type, entity_id, value_type, calculation_version, "
+                        "source_record_ids, quality_score, missing_reason, computed_at, available_at, "
+                        "prediction_cutoff_at, feature_version, payload) "
+                        "VALUES (:feature_value_id, :snapshot_id, :ordinal, :feature_name, :feature_value, :source, "
+                        ":source_record_id, :registry_id, :entity_type, :entity_id, :value_type, :calculation_version, "
+                        ":source_record_ids, :quality_score, :missing_reason, :computed_at, :available_at, "
+                        ":prediction_cutoff_at, :feature_version, :payload)"
+                    ),
+                    {
+                        **feature,
+                        "ordinal": ordinal,
+                        "feature_value": json.dumps(feature["feature_value"], ensure_ascii=False),
+                        "source_record_ids": json.dumps(
+                            feature["source_record_ids"], ensure_ascii=False
+                        ),
+                        "payload": json.dumps(feature, ensure_ascii=False),
+                    },
+                )
+        return normalized_snapshot
+
+    @staticmethod
+    def _feature_snapshot_identity(snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Return hash-defining fields; computed_at is intentionally excluded."""
+
+        return {
+            "snapshot_id": snapshot.get("snapshot_id") or snapshot.get("id"),
+            "fixture_id": snapshot.get("fixture_id") or snapshot.get("match_id"),
+            "evidence_snapshot_id": snapshot.get("evidence_snapshot_id"),
+            "prediction_cutoff_at": snapshot.get("prediction_cutoff_at"),
+            "feature_version": snapshot.get("feature_version"),
+            "leakage_detected": bool(snapshot.get("leakage_detected", False)),
+            "features": [
+                {
+                    "feature_name": feature.get("feature_name"),
+                    "feature_value": feature.get("feature_value", feature.get("value")),
+                    "source": feature.get("source"),
+                    "source_record_id": feature.get("source_record_id"),
+                    "source_record_ids": feature.get("source_record_ids"),
+                    "registry_id": feature.get("registry_id"),
+                    "entity_type": feature.get("entity_type"),
+                    "entity_id": feature.get("entity_id"),
+                    "value_type": feature.get("value_type"),
+                    "calculation_version": feature.get("calculation_version"),
+                    "quality_score": feature.get("quality_score"),
+                    "missing_reason": feature.get("missing_reason"),
+                    "available_at": feature.get("available_at"),
+                    "prediction_cutoff_at": feature.get("prediction_cutoff_at"),
+                    "feature_version": feature.get("feature_version"),
+                    "snapshot_id": feature.get("snapshot_id"),
+                }
+                for feature in snapshot.get("features") or []
+            ],
+        }
+
+    def feature_values(self, snapshot_id: str) -> list[dict[str, Any]]:
+        """Return the immutable per-feature records for one snapshot."""
+
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM feature_values WHERE snapshot_id = :snapshot_id "
+                    "ORDER BY ordinal ASC, feature_value_id ASC"
+                ),
+                {"snapshot_id": snapshot_id},
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def feature_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        """Return one feature snapshot with its persisted point-in-time values."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM feature_snapshots WHERE snapshot_id = :snapshot_id"),
+                {"snapshot_id": snapshot_id},
+            ).mappings().first()
+        if not row:
+            return None
+        snapshot = json.loads(row["payload"])
+        snapshot["features"] = self.feature_values(snapshot_id)
+        return snapshot
+
+    def feature_snapshots(
+        self,
+        fixture_id: str | None = None,
+        prediction_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List immutable feature snapshots, optionally narrowed to one prediction."""
+
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        if fixture_id:
+            clauses.append("fixture_id = :fixture_id")
+            parameters["fixture_id"] = fixture_id
+        if prediction_id:
+            clauses.append(
+                "snapshot_id IN (SELECT feature_snapshot_id FROM prediction_revisions "
+                "WHERE prediction_id = :prediction_id)"
+            )
+            parameters["prediction_id"] = prediction_id
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"SELECT snapshot_id, payload FROM feature_snapshots{where} "
+                    "ORDER BY prediction_cutoff_at ASC, snapshot_id ASC"
+                ),
+                parameters,
+            ).mappings().all()
+        snapshots = []
+        for row in rows:
+            snapshot = json.loads(row["payload"])
+            snapshot["features"] = self.feature_values(str(row["snapshot_id"]))
+            snapshots.append(snapshot)
+        return snapshots
+
+    def save_feature_registry(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Insert one immutable feature definition or update lifecycle fields."""
+
+        required = (
+            "id",
+            "feature_name",
+            "feature_group",
+            "entity_type",
+            "description",
+            "formula",
+            "source",
+            "calculation_version",
+            "status",
+            "created_at",
+        )
+        if any(item.get(key) in (None, "") for key in required):
+            raise ValueError("Feature registry definition fields are required")
+        values = {
+            **item,
+            "deprecated_at": item.get("deprecated_at"),
+            "payload": json.dumps(item, ensure_ascii=False),
+        }
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT payload FROM feature_registry WHERE id = :id OR "
+                    "(feature_name = :feature_name AND calculation_version = :calculation_version)"
+                ),
+                values,
+            ).mappings().first()
+            if row:
+                existing = json.loads(row["payload"])
+                immutable = (
+                    "id",
+                    "feature_name",
+                    "feature_group",
+                    "entity_type",
+                    "description",
+                    "formula",
+                    "source",
+                    "calculation_version",
+                    "created_at",
+                    "payload",
+                )
+                if any(existing.get(key) != item.get(key) for key in immutable):
+                    raise ValueError(
+                        f"Feature definition {item['feature_name']}:{item['calculation_version']} is immutable"
+                    )
+                if existing.get("status") == "deprecated" and item.get("status") == "active":
+                    return existing
+                if (
+                    existing.get("status") != item.get("status")
+                    or existing.get("deprecated_at") != item.get("deprecated_at")
+                ):
+                    connection.execute(
+                        text(
+                            "UPDATE feature_registry SET status = :status, deprecated_at = :deprecated_at, "
+                            "payload = :payload WHERE id = :id"
+                        ),
+                        values,
+                    )
+                return item
+            connection.execute(
+                text(
+                    "INSERT INTO feature_registry "
+                    "(id, feature_name, feature_group, entity_type, description, formula, source, "
+                    "calculation_version, status, created_at, deprecated_at, payload) VALUES "
+                    "(:id, :feature_name, :feature_group, :entity_type, :description, :formula, :source, "
+                    ":calculation_version, :status, :created_at, :deprecated_at, :payload)"
+                ),
+                values,
+            )
+        return item
+
+    def feature_registry(
+        self,
+        feature_name: str | None = None,
+        calculation_version: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        for column, value in (
+            ("feature_name", feature_name),
+            ("calculation_version", calculation_version),
+            ("status", status),
+        ):
+            if value:
+                clauses.append(f"{column} = :{column}")
+                parameters[column] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"SELECT payload FROM feature_registry{where} "
+                    "ORDER BY feature_name, calculation_version"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_player_impact_rule(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Insert one immutable, versioned player impact rule."""
+
+        required = (
+            "id",
+            "player_id",
+            "role",
+            "impact_type",
+            "impact_value",
+            "confidence",
+            "source",
+            "available_at",
+            "rule_version",
+            "status",
+            "created_at",
+        )
+        if any(item.get(key) in (None, "") for key in required):
+            raise ValueError("Player impact rule fields are required")
+        confidence = float(item["confidence"])
+        if not 0 <= confidence <= 1:
+            raise ValueError("Player impact rule confidence must be between 0 and 1")
+        values = {
+            **item,
+            "impact_value": float(item["impact_value"]),
+            "confidence": confidence,
+            "deprecated_at": item.get("deprecated_at"),
+            "payload": json.dumps(item, ensure_ascii=False),
+        }
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM player_impact_rules WHERE id = :id"),
+                {"id": item["id"]},
+            ).mappings().first()
+            if row:
+                existing = json.loads(row["payload"])
+                immutable = tuple(key for key in required if key != "status") + ("payload",)
+                if any(existing.get(key) != item.get(key) for key in immutable):
+                    raise ValueError(f"Player impact rule {item['id']} is immutable")
+                if (
+                    existing.get("status") != item.get("status")
+                    or existing.get("deprecated_at") != item.get("deprecated_at")
+                ):
+                    connection.execute(
+                        text(
+                            "UPDATE player_impact_rules SET status = :status, deprecated_at = :deprecated_at, "
+                            "payload = :payload WHERE id = :id"
+                        ),
+                        values,
+                    )
+                    return item
+                return existing
+            connection.execute(
+                text(
+                    "INSERT INTO player_impact_rules "
+                    "(id, player_id, role, impact_type, impact_value, confidence, source, available_at, "
+                    "rule_version, status, created_at, deprecated_at, payload) VALUES "
+                    "(:id, :player_id, :role, :impact_type, :impact_value, :confidence, :source, :available_at, "
+                    ":rule_version, :status, :created_at, :deprecated_at, :payload)"
+                ),
+                values,
+            )
+        return item
+
+    def player_impact_rules(
+        self,
+        *,
+        player_ids: Iterable[str] | None = None,
+        available_at_lte: str | None = None,
+        status: str | None = "active",
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        normalized_ids = sorted(
+            {str(value) for value in player_ids or [] if value not in (None, "")}
+        )
+        if normalized_ids:
+            placeholders = []
+            for index, player_id in enumerate(normalized_ids):
+                key = f"player_id_{index}"
+                placeholders.append(f":{key}")
+                parameters[key] = player_id
+            clauses.append(f"player_id IN ({', '.join(placeholders)})")
+        if available_at_lte:
+            clauses.append("available_at <= :available_at_lte")
+            parameters["available_at_lte"] = available_at_lte
+        if status:
+            clauses.append("status = :status")
+            parameters["status"] = status
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"SELECT payload FROM player_impact_rules{where} "
+                    "ORDER BY player_id, impact_type, available_at, rule_version, id"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_prediction_revision(self, revision: dict[str, Any]) -> dict[str, Any]:
+        """Append one immutable revision, allocating its scoped number if omitted."""
+
+        return self._with_revision_retry(
+            lambda connection: self._insert_prediction_revision(connection, revision),
+            retry_on_conflict=revision.get("revision_number") is None,
+        )
+
+    def save_prediction_with_revision(
+        self,
+        prediction: dict[str, Any],
+        revision: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Atomically persist an immutable serving prediction and audit revision."""
+
+        candidate = {**prediction, **(revision or {})}
+        candidate["prediction_id"] = prediction["id"]
+        candidate.setdefault("fixture_id", prediction.get("fixture_id"))
+        return self._with_revision_retry(
+            lambda connection: self._save_prediction_with_revision_in_transaction(
+                connection,
+                prediction,
+                candidate,
+            ),
+            retry_on_conflict=candidate.get("revision_number") is None,
+        )
+
+    def save_prediction_with_production_evidence(
+        self,
+        prediction: dict[str, Any],
+        revision: dict[str, Any],
+        round5_result: dict[str, Any],
+        *,
+        kickoff_at: Any,
+        leakage_audit_id: str,
+    ) -> dict[str, Any]:
+        """Atomically persist one revision and its verified Round 5 evidence."""
+
+        if bool(getattr(self, "is_historical_replay", False)):
+            raise ValueError("Historical replay cannot persist production evidence")
+        candidate = {**prediction, **revision, "prediction_id": prediction["id"]}
+        candidate.setdefault("fixture_id", prediction.get("fixture_id"))
+        self._require_matching_round5_model_probability(candidate, round5_result)
+        return self._with_revision_retry(
+            lambda connection: self._save_prediction_with_production_evidence_in_transaction(
+                connection,
+                prediction,
+                candidate,
+                round5_result,
+                kickoff_at=kickoff_at,
+                leakage_audit_id=leakage_audit_id,
+            ),
+            retry_on_conflict=candidate.get("revision_number") is None,
+        )
+
+    @staticmethod
+    def _require_matching_round5_model_probability(
+        revision: dict[str, Any],
+        round5_result: dict[str, Any],
+    ) -> None:
+        audit = round5_result.get("round5_probability_audit")
+        model_probability = (
+            audit.get("model_probability") if isinstance(audit, dict) else None
+        )
+        outcomes = ("home", "draw", "away")
+        if not isinstance(model_probability, dict):
+            raise ValueError("Round 5 model_probability is required")
+        try:
+            expected = {outcome: float(model_probability[outcome]) for outcome in outcomes}
+            columns = {
+                "home": float(revision["probability_home"]),
+                "draw": float(revision["probability_draw"]),
+                "away": float(revision["probability_away"]),
+            }
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "Prediction revision probabilities must match Round 5 model_probability"
+            ) from error
+        if columns != expected:
+            raise ValueError(
+                "Prediction revision probabilities must match Round 5 model_probability"
+            )
+        for field in ("probabilities", "model_probabilities"):
+            value = revision.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, dict):
+                raise ValueError(
+                    "Prediction revision probabilities must match Round 5 model_probability"
+                )
+            try:
+                normalized = {outcome: float(value[outcome]) for outcome in outcomes}
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "Prediction revision probabilities must match Round 5 model_probability"
+                ) from error
+            if normalized != expected:
+                raise ValueError(
+                    "Prediction revision probabilities must match Round 5 model_probability"
+                )
+        for field in ("probability_model_version", "probability_calculation_version"):
+            if not revision.get(field) or revision[field] != audit.get(field):
+                raise ValueError(
+                    f"Prediction revision {field} must match Round 5 audit"
+                )
+
+    def _save_prediction_with_production_evidence_in_transaction(
+        self,
+        connection: Connection,
+        prediction: dict[str, Any],
+        revision: dict[str, Any],
+        round5_result: dict[str, Any],
+        *,
+        kickoff_at: Any,
+        leakage_audit_id: str,
+    ) -> dict[str, Any]:
+        self._insert_prediction(connection, prediction, idempotent=True)
+        stored_revision = self._insert_prediction_revision(connection, revision)
+        revision_id = (
+            f"{stored_revision['prediction_id']}:{stored_revision['revision_number']}"
+        )
+        market_snapshot_id = (
+            f"round5-production:{hashlib.sha256(revision_id.encode()).hexdigest()[:32]}"
+        )
+        existing_market = connection.execute(
+            text(
+                "SELECT persisted_at FROM market_snapshots "
+                "WHERE market_snapshot_id = :market_snapshot_id"
+            ),
+            {"market_snapshot_id": market_snapshot_id},
+        ).mappings().first()
+        if existing_market and not existing_market["persisted_at"]:
+            raise ValueError("Existing production evidence has no persistence time")
+        authoritative_kickoff = _parse_datetime(kickoff_at)
+        if existing_market is None:
+            fixture_query = "SELECT kickoff, payload FROM fixtures WHERE id = :fixture_id"
+            if connection.dialect.name == "mysql":
+                fixture_query += " FOR UPDATE"
+            fixture_row = connection.execute(
+                text(fixture_query),
+                {"fixture_id": stored_revision["fixture_id"]},
+            ).mappings().first()
+            fixture_kickoff = _parse_datetime(
+                fixture_row["kickoff"] if fixture_row else None
+            )
+            if fixture_kickoff is None:
+                raise ValueError("Production fixture kickoff was not found")
+            persisted_fixture = json.loads(fixture_row["payload"])
+            if str(persisted_fixture.get("status") or "").casefold() != "scheduled":
+                raise ValueError("Production fixture is no longer scheduled")
+            if authoritative_kickoff != fixture_kickoff:
+                raise ValueError(
+                    "Production kickoff does not match the persisted fixture"
+                )
+            authoritative_kickoff = fixture_kickoff
+        persisted_at = (
+            str(existing_market["persisted_at"])
+            if existing_market
+            else datetime.now(UTC).isoformat()
+        )
+        market_snapshot = self._round5_production_record(
+            connection,
+            round5_result,
+            stored_revision,
+            kickoff_at=authoritative_kickoff,
+            persisted_at=persisted_at,
+            leakage_audit_id=leakage_audit_id,
+        )
+        stored_market_snapshot = self._insert_market_snapshot(
+            connection,
+            market_snapshot,
+            persisted_at=persisted_at,
+        )
+        if existing_market is None:
+            if datetime.now(UTC) >= authoritative_kickoff:
+                raise ValueError(
+                    "Production evidence transaction must complete before kickoff"
+                )
+        return {
+            "revision": stored_revision,
+            "market_snapshot": stored_market_snapshot,
+        }
+
+    def _save_prediction_with_revision_in_transaction(
+        self,
+        connection: Connection,
+        prediction: dict[str, Any],
+        revision: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._insert_prediction(connection, prediction, idempotent=True)
+        return self._insert_prediction_revision(connection, revision)
+
+    def _with_revision_retry(
+        self,
+        writer: Callable[[Connection], dict[str, Any]],
+        *,
+        retry_on_conflict: bool,
+    ) -> dict[str, Any]:
+        """Retry only transaction races while allocating a scoped revision number.
+
+        The retry starts a fresh transaction so the MAX(revision_number) query
+        sees the competing commit.  Validation and immutable-content errors are
+        deliberately not retried.
+        """
+
+        for attempt in range(self._REVISION_WRITE_ATTEMPTS):
+            try:
+                with self.engine.begin() as connection:
+                    return writer(connection)
+            except (IntegrityError, OperationalError) as error:
+                if (
+                    not retry_on_conflict
+                    or attempt + 1 >= self._REVISION_WRITE_ATTEMPTS
+                    or not self._is_retryable_revision_error(error)
+                ):
+                    raise
+                time.sleep(self._REVISION_RETRY_DELAY_SECONDS * (attempt + 1))
+        raise RuntimeError("revision write retry loop exited unexpectedly")
+
+    @staticmethod
+    def _is_retryable_revision_error(error: Exception) -> bool:
+        message = str(error).casefold()
+        if isinstance(error, IntegrityError):
+            statement = str(getattr(error, "statement", "") or "").casefold()
+            if not any(
+                table in statement or table in message
+                for table in ("predictions", "prediction_revisions", "market_snapshots")
+            ):
+                return False
+            original = getattr(error, "orig", None)
+            arguments = getattr(original, "args", ())
+            if arguments and str(arguments[0]) == "1062":
+                return True
+            if getattr(original, "sqlite_errorcode", None) in {1555, 2067}:
+                return True
+            return "unique constraint failed" in message or (
+                "duplicate entry" in message and "for key" in message
+            )
+        if isinstance(error, OperationalError):
+            return any(
+                token in message
+                for token in ("database is locked", "deadlock", "lock wait timeout")
+            )
+        return False
+
+    def _insert_prediction_revision(
+        self,
+        connection: Connection,
+        revision: dict[str, Any],
+    ) -> dict[str, Any]:
+        prediction_id = str(revision.get("prediction_id") or revision.get("id") or "")
+        fixture_id = str(revision.get("fixture_id") or revision.get("match_id") or "")
+        model_version = str(revision.get("model_version") or "")
+        model_key = str(
+            revision.get("model_key")
+            or (revision.get("ai") or {}).get("provider")
+            or model_version.split(":", 1)[0]
+            or "deepseek"
+        )
+        competition_id = str(revision.get("competition_id") or self.competition_id)
+        prediction_cutoff_at = str(
+            revision.get("prediction_cutoff_at")
+            or revision.get("prediction_timestamp")
+            or revision.get("created_at")
+            or ""
+        )
+        feature_snapshot_id = str(
+            revision.get("feature_snapshot_id")
+            or (revision.get("feature_snapshot") or {}).get("snapshot_id")
+            or (revision.get("feature_snapshot") or {}).get("id")
+            or ""
+        )
+        feature_version = str(
+            revision.get("feature_version")
+            or (revision.get("feature_snapshot") or {}).get("feature_version")
+            or ""
+        )
+        evidence_snapshot_id = str(revision.get("evidence_snapshot_id") or "")
+        created_at = str(revision.get("created_at") or "")
+        required = {
+            "prediction_id": prediction_id,
+            "fixture_id": fixture_id,
+            "competition_id": competition_id,
+            "model_key": model_key,
+            "prediction_cutoff_at": prediction_cutoff_at,
+            "model_version": model_version,
+            "feature_version": feature_version,
+            "feature_snapshot_id": feature_snapshot_id,
+            "evidence_snapshot_id": evidence_snapshot_id,
+            "created_at": created_at,
+        }
+        missing = [key for key, value in required.items() if not value]
+        if missing:
+            raise ValueError(f"Prediction revision fields are required: {', '.join(missing)}")
+
+        probabilities = revision.get("probabilities") or revision.get("model_probabilities") or {}
+        expected_goals = revision.get("expected_goals") or {}
+        probability_home = revision.get("probability_home", probabilities.get("home"))
+        probability_draw = revision.get("probability_draw", probabilities.get("draw"))
+        probability_away = revision.get("probability_away", probabilities.get("away"))
+        if any(value is None for value in (probability_home, probability_draw, probability_away)):
+            raise ValueError("Prediction revision probabilities are required")
+
+        requested_revision_number = revision.get("revision_number")
+        existing_for_prediction = connection.execute(
+            text(
+                "SELECT revision_number, payload FROM prediction_revisions "
+                "WHERE prediction_id = :prediction_id ORDER BY revision_number DESC LIMIT 1"
+            ),
+            {"prediction_id": prediction_id},
+        ).mappings().first()
+        if requested_revision_number is None and existing_for_prediction:
+            revision_number = int(existing_for_prediction["revision_number"])
+        elif requested_revision_number is None:
+            revision_number = int(
+                connection.execute(
+                    text(
+                        "SELECT COALESCE(MAX(revision_number), 0) FROM prediction_revisions "
+                        "WHERE competition_id = :competition_id AND fixture_id = :fixture_id "
+                        "AND model_key = :model_key"
+                    ),
+                    {
+                        "competition_id": competition_id,
+                        "fixture_id": fixture_id,
+                        "model_key": model_key,
+                    },
+                ).scalar()
+                or 0
+            ) + 1
+        else:
+            revision_number = int(requested_revision_number)
+        if revision_number < 1:
+            raise ValueError("Prediction revision_number must be positive")
+
+        normalized = {
+            **revision,
+            "prediction_id": prediction_id,
+            "fixture_id": fixture_id,
+            "match_id": revision.get("match_id") or fixture_id,
+            "revision_number": revision_number,
+            "competition_id": competition_id,
+            "model_key": model_key,
+            "prediction_cutoff_at": prediction_cutoff_at,
+            "model_version": model_version,
+            "feature_version": feature_version,
+            "feature_snapshot_id": feature_snapshot_id,
+            "evidence_snapshot_id": evidence_snapshot_id,
+            "probability_home": float(probability_home),
+            "probability_draw": float(probability_draw),
+            "probability_away": float(probability_away),
+            "expected_home_goals": revision.get(
+                "expected_home_goals", expected_goals.get("home")
+            ),
+            "expected_away_goals": revision.get(
+                "expected_away_goals", expected_goals.get("away")
+            ),
+            "uncertainty": revision.get("uncertainty"),
+            "data_quality": revision.get("data_quality", revision.get("data_completeness")),
+            "model_agreement": revision.get("model_agreement"),
+            "created_at": created_at,
+        }
+        self._require_complete_revision_audit_chain(connection, normalized)
+        existing = connection.execute(
+            text(
+                "SELECT payload FROM prediction_revisions "
+                "WHERE prediction_id = :prediction_id AND revision_number = :revision_number"
+            ),
+            {"prediction_id": prediction_id, "revision_number": revision_number},
+        ).mappings().first()
+        if existing:
+            persisted = json.loads(existing["payload"])
+            if persisted != normalized:
+                raise ValueError(
+                    f"Prediction revision {prediction_id}/{revision_number} is immutable"
+                )
+            return persisted
+
+        values = {
+            **normalized,
+            "expected_home_goals": normalized["expected_home_goals"],
+            "expected_away_goals": normalized["expected_away_goals"],
+            "uncertainty": self._json_value(normalized["uncertainty"]),
+            "data_quality": self._json_value(normalized["data_quality"]),
+            "model_agreement": self._json_value(normalized["model_agreement"]),
+            "payload": json.dumps(normalized, ensure_ascii=False),
+        }
+        connection.execute(
+            text(
+                "INSERT INTO prediction_revisions "
+                "(prediction_id, revision_number, fixture_id, competition_id, model_key, prediction_cutoff_at, "
+                "model_version, feature_version, feature_snapshot_id, evidence_snapshot_id, probability_home, "
+                "probability_draw, probability_away, expected_home_goals, expected_away_goals, uncertainty, "
+                "data_quality, model_agreement, created_at, payload) VALUES "
+                "(:prediction_id, :revision_number, :fixture_id, :competition_id, :model_key, :prediction_cutoff_at, "
+                ":model_version, :feature_version, :feature_snapshot_id, :evidence_snapshot_id, :probability_home, "
+                ":probability_draw, :probability_away, :expected_home_goals, :expected_away_goals, :uncertainty, "
+                ":data_quality, :model_agreement, :created_at, :payload)"
+            ),
+            values,
+        )
+        return normalized
+
+    def _require_complete_revision_audit_chain(
+        self,
+        connection: Connection,
+        revision: dict[str, Any],
+    ) -> None:
+        """Reject orphaned or unaudited Round 2 prediction revisions."""
+
+        prediction_id = str(revision["prediction_id"])
+        feature_snapshot_id = str(revision["feature_snapshot_id"])
+        evidence_snapshot_id = str(revision["evidence_snapshot_id"])
+
+        def load_payload(table: str, key: str, value: str) -> dict[str, Any] | None:
+            row = connection.execute(
+                text(f"SELECT payload FROM {table} WHERE {key} = :value"),
+                {"value": value},
+            ).mappings().first()
+            return json.loads(row["payload"]) if row else None
+
+        prediction = load_payload("predictions", "id", prediction_id)
+        if prediction is None:
+            raise ValueError(
+                f"Prediction revision audit chain is incomplete: prediction {prediction_id} was not found"
+            )
+        feature_snapshot = load_payload(
+            "feature_snapshots", "snapshot_id", feature_snapshot_id
+        )
+        if feature_snapshot is None:
+            raise ValueError(
+                "Prediction revision audit chain is incomplete: feature snapshot "
+                f"{feature_snapshot_id} was not found"
+            )
+        evidence_snapshot = load_payload(
+            "evidence_snapshots", "id", evidence_snapshot_id
+        )
+        if evidence_snapshot is None:
+            raise ValueError(
+                "Prediction revision audit chain is incomplete: evidence snapshot "
+                f"{evidence_snapshot_id} was not found"
+            )
+
+        def require_equal(
+            owner: str,
+            field: str,
+            actual: Any,
+            expected: Any,
+        ) -> None:
+            if field == "prediction_cutoff_at":
+                actual_at = _parse_datetime(actual)
+                expected_at = _parse_datetime(expected)
+                matches = (
+                    actual_at is not None
+                    and expected_at is not None
+                    and actual_at == expected_at
+                )
+            else:
+                matches = str(actual or "") == str(expected or "")
+            if not matches:
+                raise ValueError(
+                    "Prediction revision audit chain identity mismatch: "
+                    f"{owner}.{field}={actual!r}, revision.{field}={expected!r}"
+                )
+
+        prediction_identity = {
+            "prediction_id": prediction.get("id"),
+            "fixture_id": prediction.get("fixture_id") or prediction.get("match_id"),
+            "competition_id": prediction.get("competition_id"),
+            "model_key": prediction.get("model_key")
+            or (prediction.get("ai") or {}).get("provider"),
+            "prediction_cutoff_at": prediction.get("prediction_cutoff_at")
+            or prediction.get("prediction_timestamp")
+            or prediction.get("created_at"),
+            "model_version": prediction.get("model_version"),
+            "feature_version": prediction.get("feature_version"),
+            "feature_snapshot_id": prediction.get("feature_snapshot_id"),
+            "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
+        }
+        for field, actual in prediction_identity.items():
+            require_equal("prediction", field, actual, revision.get(field))
+
+        snapshot_identity = {
+            "fixture_id": feature_snapshot.get("fixture_id")
+            or feature_snapshot.get("match_id"),
+            "prediction_cutoff_at": feature_snapshot.get("prediction_cutoff_at"),
+            "feature_version": feature_snapshot.get("feature_version"),
+            "feature_snapshot_id": feature_snapshot.get("snapshot_id")
+            or feature_snapshot.get("id"),
+            "evidence_snapshot_id": feature_snapshot.get("evidence_snapshot_id"),
+        }
+        for field, actual in snapshot_identity.items():
+            require_equal("feature_snapshot", field, actual, revision.get(field))
+        if bool(feature_snapshot.get("leakage_detected")):
+            raise ValueError(
+                "Prediction revision audit chain is invalid: feature snapshot declares leakage"
+            )
+
+        require_equal(
+            "evidence_snapshot",
+            "evidence_snapshot_id",
+            evidence_snapshot.get("id") or evidence_snapshot.get("snapshot_id"),
+            evidence_snapshot_id,
+        )
+        require_equal(
+            "evidence_snapshot",
+            "fixture_id",
+            evidence_snapshot.get("fixture_id") or evidence_snapshot.get("match_id"),
+            revision.get("fixture_id"),
+        )
+
+        # Re-run the canonical leakage checks instead of trusting a caller-
+        # supplied PASS row.  The prediction insert is still uncommitted here,
+        # so references are read from this transaction and exposed through a
+        # small read-only adapter to avoid a second connection seeing stale
+        # state.
+        from .leakage_audit import LeakageAuditService
+
+        class _AuditReferenceReader:
+            def __init__(self, evidence: dict[str, Any], repository: "PredictionRepository") -> None:
+                self._evidence = evidence
+                self._repository = repository
+
+            def evidence_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+                expected_id = self._evidence.get("id") or self._evidence.get("snapshot_id")
+                return self._evidence if str(expected_id) == str(snapshot_id) else None
+
+            def odds_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+                return self._repository.odds_snapshot(snapshot_id)
+
+        re_audit = LeakageAuditService(
+            _AuditReferenceReader(evidence_snapshot, self)  # type: ignore[arg-type]
+        ).audit_feature_snapshot(
+            feature_snapshot,
+            prediction_id=prediction_id,
+            persist=False,
+            expected_prediction=prediction,
+            expected_revision=revision,
+        )
+        if re_audit["status"] != "PASS":
+            raise ValueError(
+                "Prediction revision audit chain rejected by leakage re-audit"
+            )
+
+        audit_row = connection.execute(
+            text(
+                "SELECT payload FROM leakage_audits "
+                "WHERE prediction_id = :prediction_id "
+                "AND feature_snapshot_id = :feature_snapshot_id "
+                "AND prediction_cutoff_at = :prediction_cutoff_at "
+                "ORDER BY audited_at DESC, audit_id DESC LIMIT 1"
+            ),
+            {
+                "prediction_id": prediction_id,
+                "feature_snapshot_id": feature_snapshot_id,
+                "prediction_cutoff_at": revision.get("prediction_cutoff_at"),
+            },
+        ).mappings().first()
+        if audit_row is None:
+            raise ValueError(
+                "Prediction revision audit chain is incomplete: PASS leakage audit was not found"
+            )
+        audit = json.loads(audit_row["payload"])
+        if str(audit.get("status") or "").upper() != "PASS":
+            raise ValueError(
+                "Prediction revision audit chain is invalid: latest leakage audit is not PASS"
+            )
+        require_equal(
+            "leakage_audit",
+            "prediction_id",
+            audit.get("prediction_id"),
+            prediction_id,
+        )
+        require_equal(
+            "leakage_audit",
+            "feature_snapshot_id",
+            audit.get("feature_snapshot_id") or audit.get("snapshot_id"),
+            feature_snapshot_id,
+        )
+        require_equal(
+            "leakage_audit",
+            "prediction_cutoff_at",
+            audit.get("prediction_cutoff_at"),
+            revision.get("prediction_cutoff_at"),
+        )
+
+    @staticmethod
+    def _json_value(value: Any) -> str | None:
+        return None if value is None else json.dumps(value, ensure_ascii=False)
+
+    def prediction_revision(
+        self,
+        prediction_id: str,
+        revision_number: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a specific revision, or the latest one for a prediction ID."""
+
+        clause = " AND revision_number = :revision_number" if revision_number is not None else ""
+        parameters: dict[str, Any] = {"prediction_id": prediction_id}
+        if revision_number is not None:
+            parameters["revision_number"] = int(revision_number)
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT payload FROM prediction_revisions WHERE prediction_id = :prediction_id"
+                    f"{clause} ORDER BY revision_number DESC LIMIT 1"
+                ),
+                parameters,
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def prediction_revisions(
+        self,
+        prediction_id: str | None = None,
+        fixture_id: str | None = None,
+        model_key: str | None = None,
+        competition_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List append-only revisions in deterministic scoped order."""
+
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        for column, value in (
+            ("prediction_id", prediction_id),
+            ("fixture_id", fixture_id),
+            ("model_key", model_key),
+            ("competition_id", competition_id),
+        ):
+            if value:
+                clauses.append(f"{column} = :{column}")
+                parameters[column] = value
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"SELECT payload FROM prediction_revisions{where} "
+                    "ORDER BY competition_id, fixture_id, model_key, revision_number"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_leakage_audit(self, audit: dict[str, Any]) -> dict[str, Any]:
+        """Append a leakage audit result without mutating prior audit evidence."""
+
+        status = str(audit.get("status") or "").upper()
+        if status not in {"PASS", "FAIL", "WARN"}:
+            raise ValueError("Leakage audit status must be PASS, FAIL or WARN")
+        prediction_id = str(audit.get("prediction_id") or "")
+        if not prediction_id:
+            raise ValueError("Leakage audit prediction_id is required")
+        audit_id = str(audit.get("audit_id") or uuid.uuid4())
+        audited_at = str(
+            audit.get("audited_at")
+            or audit.get("created_at")
+            or datetime.now(UTC).replace(microsecond=0).isoformat()
+        )
+        violations = list(audit.get("violations") or [])
+        normalized = {
+            **audit,
+            "audit_id": audit_id,
+            "prediction_id": prediction_id,
+            "status": status,
+            "violations": violations,
+            "features_checked": int(audit.get("features_checked") or 0),
+            "features_passed": int(audit.get("features_passed") or 0),
+            "features_failed": int(audit.get("features_failed") or 0),
+            "audited_at": audited_at,
+        }
         with self.engine.begin() as connection:
             connection.execute(
                 text(
-                    """
-                    INSERT INTO predictions (
-                        id, fixture_id, created_at, phase, model_version, model_key, competition_id,
-                        prompt_version, evidence_snapshot_id, evidence_hash, evidence_version,
-                        odds_snapshot_id, payload
-                    ) VALUES (
-                        :id, :fixture_id, :created_at, :phase, :model_version, :model_key, :competition_id,
-                        :prompt_version, :evidence_snapshot_id, :evidence_hash, :evidence_version,
-                        :odds_snapshot_id, :payload
-                    )
-                    """
+                    "INSERT INTO leakage_audits "
+                    "(audit_id, prediction_id, feature_snapshot_id, status, prediction_cutoff_at, violations, "
+                    "features_checked, features_passed, features_failed, audited_at, payload) VALUES "
+                    "(:audit_id, :prediction_id, :feature_snapshot_id, :status, :prediction_cutoff_at, :violations, "
+                    ":features_checked, :features_passed, :features_failed, :audited_at, :payload)"
                 ),
                 {
-                    "id": prediction["id"],
-                    "fixture_id": prediction["fixture_id"],
-                    "created_at": prediction["created_at"],
-                    "phase": prediction["phase"],
-                    "model_version": prediction["model_version"],
-                    "model_key": prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek",
-                    "competition_id": prediction.get("competition_id") or self.competition_id,
-                    "prompt_version": prediction.get("prompt_version") or (prediction.get("ai") or {}).get("prompt_version"),
-                    "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
-                    "evidence_hash": prediction.get("evidence_hash"),
-                    "evidence_version": prediction.get("evidence_version") or (prediction.get("ai") or {}).get("evidence_version"),
-                    "odds_snapshot_id": prediction.get("odds_snapshot_id"),
-                    "payload": json.dumps(prediction, ensure_ascii=False),
+                    **normalized,
+                    "feature_snapshot_id": audit.get("feature_snapshot_id")
+                    or audit.get("snapshot_id"),
+                    "prediction_cutoff_at": audit.get("prediction_cutoff_at"),
+                    "violations": json.dumps(violations, ensure_ascii=False),
+                    "payload": json.dumps(normalized, ensure_ascii=False),
                 },
             )
+        return normalized
+
+    def leakage_audit(self, audit_id: str) -> dict[str, Any] | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT payload FROM leakage_audits WHERE audit_id = :audit_id"),
+                {"audit_id": audit_id},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def leakage_audits(
+        self,
+        prediction_id: str | None = None,
+        feature_snapshot_ids: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """List audits, optionally restricted to selected feature snapshots."""
+
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        if prediction_id:
+            clauses.append("prediction_id = :prediction_id")
+            parameters["prediction_id"] = prediction_id
+        if feature_snapshot_ids is not None:
+            snapshot_ids = sorted(
+                {
+                    str(snapshot_id)
+                    for snapshot_id in feature_snapshot_ids
+                    if snapshot_id not in (None, "")
+                }
+            )
+            if not snapshot_ids:
+                return []
+            placeholders = []
+            for index, snapshot_id in enumerate(snapshot_ids):
+                parameter = f"feature_snapshot_id_{index}"
+                placeholders.append(f":{parameter}")
+                parameters[parameter] = snapshot_id
+            clauses.append(f"feature_snapshot_id IN ({', '.join(placeholders)})")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"SELECT payload FROM leakage_audits{where} "
+                    "ORDER BY audited_at ASC, audit_id ASC"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def reproduce_prediction(
+        self,
+        prediction_id: str,
+        revision_number: int | None = None,
+    ) -> dict[str, Any]:
+        """Resolve the immutable inputs and model artifact for one prediction revision."""
+
+        prediction = self.prediction(prediction_id)
+        revision = self.prediction_revision(prediction_id, revision_number)
+        source = revision or prediction or {}
+        feature_snapshot_id = source.get("feature_snapshot_id") or (
+            source.get("feature_snapshot") or {}
+        ).get("snapshot_id")
+        evidence_snapshot_id = source.get("evidence_snapshot_id")
+        feature_snapshot = (
+            self.feature_snapshot(str(feature_snapshot_id)) if feature_snapshot_id else None
+        )
+        evidence_snapshot = (
+            self.evidence_snapshot(str(evidence_snapshot_id)) if evidence_snapshot_id else None
+        )
+        model_version = str(source.get("model_version") or "")
+        model_key = str(
+            source.get("model_key")
+            or (source.get("ai") or {}).get("provider")
+            or model_version.split(":", 1)[0]
+            or ""
+        )
+        model_artifact = next(
+            (
+                item
+                for item in self.model_registry(model_key=model_key)
+                if str(item.get("model_version")) == model_version
+            ),
+            None,
+        ) if model_key and model_version else None
+        if (
+            model_artifact is None
+            and model_version.startswith("poisson-")
+            and "+dc-fit-" in model_version
+        ):
+            fitted_version = model_version.rsplit("+", 1)[-1]
+            model_artifact = next(
+                (
+                    item
+                    for item in self.model_registry(model_key="dixon_coles")
+                    if str(item.get("model_version")) == fitted_version
+                ),
+                None,
+            )
+        missing_references = []
+        for name, value in (
+            ("prediction", prediction),
+            ("prediction_revision", revision),
+            ("feature_snapshot", feature_snapshot),
+            ("evidence_snapshot", evidence_snapshot),
+        ):
+            if value is None:
+                missing_references.append(name)
+        identity = {
+            "match_id": source.get("match_id") or source.get("fixture_id"),
+            "prediction_id": prediction_id,
+            "prediction_revision": revision.get("revision_number") if revision else revision_number,
+            "model_version": model_version or None,
+            "feature_version": source.get("feature_version"),
+            "feature_snapshot_id": feature_snapshot_id,
+            "evidence_snapshot_id": evidence_snapshot_id,
+        }
+        for field in (
+            "match_id",
+            "prediction_revision",
+            "model_version",
+            "feature_version",
+            "feature_snapshot_id",
+            "evidence_snapshot_id",
+        ):
+            if identity.get(field) in (None, ""):
+                missing_references.append(field)
+
+        consistency_violations: list[dict[str, Any]] = []
+
+        def require_equal(field: str, left: Any, right: Any, owners: str) -> None:
+            if left in (None, "") or right in (None, ""):
+                return
+            if left != right:
+                consistency_violations.append(
+                    {"field": field, "owners": owners, "left": left, "right": right}
+                )
+
+        if prediction and revision:
+            for field in (
+                "fixture_id",
+                "competition_id",
+                "model_key",
+                "model_version",
+                "prediction_cutoff_at",
+                "feature_version",
+                "feature_snapshot_id",
+                "evidence_snapshot_id",
+            ):
+                require_equal(field, prediction.get(field), revision.get(field), "prediction/revision")
+            for outcome in ("home", "draw", "away"):
+                require_equal(
+                    f"probability_{outcome}",
+                    (prediction.get("probabilities") or {}).get(outcome),
+                    revision.get(f"probability_{outcome}"),
+                    "prediction/revision",
+                )
+        if revision and feature_snapshot:
+            require_equal(
+                "feature_snapshot_id",
+                revision.get("feature_snapshot_id"),
+                feature_snapshot.get("snapshot_id") or feature_snapshot.get("feature_snapshot_id"),
+                "revision/feature_snapshot",
+            )
+            require_equal(
+                "prediction_cutoff_at",
+                revision.get("prediction_cutoff_at"),
+                feature_snapshot.get("prediction_cutoff_at"),
+                "revision/feature_snapshot",
+            )
+            require_equal(
+                "feature_version",
+                revision.get("feature_version"),
+                feature_snapshot.get("feature_version"),
+                "revision/feature_snapshot",
+            )
+            require_equal(
+                "evidence_snapshot_id",
+                revision.get("evidence_snapshot_id"),
+                feature_snapshot.get("evidence_snapshot_id"),
+                "revision/feature_snapshot",
+            )
+        if revision and evidence_snapshot:
+            require_equal(
+                "fixture_id",
+                revision.get("fixture_id"),
+                evidence_snapshot.get("fixture_id"),
+                "revision/evidence_snapshot",
+            )
+            cutoff_at = _parse_datetime(revision.get("prediction_cutoff_at"))
+            evidence_at = _parse_datetime(
+                evidence_snapshot.get("captured_at") or evidence_snapshot.get("created_at")
+            )
+            if cutoff_at and evidence_at and evidence_at > cutoff_at:
+                consistency_violations.append(
+                    {
+                        "field": "captured_at",
+                        "owners": "revision/evidence_snapshot",
+                        "left": evidence_at.isoformat(),
+                        "right": cutoff_at.isoformat(),
+                    }
+                )
+        if revision and model_artifact:
+            require_equal(
+                "feature_version",
+                revision.get("feature_version"),
+                model_artifact.get("feature_version"),
+                "revision/model_artifact",
+            )
+
+        model_input_features = {
+            str(item.get("feature_name")): item.get("feature_value")
+            for item in (feature_snapshot or {}).get("features") or []
+            if str(item.get("feature_name") or "").startswith("model_input.")
+            and item.get("status") == "available"
+        }
+        missing_references = list(dict.fromkeys(missing_references))
+        reproducible = not missing_references and not consistency_violations
+        return {
+            "status": "PASS" if reproducible else "FAIL",
+            "reproducible": reproducible,
+            "identity": identity,
+            "prediction": prediction,
+            "revision": revision,
+            "feature_snapshot": feature_snapshot,
+            "evidence_snapshot": evidence_snapshot,
+            "model_artifact": model_artifact,
+            "artifact_status": "registered" if model_artifact else "not_registered",
+            "missing_references": missing_references,
+            "consistency_violations": consistency_violations,
+            "model_input_features": model_input_features,
+        }
+
+    prediction_reproducibility_bundle = reproduce_prediction
 
     def save_evidence_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Insert one immutable prediction evidence snapshot."""
@@ -1983,40 +3589,248 @@ class PredictionRepository:
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows]
 
-    def save_market_snapshot(self, item: dict[str, Any]) -> None:
-        """Upsert one idempotent market snapshot record (content-hash id)."""
+    def _round5_production_record(
+        self,
+        connection: Connection,
+        round5_result: dict[str, Any],
+        revision: dict[str, Any],
+        *,
+        kickoff_at: Any,
+        persisted_at: str,
+        leakage_audit_id: str,
+    ) -> dict[str, Any]:
+        """Bind a deterministic Round 5 result to its committed revision."""
 
+        from .production_evidence import (
+            PRODUCTION_EVIDENCE_KIND,
+            PRODUCTION_EVIDENCE_VERSION,
+            validate_production_evidence,
+        )
+
+        raw_record = round5_result.get("market_snapshot")
+        raw_audit = round5_result.get("round5_probability_audit")
+        if not isinstance(raw_record, dict) or not isinstance(raw_audit, dict):
+            raise ValueError("Round 5 production result is incomplete")
+        fixture_id = str(revision.get("fixture_id") or "")
+        feature_snapshot_id = str(revision.get("feature_snapshot_id") or "")
+        if str(raw_record.get("fixture_id") or "") != fixture_id:
+            raise ValueError("Round 5 fixture does not match prediction revision")
+        if str(raw_audit.get("feature_snapshot_id") or "") != feature_snapshot_id:
+            raise ValueError("Round 5 feature snapshot does not match prediction revision")
+
+        cutoff = _parse_datetime(revision.get("prediction_cutoff_at"))
+        kickoff = _parse_datetime(kickoff_at)
+        persisted = _parse_datetime(persisted_at)
+        if cutoff is None or kickoff is None or persisted is None:
+            raise ValueError("Production evidence timestamps must be valid")
+        if cutoff >= kickoff:
+            raise ValueError("Prediction cutoff must be before kickoff")
+        if persisted < cutoff or persisted >= kickoff:
+            raise ValueError("Production persistence time must be between cutoff and kickoff")
+
+        feature_row = connection.execute(
+            text("SELECT payload FROM feature_snapshots WHERE snapshot_id = :snapshot_id"),
+            {"snapshot_id": feature_snapshot_id},
+        ).mappings().first()
+        if feature_row is None:
+            raise ValueError("Production feature snapshot was not found")
+        feature_snapshot = json.loads(feature_row["payload"])
+
+        leakage_row = connection.execute(
+            text("SELECT payload FROM leakage_audits WHERE audit_id = :audit_id"),
+            {"audit_id": leakage_audit_id},
+        ).mappings().first()
+        if leakage_row is None:
+            raise ValueError("Production leakage audit was not found")
+        leakage_audit = json.loads(leakage_row["payload"])
+        if str(leakage_audit.get("prediction_id") or "") != str(revision.get("prediction_id") or ""):
+            raise ValueError("Leakage audit does not belong to prediction revision")
+
+        source_odds_snapshot_ids = [
+            str(value)
+            for value in raw_audit.get("source_odds_snapshot_ids") or []
+            if value not in (None, "")
+        ]
+        odds_snapshots = [
+            self._odds_snapshot_in_connection(connection, snapshot_id)
+            for snapshot_id in source_odds_snapshot_ids
+        ]
+        if any(snapshot is None for snapshot in odds_snapshots):
+            raise ValueError("Production odds snapshot was not found")
+
+        revision_number = int(revision["revision_number"])
+        prediction_id = str(revision["prediction_id"])
+        revision_id = f"{prediction_id}:{revision_number}"
+        audit = {
+            **raw_audit,
+            "prediction_id": prediction_id,
+            "prediction_revision_number": revision_number,
+            "prediction_revision_id": revision_id,
+            "model_key": revision.get("model_key"),
+            "serving_model_version": revision.get("model_version"),
+            "kickoff_at": kickoff.isoformat(),
+            "persisted_at": persisted.isoformat(),
+            "leakage_audit_id": leakage_audit_id,
+            "production_evidence_version": PRODUCTION_EVIDENCE_VERSION,
+            "evidence_kind": PRODUCTION_EVIDENCE_KIND,
+            "production_evidence_valid": True,
+        }
+        audit.pop("market_snapshot_id", None)
+        market_prior = round5_result.get("market_prior_detail")
+        if not isinstance(market_prior, dict):
+            market_prior = (raw_record.get("payload") or {}).get("market_prior")
+        market_snapshot_id = (
+            f"round5-production:{hashlib.sha256(revision_id.encode()).hexdigest()[:32]}"
+        )
+        audit["market_snapshot_id"] = market_snapshot_id
+        payload = {
+            "snapshot_type": "round5_probability_audit",
+            "audit": audit,
+            "market_prior": market_prior,
+        }
+        record = {
+            **raw_record,
+            "market_snapshot_id": market_snapshot_id,
+            "fixture_id": fixture_id,
+            "prediction_revision_id": revision_id,
+            "persisted_at": persisted.isoformat(),
+            "payload": payload,
+        }
+        normalized = validate_production_evidence(
+            payload,
+            feature_snapshot=feature_snapshot,
+            odds_snapshots=[snapshot for snapshot in odds_snapshots if snapshot is not None],
+            leakage_audit=leakage_audit,
+            replay=False,
+        )
+        audit.update(normalized)
+        return record
+
+    @staticmethod
+    def _odds_snapshot_in_connection(
+        connection: Connection,
+        snapshot_id: str,
+    ) -> dict[str, Any] | None:
+        rows = connection.execute(
+            text(
+                "SELECT snapshot_id, fixture_id, captured_at, source_updated_at, bookmaker, source, payload "
+                "FROM odds_snapshots WHERE snapshot_id = :snapshot_id ORDER BY id"
+            ),
+            {"snapshot_id": snapshot_id},
+        ).mappings().all()
+        if not rows:
+            return None
+        return {
+            "id": snapshot_id,
+            "fixture_id": rows[0]["fixture_id"],
+            "captured_at": rows[0]["captured_at"],
+            "source_updated_at": rows[0]["source_updated_at"],
+            "bookmaker": rows[0]["bookmaker"],
+            "source": rows[0]["source"],
+            "quotes": [json.loads(row["payload"]) for row in rows],
+        }
+
+    def save_market_snapshot(self, item: dict[str, Any]) -> None:
+        """Persist a research/legacy snapshot without production provenance."""
+
+        if item.get("persisted_at") not in (None, ""):
+            raise ValueError(
+                "persisted_at is assigned only by the atomic production evidence writer"
+            )
+        try:
+            with self.engine.begin() as connection:
+                self._insert_market_snapshot(connection, item, persisted_at=None)
+        except IntegrityError as error:
+            # A concurrent identical capture may win between SELECT and INSERT.
+            # Re-read after rollback so identical content remains idempotent.
+            with self.engine.connect() as connection:
+                existing = connection.execute(
+                    text(
+                        "SELECT persisted_at, payload FROM market_snapshots "
+                        "WHERE market_snapshot_id = :market_snapshot_id"
+                    ),
+                    {"market_snapshot_id": item.get("market_snapshot_id")},
+                ).mappings().first()
+            if not existing:
+                raise
+            if self._market_snapshot_identity(json.loads(existing["payload"])) != self._market_snapshot_identity(item):
+                raise ValueError("Market snapshot is immutable") from error
+
+    def _insert_market_snapshot(
+        self,
+        connection: Connection,
+        item: dict[str, Any],
+        *,
+        persisted_at: str | None,
+    ) -> dict[str, Any]:
         required = ("market_snapshot_id", "fixture_id", "market", "captured_at")
         if any(not item.get(key) for key in required):
             raise ValueError("Market snapshot identity fields are required")
-        with self.engine.begin() as connection:
-            values = {
-                "market_snapshot_id": item["market_snapshot_id"],
-                "fixture_id": item["fixture_id"],
-                "market": item["market"],
-                "captured_at": item["captured_at"],
-                "overround": item.get("overround"),
-                "payload": json.dumps(item, ensure_ascii=False),
-            }
-            existing = connection.execute(
-                text("SELECT market_snapshot_id FROM market_snapshots WHERE market_snapshot_id = :market_snapshot_id"),
-                {"market_snapshot_id": values["market_snapshot_id"]},
-            ).first()
-            if not existing:
-                connection.execute(
-                    text("INSERT INTO market_snapshots (market_snapshot_id, fixture_id, market, captured_at, overround, payload) VALUES (:market_snapshot_id, :fixture_id, :market, :captured_at, :overround, :payload)"),
-                    values,
-                )
+        normalized = {**item, "persisted_at": persisted_at} if persisted_at else dict(item)
+        existing = connection.execute(
+            text(
+                "SELECT persisted_at, payload FROM market_snapshots "
+                "WHERE market_snapshot_id = :market_snapshot_id"
+            ),
+            {"market_snapshot_id": normalized["market_snapshot_id"]},
+        ).mappings().first()
+        if existing:
+            stored = json.loads(existing["payload"])
+            if self._market_snapshot_identity(stored) != self._market_snapshot_identity(normalized):
+                raise ValueError("Market snapshot is immutable")
+            stored["persisted_at"] = existing["persisted_at"]
+            return stored
+        connection.execute(
+            text(
+                "INSERT INTO market_snapshots "
+                "(market_snapshot_id, fixture_id, market, captured_at, persisted_at, overround, payload) "
+                "VALUES (:market_snapshot_id, :fixture_id, :market, :captured_at, :persisted_at, :overround, :payload)"
+            ),
+            {
+                "market_snapshot_id": normalized["market_snapshot_id"],
+                "fixture_id": normalized["fixture_id"],
+                "market": normalized["market"],
+                "captured_at": normalized["captured_at"],
+                "persisted_at": persisted_at,
+                "overround": normalized.get("overround"),
+                "payload": json.dumps(normalized, ensure_ascii=False),
+            },
+        )
+        return normalized
+
+    @staticmethod
+    def _market_snapshot_identity(item: dict[str, Any]) -> dict[str, Any]:
+        """Compare immutable content while excluding the physical write time."""
+
+        identity = dict(item)
+        identity.pop("persisted_at", None)
+        payload = identity.get("payload")
+        if isinstance(payload, dict):
+            payload = json.loads(json.dumps(payload, ensure_ascii=False))
+            audit = payload.get("audit")
+            if isinstance(audit, dict):
+                audit.pop("persisted_at", None)
+                audit.pop("production_persisted_at", None)
+            identity["payload"] = payload
+        return identity
 
     def market_snapshots(self, fixture_id: str) -> list[dict[str, Any]]:
         """List persisted market snapshots for one fixture, oldest capture first."""
 
         with self.engine.connect() as connection:
             rows = connection.execute(
-                text("SELECT payload FROM market_snapshots WHERE fixture_id = :fixture_id ORDER BY captured_at, market_snapshot_id"),
+                text(
+                    "SELECT persisted_at, payload FROM market_snapshots "
+                    "WHERE fixture_id = :fixture_id ORDER BY captured_at, market_snapshot_id"
+                ),
                 {"fixture_id": fixture_id},
             ).mappings().all()
-        return [json.loads(row["payload"]) for row in rows]
+        result = []
+        for row in rows:
+            item = json.loads(row["payload"])
+            item["persisted_at"] = row["persisted_at"]
+            result.append(item)
+        return result
 
     def save_research_run(self, run: dict[str, Any]) -> None:
         """Insert one content-addressed research run; duplicates are ignored."""
@@ -2225,6 +4039,7 @@ class PredictionRepository:
             item
             for item in self.predictions_for_fixture(fixture_id, model_key, competition_id)
             if (item.get("ai") or {}).get("prompt_version") == prompt_version
+            and not str(item.get("phase") or "").casefold().startswith("live")
         ]
         return max(compatible, key=lambda item: (str(item.get("created_at") or ""), str(item["id"]))) if compatible else None
 
@@ -2241,6 +4056,8 @@ class PredictionRepository:
         for item in items:
             if (item.get("ai") or {}).get("prompt_version") != prompt_version:
                 continue
+            if str(item.get("phase") or "").casefold().startswith("live"):
+                continue
             key = str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek")
             groups.setdefault(key, []).append(item)
         return [
@@ -2255,7 +4072,7 @@ class PredictionRepository:
     ) -> set[str]:
         """Return fixtures with at least one prediction on the active prompt contract."""
 
-        clauses = ["prompt_version = :prompt_version"]
+        clauses = ["prompt_version = :prompt_version", "LOWER(phase) NOT LIKE 'live%'"]
         parameters: dict[str, Any] = {"prompt_version": prompt_version}
         if competition_id:
             clauses.append("competition_id = :competition_id")
@@ -2280,7 +4097,7 @@ class PredictionRepository:
     ) -> list[dict[str, Any]]:
         """Return the newest prediction per fixture/model with its cached fixture."""
 
-        clauses: list[str] = []
+        clauses: list[str] = ["LOWER(p.phase) NOT LIKE 'live%'"]
         parameters: dict[str, Any] = {}
         for column, value in (
             ("p.competition_id", competition_id),
@@ -2335,7 +4152,7 @@ class PredictionRepository:
         fixture_id: str | None = None,
         model_key: str | None = None,
     ) -> dict[str, Any]:
-        """Count superseded prediction data without changing it."""
+        """Report superseded rows that are protected as permanent audit history."""
 
         with self.engine.connect() as connection:
             plan = self._prediction_retention_plan(
@@ -2354,9 +4171,9 @@ class PredictionRepository:
         fixture_id: str | None = None,
         model_key: str | None = None,
     ) -> dict[str, Any]:
-        """Delete superseded prediction data and rebuild affected simulated ledgers."""
+        """Preserve the prediction audit chain; operational cleanup lives elsewhere."""
 
-        with self.engine.begin() as connection:
+        with self.engine.connect() as connection:
             plan = self._prediction_retention_plan(
                 connection,
                 prompt_version,
@@ -2364,18 +4181,9 @@ class PredictionRepository:
                 fixture_id,
                 model_key,
             )
-            self._delete_values(connection, "bankroll_transactions", "reference_id", plan["bet_ids"])
-            self._delete_values(connection, "fixture_settlements", "prediction_id", plan["prediction_ids"])
-            self._delete_values(connection, "bets", "id", plan["bet_ids"])
-            self._delete_values(connection, "predictions", "id", plan["prediction_ids"])
-            self._delete_values(connection, "evidence_snapshots", "id", plan["snapshot_ids"])
-            balances = [
-                self._rebuild_simulation_ledger(connection, account_competition, account_model)
-                for account_competition, account_model in plan["affected_accounts"]
-            ]
         return {
             **self._prediction_retention_summary(plan, prompt_version),
-            "balances": balances,
+            "balances": [],
         }
 
     def _prediction_retention_plan(
@@ -2387,7 +4195,7 @@ class PredictionRepository:
         model_key: str | None,
     ) -> dict[str, Any]:
         clauses: list[str] = []
-        parameters: dict[str, str] = {}
+        parameters: dict[str, Any] = {}
         for column, value in (
             ("competition_id", competition_id),
             ("fixture_id", fixture_id),
@@ -2484,27 +4292,72 @@ class PredictionRepository:
             for row in connection.execute(text("SELECT id FROM evidence_snapshots")).mappings().all()
         }
         snapshot_ids = candidate_snapshot_ids & existing_snapshot_ids
+        protected_revision_rows = [
+            row
+            for row in connection.execute(
+                text("SELECT prediction_id, feature_snapshot_id FROM prediction_revisions")
+            ).mappings().all()
+            if str(row["prediction_id"]) in prediction_ids
+        ]
+        revision_count = len(protected_revision_rows)
+        revision_snapshot_ids = {
+            str(row["feature_snapshot_id"])
+            for row in protected_revision_rows
+            if row["feature_snapshot_id"] is not None
+        }
+        audit_count = sum(
+            1
+            for row in connection.execute(
+                text("SELECT prediction_id FROM leakage_audits")
+            ).mappings().all()
+            if str(row["prediction_id"]) in prediction_ids
+        )
+        feature_snapshot_count = 0
+        for row in connection.execute(
+            text("SELECT prediction_id, payload FROM feature_snapshots")
+        ).mappings().all():
+            linked_prediction_id = row["prediction_id"]
+            if linked_prediction_id is None:
+                try:
+                    linked_prediction_id = json.loads(row["payload"]).get("prediction_id")
+                except (TypeError, json.JSONDecodeError):
+                    linked_prediction_id = None
+            payload = json.loads(row["payload"])
+            snapshot_id = payload.get("snapshot_id") or payload.get("id")
+            if (
+                linked_prediction_id is not None
+                and str(linked_prediction_id) in prediction_ids
+            ) or (snapshot_id is not None and str(snapshot_id) in revision_snapshot_ids):
+                feature_snapshot_count += 1
+        protected_counts = {
+            "predictions": len(prediction_ids),
+            "bets": len(bet_ids),
+            "fixture_settlements": settlement_count,
+            "bankroll_transactions": transaction_count,
+            "evidence_snapshots": len(snapshot_ids),
+            "feature_snapshots": feature_snapshot_count,
+            "prediction_revisions": revision_count,
+            "leakage_audits": audit_count,
+        }
         return {
-            "prediction_ids": prediction_ids,
-            "bet_ids": bet_ids,
-            "snapshot_ids": snapshot_ids,
-            "affected_accounts": affected_accounts,
-            "counts": {
-                "predictions": len(prediction_ids),
-                "bets": len(bet_ids),
-                "fixture_settlements": settlement_count,
-                "bankroll_transactions": transaction_count,
-                "evidence_snapshots": len(snapshot_ids),
-            },
+            "prediction_ids": set(),
+            "bet_ids": set(),
+            "snapshot_ids": set(),
+            "affected_accounts": [],
+            "counts": {key: 0 for key in protected_counts},
+            "protected_counts": protected_counts,
         }
 
     @staticmethod
     def _prediction_retention_summary(plan: dict[str, Any], prompt_version: str) -> dict[str, Any]:
         counts = dict(plan["counts"])
+        protected_counts = dict(plan.get("protected_counts") or {})
         return {
             "prompt_version": prompt_version,
             "delete_counts": counts,
-            "history_count": counts["predictions"],
+            "protected_counts": protected_counts,
+            "history_count": protected_counts.get("predictions", 0),
+            "retention_status": "audit_chain_protected",
             "affected_accounts": [
                 {"competition_id": competition_id, "model_key": model_key}
                 for competition_id, model_key in plan["affected_accounts"]
@@ -2720,6 +4573,7 @@ class PredictionRepository:
         start_date: str | None = None,
         end_date: str | None = None,
         league_key: str | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """List cached fixtures ordered by kickoff.
 
@@ -2727,23 +4581,24 @@ class PredictionRepository:
         fixture revision; filtered windows keep their indexed SQL path.
         """
 
-        if start_date is None and end_date is None and league_key is None:
+        if start_date is None and end_date is None and league_key is None and limit is None:
             cached = self._fixtures_cache
             if cached is not None and cached[0] == self._fixture_revision:
                 return list(cached[1])
-            rows = self._scan_fixtures(None, None, None)
+            rows = self._scan_fixtures(None, None, None, None)
             self._fixtures_cache = (self._fixture_revision, rows)
             return list(rows)
-        return self._scan_fixtures(start_date, end_date, league_key)
+        return self._scan_fixtures(start_date, end_date, league_key, limit)
 
     def _scan_fixtures(
         self,
         start_date: str | None,
         end_date: str | None,
         league_key: str | None,
+        limit: int | None,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
-        parameters: dict[str, str] = {}
+        parameters: dict[str, Any] = {}
         if start_date is not None:
             clauses.append("fixture_date >= :start_date")
             parameters["start_date"] = start_date
@@ -2754,12 +4609,17 @@ class PredictionRepository:
             clauses.append("league_key = :league_key")
             parameters["league_key"] = league_key
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        ordering = " ORDER BY kickoff ASC, id ASC"
+        if limit is not None:
+            parameters["row_limit"] = max(0, int(limit))
+            ordering = " ORDER BY kickoff DESC, id DESC LIMIT :row_limit"
         with self.engine.connect() as connection:
             rows = connection.execute(
-                text(f"SELECT payload FROM fixtures{where} ORDER BY kickoff ASC"),
+                text(f"SELECT payload FROM fixtures{where}{ordering}"),
                 parameters,
             ).mappings().all()
-        return [json.loads(row["payload"]) for row in rows]
+        fixtures = [json.loads(row["payload"]) for row in rows]
+        return list(reversed(fixtures)) if limit is not None else fixtures
 
     def fixture(self, fixture_id: str) -> dict[str, Any] | None:
         """Return one cached fixture by application ID."""
@@ -3666,47 +5526,85 @@ class PredictionRepository:
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows]
 
-    def save_backtest_run(self, run: dict[str, Any]) -> None:
+    def save_backtest_run(self, run: dict[str, Any]) -> dict[str, Any]:
         """Persist one reproducible backtest run record."""
 
         required = ("run_id", "name", "started_at", "status")
         if any(not run.get(key) for key in required):
             raise ValueError("Backtest run identity fields are required")
-        with self.engine.begin() as connection:
-            existing = connection.execute(
-                text("SELECT payload FROM backtest_runs WHERE run_id = :run_id"),
-                {"run_id": run["run_id"]},
-            ).mappings().first()
-            if existing:
-                if json.loads(existing["payload"]) != run:
-                    raise ValueError("Backtest run is immutable")
-                return
-            connection.execute(
-                text(
-                    "INSERT INTO backtest_runs ("
-                    "run_id, name, started_at, finished_at, dataset_version, run_config, "
-                    "code_version, model_version, feature_version, ensemble_version, "
-                    "calibration_version, status, payload) VALUES ("
-                    ":run_id, :name, :started_at, :finished_at, :dataset_version, :run_config, "
-                    ":code_version, :model_version, :feature_version, :ensemble_version, "
-                    ":calibration_version, :status, :payload)"
-                ),
-                {
-                    "run_id": run["run_id"],
-                    "name": run["name"],
-                    "started_at": run["started_at"],
-                    "finished_at": run.get("finished_at"),
-                    "dataset_version": run.get("dataset_version"),
-                    "run_config": json.dumps(run.get("config") or {}, ensure_ascii=False),
-                    "code_version": run.get("code_version"),
-                    "model_version": run.get("model_version"),
-                    "feature_version": run.get("feature_version"),
-                    "ensemble_version": run.get("ensemble_version"),
-                    "calibration_version": run.get("calibration_version"),
-                    "status": run["status"],
-                    "payload": json.dumps(run, ensure_ascii=False),
-                },
-            )
+        try:
+            with self.engine.begin() as connection:
+                existing = connection.execute(
+                    text("SELECT payload FROM backtest_runs WHERE run_id = :run_id"),
+                    {"run_id": run["run_id"]},
+                ).mappings().first()
+                if existing:
+                    stored = json.loads(existing["payload"])
+                    if stored != run:
+                        raise ValueError("Backtest run is immutable")
+                    return stored
+                connection.execute(
+                    text(
+                        "INSERT INTO backtest_runs ("
+                        "run_id, name, started_at, finished_at, dataset_version, run_config, "
+                        "code_version, model_version, feature_version, ensemble_version, "
+                        "calibration_version, status, payload) VALUES ("
+                        ":run_id, :name, :started_at, :finished_at, :dataset_version, :run_config, "
+                        ":code_version, :model_version, :feature_version, :ensemble_version, "
+                        ":calibration_version, :status, :payload)"
+                    ),
+                    {
+                        "run_id": run["run_id"],
+                        "name": run["name"],
+                        "started_at": run["started_at"],
+                        "finished_at": run.get("finished_at"),
+                        "dataset_version": run.get("dataset_version"),
+                        "run_config": json.dumps(run.get("config") or {}, ensure_ascii=False),
+                        "code_version": run.get("code_version"),
+                        "model_version": run.get("model_version"),
+                        "feature_version": run.get("feature_version"),
+                        "ensemble_version": run.get("ensemble_version"),
+                        "calibration_version": run.get("calibration_version"),
+                        "status": run["status"],
+                        "payload": json.dumps(run, ensure_ascii=False),
+                    },
+                )
+        except IntegrityError as error:
+            if not self._is_backtest_run_unique_conflict(error):
+                raise
+            stored = self.backtest_run(str(run["run_id"]))
+            if stored is None:
+                raise
+            if stored != run:
+                raise ValueError("Backtest run is immutable") from error
+            return stored
+        return run
+
+    @staticmethod
+    def _is_backtest_run_unique_conflict(error: IntegrityError) -> bool:
+        original = getattr(error, "orig", None)
+        arguments = getattr(original, "args", ())
+        vendor_code = arguments[0] if arguments else None
+        if str(vendor_code) == "1062":
+            return True
+
+        sqlite_code = getattr(original, "sqlite_errorcode", None)
+        sqlite_name = str(getattr(original, "sqlite_errorname", "")).upper()
+        if sqlite_code in {1555, 2067} or sqlite_name in {
+            "SQLITE_CONSTRAINT_PRIMARYKEY",
+            "SQLITE_CONSTRAINT_UNIQUE",
+        }:
+            return True
+
+        message = str(original or error).casefold()
+        statement = str(getattr(error, "statement", "") or "").casefold()
+        targets_backtest_runs = (
+            "backtest_runs" in statement or "backtest_runs" in message
+        )
+        return targets_backtest_runs and (
+            "unique constraint failed" in message
+            or ("duplicate entry" in message and "for key" in message)
+        )
 
     def backtest_run(self, run_id: str) -> dict[str, Any] | None:
         """Return one persisted backtest run."""
@@ -3970,6 +5868,22 @@ def _odds_payload_from_quotes(quotes: list[dict[str, Any]]) -> dict[str, Any]:
         payload["source"] = quote.get("source")
         payload["updated_at"] = quote.get("source_updated_at") or quote.get("captured_at")
     return payload
+
+
+def _feature_value_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
 
 
 def _odds_snapshot_document(fixture_id: str, context: dict[str, Any]) -> dict[str, Any] | None:

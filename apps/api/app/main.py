@@ -3,12 +3,12 @@
 import asyncio
 from dataclasses import replace
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .automation import AutomationRunner
 from .backtest_engine import run_backtest_engine
@@ -46,6 +46,11 @@ from .league_provider import EspnLeagueProvider
 from .league_sync import LeagueSyncService
 from .market_decision import apply_market_decision
 from .market_intelligence import MarketIntelligenceService
+from .market_prior import (
+    MarketPriorError,
+    Round5ProbabilityEngine,
+    persist_round5_market_snapshot,
+)
 from .observability import (
     ALERT_RULES,
     MetricsRegistry,
@@ -89,10 +94,14 @@ from .production import (
 )
 from .prediction_intelligence import (
     build_feature_snapshot,
+    build_feature_snapshot_v2,
     build_performance_profiles,
     run_backtest,
     weighted_ensemble,
 )
+from .feature_coverage import build_feature_coverage
+from .no_ml_guard import NoMLNumericPathError
+from .probability_engine import ProbabilityEngineError, TransparentProbabilityEngine
 from .schedule_provider import TheSportsDbProvider
 from .schedule_sync import ScheduleSyncService, deduplicate_fixtures
 from .settlement import SettlementService
@@ -100,6 +109,11 @@ from .team_names import to_chinese_team_name
 from .recent_form import RecentFormService
 from .team_provider import EspnTeamProvider
 from .team_sync import TeamSyncService
+from .temporal_backtest import (
+    BACKTEST_VERSION,
+    TemporalBacktestService,
+    build_round6_backtest_run,
+)
 
 
 MODEL_LABELS = {
@@ -137,6 +151,52 @@ class RuntimeConfigUpdate(BaseModel):
 
     models: dict[Literal["deepseek", "chatgpt"], RuntimeModelConfigUpdate] = Field(default_factory=dict)
     portfolio: RuntimePortfolioConfigUpdate | None = None
+
+
+class Round6ProbabilityBacktestRequest(BaseModel):
+    """Strict, evaluation-only Round 6 filters."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    start: str | None = None
+    end: str | None = None
+    league: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$",
+    )
+    limit: int = Field(default=30, gt=0, le=200)
+
+    @field_validator("start", "end")
+    @classmethod
+    def validate_iso_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError as error:
+            raise ValueError("date must use ISO YYYY-MM-DD format") from error
+        if parsed.isoformat() != value:
+            raise ValueError("date must use ISO YYYY-MM-DD format")
+        return value
+
+
+class Round6ProbabilityBacktestQuery(Round6ProbabilityBacktestRequest):
+    """Strict HTTP query representation for Round 6 filters."""
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def validate_query_limit(cls, value: object) -> int:
+        if (
+            not isinstance(value, str)
+            or not value.isascii()
+            or not value.isdigit()
+        ):
+            raise ValueError("limit must be a positive integer")
+        if value.startswith("0"):
+            raise ValueError("limit must be a positive integer")
+        return int(value)
 
 
 @asynccontextmanager
@@ -340,6 +400,7 @@ automation_runner = AutomationRunner(
     football_data_service=fetch_season_csv,
     clubeelo_service=clubeelo_provider,
     dongqiudi_team_service=dongqiudi_provider,
+    squad_fallback_provider=espn_evidence_provider,
 )
 runtime_config_updated_at: str | None = None
 
@@ -1509,6 +1570,19 @@ def model_performance(
 def feature_snapshots(fixture_id: str | None = None) -> dict:
     """Return persisted P3 feature snapshots without changing predictions."""
 
+    snapshot_reader = getattr(repository, "feature_snapshots", None)
+    if callable(snapshot_reader):
+        snapshots = snapshot_reader(fixture_id=fixture_id)
+        items = [
+            {
+                "fixture_id": item.get("fixture_id"),
+                "prediction_id": item.get("prediction_id"),
+                "feature_snapshot_id": item.get("snapshot_id"),
+                "feature_snapshot": item,
+            }
+            for item in snapshots
+        ]
+        return {"items": public_payload(items), "count": len(items), "is_simulated": True}
     if fixture_id:
         predictions = repository.current_predictions_for_fixture(
             fixture_id,
@@ -1548,6 +1622,144 @@ def feature_snapshot(fixture_id: str) -> dict:
     """Return one fixture's versioned P3 features."""
 
     return feature_snapshots(fixture_id)
+
+
+@app.get("/match/{fixture_id}/features")
+def match_features(
+    fixture_id: str,
+    prediction_id: str | None = None,
+    revision: int | None = None,
+) -> dict:
+    """Return the exact persisted Feature Engine v2 inputs for a match."""
+
+    snapshot_reader = getattr(repository, "feature_snapshots", None)
+    if not callable(snapshot_reader):
+        raise HTTPException(status_code=404, detail="Feature snapshot was not found")
+    if revision is not None and not prediction_id:
+        raise HTTPException(status_code=400, detail="prediction_id is required when revision is provided")
+    snapshots = snapshot_reader(fixture_id=fixture_id, prediction_id=prediction_id)
+    audit_reader = getattr(repository, "leakage_audits", None)
+    audits = audit_reader(prediction_id=prediction_id) if callable(audit_reader) else []
+    audit_status = {
+        str(audit.get("feature_snapshot_id") or ""): str(audit.get("status") or "").upper()
+        for audit in audits
+        if audit.get("feature_snapshot_id")
+    }
+    snapshots = [
+        item
+        for item in snapshots
+        if item.get("feature_version") == "round3-feature-engine-v2"
+        and audit_status.get(str(item.get("snapshot_id") or "")) == "PASS"
+    ]
+    if revision is not None and prediction_id:
+        revision_reader = getattr(repository, "prediction_revision", None)
+        selected_revision = revision_reader(prediction_id, revision) if callable(revision_reader) else None
+        if selected_revision is None:
+            raise HTTPException(status_code=404, detail="Prediction revision was not found")
+        target_snapshot_id = (selected_revision or {}).get("feature_snapshot_id")
+        snapshots = [item for item in snapshots if item.get("snapshot_id") == target_snapshot_id]
+    if not snapshots:
+        raise HTTPException(status_code=404, detail="Feature snapshot was not found")
+    snapshot = snapshots[-1]
+    registry_reader = getattr(repository, "feature_registry", None)
+    definitions = registry_reader(status=None) if callable(registry_reader) else []
+    definitions_by_id = {str(item.get("id") or ""): item for item in definitions}
+    definitions_by_key = {
+        (str(item.get("feature_name") or ""), str(item.get("calculation_version") or "")): item
+        for item in definitions
+    }
+    enriched_features = []
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in snapshot.get("features") or []:
+        definition = definitions_by_id.get(str(item.get("registry_id") or "")) or definitions_by_key.get(
+            (str(item.get("feature_name") or ""), str(item.get("calculation_version") or ""))
+        ) or {}
+        enriched = {
+            **item,
+            "description": definition.get("description"),
+            "formula": definition.get("formula"),
+        }
+        enriched_features.append(enriched)
+        grouped.setdefault(str(item.get("feature_group") or definition.get("feature_group") or "unknown"), []).append(enriched)
+    enriched_snapshot = {**snapshot, "features": enriched_features}
+    return public_payload(
+        {
+            "fixture_id": fixture_id,
+            "feature_snapshot_id": snapshot.get("snapshot_id"),
+            "prediction_cutoff_at": snapshot.get("prediction_cutoff_at"),
+            "feature_version": snapshot.get("feature_version"),
+            "audit_status": "PASS",
+            "groups": grouped,
+            "feature_snapshot": enriched_snapshot,
+        }
+    )
+
+
+@app.get("/match/{fixture_id}/probability")
+def match_probability(
+    fixture_id: str,
+    feature_snapshot_id: str | None = None,
+) -> dict:
+    """Return Round 4 model and Round 5 market/final probabilities."""
+
+    snapshot_reader = getattr(repository, "feature_snapshots", None)
+    audit_reader = getattr(repository, "leakage_audits", None)
+    if not callable(snapshot_reader) or not callable(audit_reader):
+        raise HTTPException(status_code=404, detail="Feature snapshot was not found")
+    snapshots = [
+        item
+        for item in snapshot_reader(fixture_id=fixture_id)
+        if item.get("feature_version") == "round3-feature-engine-v2"
+    ]
+    audits = audit_reader()
+    # Audits are append-only.  A historical PASS must not override a later
+    # FAIL for the same immutable snapshot.
+    latest_audit_status: dict[str, str] = {}
+    ordered_audits = sorted(
+        enumerate(audits),
+        key=lambda pair: (
+            str(pair[1].get("audited_at") or pair[1].get("created_at") or ""),
+            pair[0],
+        ),
+    )
+    for _, audit in ordered_audits:
+        snapshot_key = str(audit.get("feature_snapshot_id") or "")
+        if snapshot_key:
+            latest_audit_status[snapshot_key] = str(audit.get("status") or "").upper()
+    pass_ids = {
+        snapshot_key for snapshot_key, status in latest_audit_status.items() if status == "PASS"
+    }
+    snapshots = [item for item in snapshots if str(item.get("snapshot_id") or "") in pass_ids]
+    if feature_snapshot_id:
+        snapshots = [
+            item for item in snapshots
+            if str(item.get("snapshot_id") or "") == str(feature_snapshot_id)
+        ]
+    else:
+        snapshots.sort(key=lambda item: str(item.get("prediction_cutoff_at") or ""))
+    if not snapshots:
+        raise HTTPException(status_code=404, detail="Audit-passed feature snapshot was not found")
+    snapshot = snapshots[-1]
+    try:
+        result = TransparentProbabilityEngine().calculate(
+            snapshot,
+            match_id=fixture_id,
+            feature_snapshot_id=str(snapshot.get("snapshot_id") or ""),
+        )
+        odds_reader = getattr(repository, "odds_snapshots", None)
+        odds_snapshots = odds_reader(fixture_id) if callable(odds_reader) else []
+        fixture_reader = getattr(repository, "fixture", None)
+        fixture = fixture_reader(fixture_id) if callable(fixture_reader) else None
+        result.update(
+            Round5ProbabilityEngine().calculate(
+                result,
+                odds_snapshots,
+                kickoff=(fixture or {}).get("kickoff"),
+            )
+        )
+    except (ProbabilityEngineError, MarketPriorError, NoMLNumericPathError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return public_payload(result)
 
 
 @app.get("/api/ensemble/{fixture_id}")
@@ -1623,7 +1835,14 @@ def historical_backtest_runs(status: str | None = None, limit: int = 100) -> dic
 
     reader = getattr(repository, "backtest_runs", None)
     items = reader(status, limit) if callable(reader) else []
-    return serialize_public({"items": items, "count": len(items), "is_simulated": True})
+    items = [_public_backtest_run(item) for item in items]
+    return serialize_public(
+        {
+            "items": items,
+            "count": len(items),
+            "is_simulated": all(item["is_simulated"] for item in items),
+        }
+    )
 
 
 @app.get("/api/backtest/runs/{run_id}")
@@ -1634,7 +1853,24 @@ def historical_backtest_run(run_id: str) -> dict:
     item = reader(run_id) if callable(reader) else None
     if item is None:
         raise HTTPException(status_code=404, detail="Backtest run was not found")
-    return serialize_public({"item": item, "is_simulated": True})
+    item = _public_backtest_run(item)
+    return serialize_public({"item": item, "is_simulated": item["is_simulated"]})
+
+
+def _public_backtest_run(item: dict) -> dict:
+    public = dict(item)
+    config = item.get("config") if isinstance(item.get("config"), dict) else {}
+    payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+    is_round6 = (
+        str(item.get("run_id") or "").startswith("round6:")
+        or item.get("code_version") == BACKTEST_VERSION
+        or config.get("backtest_version") == BACKTEST_VERSION
+        or payload.get("backtest_version") == BACKTEST_VERSION
+    )
+    public["is_simulated"] = (
+        False if is_round6 else bool(item.get("is_simulated", True))
+    )
+    return public
 
 
 @app.post("/api/admin/backtest/runs", dependencies=[Depends(require_admin)])
@@ -1692,6 +1928,95 @@ def run_advanced_backtest(payload: dict) -> dict:
     }
     repository.save_backtest_run(run)
     return {"run_id": run_id, "reused": False, "run": run}
+
+
+def _round6_probability_report(
+    *,
+    start: str | None,
+    end: str | None,
+    league: str | None,
+    limit: int,
+) -> dict:
+    offsets = []
+    for raw in str(settings.prediction_refresh_offsets_hours).split(","):
+        try:
+            value = float(raw.strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            offsets.append(value)
+    return TemporalBacktestService(
+        repository,
+        cutoff_offsets_hours=offsets,
+    ).run(
+        start_date=start,
+        end_date=end,
+        league_key=league,
+        limit=limit,
+    )
+
+
+@app.get(
+    "/api/admin/backtest/probability",
+    dependencies=[Depends(require_admin)],
+)
+def round6_probability_backtest(
+    query: Annotated[Round6ProbabilityBacktestQuery, Query()],
+) -> dict:
+    """Read persisted Round 5 audits through the evaluation-only Round 6 path."""
+
+    return serialize_public(
+        _round6_probability_report(**query.model_dump())
+    )
+
+
+def _persist_round6_backtest_run(run: dict) -> dict:
+    existing = repository.backtest_run(run["run_id"])
+    if existing is not None:
+        if existing != run:
+            raise HTTPException(
+                status_code=409,
+                detail="Round 6 run_id exists with different immutable content",
+            )
+        return {"run_id": run["run_id"], "reused": True, "run": existing}
+
+    try:
+        stored = repository.save_backtest_run(run)
+    except ValueError as error:
+        concurrent = repository.backtest_run(run["run_id"])
+        if concurrent is None or concurrent != run:
+            raise HTTPException(
+                status_code=409,
+                detail="Round 6 run_id exists with different immutable content",
+            ) from error
+        return {"run_id": run["run_id"], "reused": True, "run": concurrent}
+
+    if stored is None:
+        return {"run_id": run["run_id"], "reused": False, "run": run}
+    if stored != run:
+        raise HTTPException(
+            status_code=409,
+            detail="Round 6 run_id exists with different immutable content",
+        )
+    return {
+        "run_id": run["run_id"],
+        "reused": stored is not run,
+        "run": stored,
+    }
+
+
+@app.post(
+    "/api/admin/backtest/probability",
+    dependencies=[Depends(require_admin)],
+)
+def persist_round6_probability_backtest(
+    payload: Round6ProbabilityBacktestRequest,
+) -> dict:
+    """Explicitly persist one content-addressed Round 6 evaluation report."""
+
+    report = _round6_probability_report(**payload.model_dump())
+    run = build_round6_backtest_run(report)
+    return _persist_round6_backtest_run(run)
 
 
 @app.get("/api/historical-snapshots")
@@ -2048,11 +2373,17 @@ def fixture_explanation(fixture_id: str) -> dict:
         )
     }
     evidence = fixture.get("evidence") or unavailable_context()
-    feature_snapshot = build_feature_snapshot(
-        fixture,
-        evidence,
-        prediction.get("created_at") or prediction.get("prediction_timestamp"),
-    )
+    feature_snapshot = None
+    persisted_reader = getattr(repository, "feature_snapshot", None)
+    if prediction.get("feature_snapshot_id") and callable(persisted_reader):
+        feature_snapshot = persisted_reader(str(prediction["feature_snapshot_id"]))
+    feature_snapshot = feature_snapshot or prediction.get("feature_snapshot")
+    if not feature_snapshot:
+        feature_snapshot = build_feature_snapshot(
+            fixture,
+            evidence,
+            prediction.get("created_at") or prediction.get("prediction_timestamp"),
+        )
     graph = build_explanation_graph(
         prediction,
         feature_snapshot=feature_snapshot,
@@ -2086,11 +2417,29 @@ def fixture_market(fixture_id: str, cutoff: str | None = None) -> dict:
 
 
 @app.post("/api/admin/fixtures/{fixture_id}/market-snapshot", dependencies=[Depends(require_admin)])
-def capture_market_snapshot(fixture_id: str) -> dict:
-    """Persist idempotent market snapshots for research records."""
+def capture_market_snapshot(
+    fixture_id: str,
+    feature_snapshot_id: str | None = None,
+) -> dict:
+    """Persist idempotent research and Round 5 probability audit snapshots."""
 
     fixture = _fixture_or_404(fixture_id)
-    return market_intelligence_service.persist_market_snapshots(fixture_id, kickoff=fixture.get("kickoff"))
+    report = market_intelligence_service.persist_market_snapshots(
+        fixture_id,
+        kickoff=fixture.get("kickoff"),
+    )
+    try:
+        probability = match_probability(fixture_id, feature_snapshot_id)
+    except HTTPException as error:
+        report["round5_probability"] = {
+            "status": "unavailable",
+            "reason": str(error.detail),
+        }
+        return report
+    snapshot_id = persist_round5_market_snapshot(repository, probability)
+    report["round5_probability"] = probability
+    report["round5_market_snapshot_id"] = snapshot_id
+    return report
 
 
 @app.get(
@@ -2098,7 +2447,7 @@ def capture_market_snapshot(fixture_id: str) -> dict:
     dependencies=[Depends(require_admin)],
 )
 def preview_prediction_retention() -> dict:
-    """Preview superseded prediction and simulated-ledger cleanup."""
+    """Preview prediction rows now protected as permanent audit history."""
 
     return repository.prediction_retention_preview(DEFAULT_PROMPT_CONTRACT.version)
 
@@ -2108,7 +2457,7 @@ def preview_prediction_retention() -> dict:
     dependencies=[Depends(require_admin)],
 )
 def run_prediction_retention() -> dict:
-    """Delete superseded prediction data after producing an explicit preview."""
+    """Apply the non-destructive retention policy and return its preview."""
 
     preview = repository.prediction_retention_preview(DEFAULT_PROMPT_CONTRACT.version)
     result = repository.prune_prediction_history(DEFAULT_PROMPT_CONTRACT.version)
@@ -2165,12 +2514,15 @@ async def run_prediction(fixture_id: str) -> dict:
     """Create and save a new prediction version for one selected fixture."""
 
     fixture = _fixture_or_404(fixture_id)
-    if fixture["status"] not in {"scheduled", "live"}:
-        raise HTTPException(status_code=409, detail="比赛已结束或不可进行，不能生成预测")
+    if fixture["status"] != "scheduled" or _kickoff_started(fixture):
+        raise HTTPException(status_code=409, detail="比赛开球后赛前预测已冻结，不能生成或覆盖")
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence")
     if context is None:
         raise HTTPException(status_code=409, detail="请先同步这场比赛的真实赛前数据")
-    results = await prediction_service.create(fixture, context)
+    try:
+        results = await prediction_service.create(fixture, context)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     bets = bankroll_service.place_for_predictions(results, fixture, context)
     for item in results:
         item["execution"] = bankroll_service.execution_for_prediction(item, fixture)

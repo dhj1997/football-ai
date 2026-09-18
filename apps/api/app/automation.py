@@ -41,6 +41,7 @@ class AutomationRunner:
         football_data_service: Any | None = None,
         clubeelo_service: Any | None = None,
         dongqiudi_team_service: Any | None = None,
+        squad_fallback_provider: Any | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -57,6 +58,7 @@ class AutomationRunner:
         self.football_data_service = football_data_service
         self.clubeelo_service = clubeelo_service
         self.dongqiudi_team_service = dongqiudi_team_service
+        self.squad_fallback_provider = squad_fallback_provider
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._jobs: dict[str, tuple[int, Callable[[], Awaitable[dict[str, Any]]]]] = {
@@ -381,7 +383,7 @@ class AutomationRunner:
             return {"status": "unavailable", "reason": "repository 不支持 fixtures", "item_count": 0}
         now = datetime.now(UTC)
         fixture_reader = getattr(self.repository, "fixture", None)
-        targets: list[tuple[dict[str, Any], str]] = []
+        targets: list[tuple[dict[str, Any], str, str]] = []
         for fixture in reader():
             if fixture.get("status") != "scheduled":
                 continue
@@ -401,13 +403,13 @@ class AutomationRunner:
                     continue
                 twin_id = ((twin.get(f"{side}_team") or {}).get("provider_id") or "")
                 if twin_id:
-                    targets.append((fixture, str(twin_id)))
+                    targets.append((fixture, side, str(twin_id)))
         synced = 0
         enriched = 0
         fetch_attempts = 0
         errors: list[str] = []
         snapshot_by_team: dict[str, dict[str, Any]] = {}
-        for fixture, team_id in targets:
+        for fixture, side, team_id in targets:
             league_key = str(fixture.get("league_key") or "unknown")
             cached = (
                 snapshot_by_team.get(team_id)
@@ -424,17 +426,39 @@ class AutomationRunner:
                 try:
                     cached = await self.dongqiudi_team_service.team(team_id)
                     cached["league_key"] = league_key
-                    self.repository.save_team_snapshot(cached)
                     snapshot_by_team[team_id] = cached
                     if _snapshot_roster(cached):
+                        self.repository.save_team_snapshot(cached)
                         synced += 1
                     else:
-                        errors.append(f"{team_id}: 懂球帝返回空球员名单")
-                        continue
+                        fallback = await self._fallback_squad(fixture, side, team_id, league_key)
+                        if fallback:
+                            cached = fallback
+                            snapshot_by_team[team_id] = cached
+                            self.repository.save_team_snapshot(cached)
+                            synced += 1
+                        else:
+                            errors.append(f"{team_id}: 懂球帝返回空球员名单，备用数据源也未返回名单")
+                            continue
                 except Exception as error:
-                    errors.append(f"{team_id}: {_bounded_error(error)}")
-                    continue
+                    fallback = await self._fallback_squad(fixture, side, team_id, league_key)
+                    if fallback:
+                        cached = fallback
+                        snapshot_by_team[team_id] = cached
+                        self.repository.save_team_snapshot(cached)
+                        synced += 1
+                    else:
+                        errors.append(f"{team_id}: {_bounded_error(error)}")
+                        continue
             roster = _snapshot_roster(cached)
+            if not roster and self.squad_fallback_provider is not None:
+                fallback = await self._fallback_squad(fixture, side, team_id, league_key)
+                if fallback:
+                    cached = fallback
+                    snapshot_by_team[team_id] = cached
+                    self.repository.save_team_snapshot(cached)
+                    roster = _snapshot_roster(cached)
+                    synced += 1
             if not roster:
                 continue
             # 写回 fixture：与既有 _sync_teams 相同的 free_team_data 结构。
@@ -450,7 +474,11 @@ class AutomationRunner:
                 twin = self.repository.fixture(f"dongqiudi-{twin_match_id}") if twin_match_id else None
                 twin_team_id = str(((twin or {}).get(f"{candidate_side}_team") or {}).get("provider_id") or "")
                 if twin_team_id and twin_team_id == team_id:
-                    free_data[candidate_side] = {"profile": cached.get("team") or {}, "squad": roster, "source": "dongqiudi"}
+                    free_data[candidate_side] = {
+                        "profile": cached.get("team") or {},
+                        "squad": roster,
+                        "source": cached.get("source") or "dongqiudi",
+                    }
                     changed = True
             if changed:
                 updated["free_team_data"] = free_data
@@ -464,6 +492,40 @@ class AutomationRunner:
             "fetch_attempts": fetch_attempts,
             "item_count": synced,
             "errors": errors[:10],
+        }
+
+    async def _fallback_squad(
+        self,
+        fixture: dict[str, Any],
+        side: str,
+        team_id: str,
+        league_key: str,
+    ) -> dict[str, Any] | None:
+        """Use the match-level fallback provider when Dongqiudi has no roster."""
+
+        provider = self.squad_fallback_provider
+        fetch = getattr(provider, "fetch", None)
+        if not callable(fetch):
+            return None
+        try:
+            context = await fetch(fixture)
+        except Exception:
+            return None
+        roster = (context.get("squads") or {}).get(side)
+        if not isinstance(roster, list) or not roster:
+            return None
+        team = (context.get("teams") or {}).get(side) or fixture.get(f"{side}_team") or {}
+        season = fixture.get("season") or {}
+        season_year = season.get("year") if isinstance(season, dict) else season
+        return {
+            "league_key": league_key,
+            "team_id": team_id,
+            "season": {"year": season_year or datetime.now(UTC).year},
+            "updated_at": context.get("synced_at") or datetime.now(UTC).replace(microsecond=0).isoformat(),
+            "team": team,
+            "roster": roster,
+            "roster_count": len(roster),
+            "source": "espn-evidence-fallback",
         }
 
     def _historical_season_targets(self) -> list[tuple[str, int, int]]:
@@ -987,8 +1049,10 @@ def _team_snapshot_needs_roster_refresh(
         return True
     if _snapshot_roster(snapshot):
         return False
-    updated_at = _as_utc(snapshot.get("updated_at"))
-    return updated_at is None or now - updated_at >= ttl
+    # An empty roster is an incomplete snapshot, regardless of its timestamp.
+    # Retry it immediately so historical empty records do not remain visible
+    # until the normal roster TTL expires.
+    return True
 
 
 def _bounded_error(error: Exception) -> str:

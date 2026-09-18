@@ -14,8 +14,18 @@ from .evidence_chain import localize_evidence_players
 from .player_impact import apply_player_impact
 from .player_identity import public_payload
 from .market_decision import apply_market_decision
+from .leakage_audit import FutureDataLeakageError, LeakageAuditService
+from .market_prior import Round5ProbabilityEngine
+from .probability_engine import ProbabilityEngineError, TransparentProbabilityEngine
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT, EVIDENCE_CONTRACT_VERSION
-from .prediction_intelligence import build_feature_snapshot, parse_timestamp
+from .prediction_intelligence import (
+    FEATURE_VERSION,
+    build_feature_snapshot,
+    cutoff_safe_fixture,
+    cutoff_safe_prediction_inputs,
+    model_feature_manifest,
+    parse_timestamp,
+)
 from .historical_validation import build_raw_data_record
 from .recent_form import RecentFormService
 
@@ -43,20 +53,20 @@ class PredictionService:
         self.player_value_service = player_value_service
         self.initial_bankroll = max(0.0, float(initial_bankroll))
 
-    def _elo_ratings(self) -> dict[str, float]:
+    def _elo_ratings(self, prediction_timestamp: Any | None = None) -> dict[str, float]:
         """Elo ratings: ClubElo snapshot (professional, cross-season) overrides
         the locally computed window estimate as a fallback."""
 
         merged: dict[str, float] = {}
         try:
             fixtures = self.repository.list_fixtures()  # type: ignore[attr-defined]
-            merged.update(compute_elo(fixtures))
+            merged.update(compute_elo(fixtures, as_of=prediction_timestamp))
         except Exception:
             pass
         try:
             from .clubeelo_provider import stored_ratings
 
-            merged.update(stored_ratings(self.repository))
+            merged.update(stored_ratings(self.repository, as_of=prediction_timestamp))
         except Exception:
             pass
         return merged
@@ -68,44 +78,79 @@ class PredictionService:
         snapshot_bundle: dict[str, Any] | None = None,
         prepared_context: bool = False,
         prediction_timestamp: Any | None = None,
+        persist_production_evidence: bool = True,
     ) -> dict[str, Any]:
+        requested_cutoff = parse_timestamp(prediction_timestamp)
+        if prediction_timestamp is not None and requested_cutoff is None:
+            raise ValueError("prediction_timestamp must be an ISO timestamp")
+        preparation_cutoff = requested_cutoff or datetime.now(UTC)
+        kickoff = parse_timestamp(fixture.get("kickoff"))
+        if kickoff is not None and preparation_cutoff >= kickoff:
+            raise ValueError("比赛开球后赛前预测已冻结，不能生成或覆盖")
         if not prepared_context:
             await self.prepare_context(
                 fixture,
                 context,
-                prediction_timestamp=prediction_timestamp,
+                prediction_timestamp=preparation_cutoff,
             )
-        context.setdefault("elo", self._elo_ratings())
-        try:
-            from .team_stats import attach_team_stats
-
-            attach_team_stats(
-                self.repository,
-                fixture,
-                context,
-                prediction_timestamp=prediction_timestamp,
-            )
-        except Exception:
-            pass
-        baseline = predict(fixture, context)
-        historical_at = parse_timestamp(prediction_timestamp)
-        if historical_at:
-            baseline["created_at"] = historical_at.isoformat()
-        bundle = snapshot_bundle or self.prepare_snapshot(fixture, context)
+        # For current predictions the cutoff is the instant after evidence
+        # preparation and immediately before snapshot/model construction.
+        cutoff = requested_cutoff or datetime.now(UTC)
+        if kickoff is not None and cutoff >= kickoff:
+            raise ValueError("比赛开球后赛前预测已冻结，不能生成或覆盖")
+        safe_fixture = cutoff_safe_fixture(fixture, cutoff)
+        bundle = snapshot_bundle or self.prepare_snapshot(
+            safe_fixture,
+            context,
+            prediction_timestamp=cutoff,
+        )
         snapshot = bundle["evidence"]
         odds_snapshot = bundle.get("odds")
         standings = bundle["standings"]
-        quality = bundle["quality"]
         if snapshot_bundle is None:
             self.persist_snapshot_bundle(bundle)
-        model_input = _model_input(fixture, context, standings, quality)
-        feature_snapshot = build_feature_snapshot(
-            fixture,
+        prediction_id = str(uuid.uuid4())
+        input_audit_snapshot = build_feature_snapshot(
+            safe_fixture,
             context,
-            baseline["created_at"],
+            cutoff,
             standings=standings,
+            evidence_snapshot_id=snapshot["id"],
+            odds_snapshot_id=odds_snapshot["id"] if odds_snapshot else None,
         )
-        model_input["feature_snapshot"] = feature_snapshot
+        feature_snapshot = build_feature_snapshot(
+            safe_fixture,
+            context,
+            cutoff,
+            standings=standings,
+            evidence_snapshot_id=snapshot["id"],
+            odds_snapshot_id=odds_snapshot["id"] if odds_snapshot else None,
+            repository=self.repository,
+        )
+        feature_snapshot["prediction_id"] = prediction_id
+        feature_saver = getattr(self.repository, "save_feature_snapshot", None)
+        if callable(feature_saver):
+            feature_snapshot = feature_saver(feature_snapshot)
+        leakage_audit = LeakageAuditService(self.repository).audit_feature_snapshot(
+            feature_snapshot,
+            prediction_id=prediction_id,
+        )
+        if leakage_audit["status"] == "FAIL":
+            raise FutureDataLeakageError(
+                f"Future data leakage detected for prediction {prediction_id}"
+            )
+        safe_context, safe_standings = cutoff_safe_prediction_inputs(
+            context,
+            standings,
+            input_audit_snapshot,
+        )
+        apply_player_impact(safe_context)
+        quality = _data_completeness(safe_context, safe_standings)
+        baseline = predict(safe_fixture, safe_context)
+        baseline["id"] = prediction_id
+        baseline["created_at"] = cutoff.isoformat()
+        model_input = _model_input(safe_fixture, safe_context, safe_standings, quality)
+        model_input["feature_snapshot"] = public_payload(model_feature_manifest(feature_snapshot))
         baseline["feature_snapshot"] = feature_snapshot
         balance_reader = getattr(self.repository, "current_balance", None)
         current_balance = (
@@ -132,14 +177,18 @@ class PredictionService:
         baseline["baseline"] = baseline_summary
         baseline["model_probabilities"] = deepcopy(baseline["probabilities"])
         baseline["prediction_timestamp"] = baseline["created_at"]
-        baseline["fixture_status_at_prediction"] = fixture.get("status")
-        baseline["score_at_prediction"] = deepcopy(fixture.get("score"))
-        baseline["match_minute_at_prediction"] = fixture.get("minute") or fixture.get("elapsed")
+        baseline["prediction_cutoff_at"] = cutoff.isoformat()
+        baseline["fixture_status_at_prediction"] = safe_fixture.get("status")
+        baseline["score_at_prediction"] = deepcopy(safe_fixture.get("score"))
+        baseline["match_minute_at_prediction"] = safe_fixture.get("minute") or safe_fixture.get("elapsed")
         baseline["evidence_snapshot_id"] = snapshot["id"]
         baseline["evidence_hash"] = snapshot["content_hash"]
         baseline["evidence_version"] = snapshot.get("evidence_version") or EVIDENCE_CONTRACT_VERSION
         baseline["odds_snapshot_id"] = odds_snapshot["id"] if odds_snapshot else None
         baseline["odds_fingerprint"] = context.get("odds_fingerprint")
+        baseline["feature_snapshot_id"] = feature_snapshot["snapshot_id"]
+        baseline["feature_version"] = feature_snapshot["feature_version"]
+        baseline["leakage_audit"] = leakage_audit
         baseline["prompt_version"] = DEFAULT_PROMPT_CONTRACT.version
         baseline["data_completeness"] = quality["score"]
         baseline["evidence_fields"] = quality["fields"]
@@ -147,13 +196,37 @@ class PredictionService:
         baseline["competition_id"] = self.competition_id
 
         if fixture.get("is_demo"):
-            return self._save_degraded(baseline, context, "skipped_demo", "演示数据不会发送给模型")
+            return self._save_degraded(
+                baseline,
+                safe_context,
+                "skipped_demo",
+                "演示数据不会发送给模型",
+                kickoff=kickoff,
+                odds_snapshot=odds_snapshot,
+                persist_production_evidence=persist_production_evidence,
+            )
         if not self.model_provider.configured:
-            return self._save_degraded(baseline, context, "unconfigured", "未配置对应的 AI 模型密钥")
+            return self._save_degraded(
+                baseline,
+                safe_context,
+                "unconfigured",
+                "未配置对应的 AI 模型密钥",
+                kickoff=kickoff,
+                odds_snapshot=odds_snapshot,
+                persist_production_evidence=persist_production_evidence,
+            )
         try:
             response = await self.model_provider.assess(model_input)
         except Exception as error:
-            return self._save_degraded(baseline, context, "failed", f"模型请求失败：{_bounded_error(error)}")
+            return self._save_degraded(
+                baseline,
+                safe_context,
+                "failed",
+                f"模型请求失败：{_bounded_error(error)}",
+                kickoff=kickoff,
+                odds_snapshot=odds_snapshot,
+                persist_production_evidence=persist_production_evidence,
+            )
 
         assessment = response["assessment"]
         probabilities = assessment["probabilities"]
@@ -188,11 +261,26 @@ class PredictionService:
             "provider_failures": response.get("provider_failures") or [],
         }
         _attach_experiment_metadata(baseline, self.model_key)
-        baseline = apply_market_decision(baseline, context)
-        self._save_current(baseline)
+        baseline = apply_market_decision(baseline, safe_context)
+        self._save_current(
+            baseline,
+            kickoff=kickoff,
+            odds_snapshot=odds_snapshot,
+            persist_production_evidence=persist_production_evidence,
+        )
         return baseline
 
-    def _save_degraded(self, prediction: dict[str, Any], context: dict[str, Any], status: str, reason: str) -> dict[str, Any]:
+    def _save_degraded(
+        self,
+        prediction: dict[str, Any],
+        context: dict[str, Any],
+        status: str,
+        reason: str,
+        *,
+        kickoff: datetime | None,
+        odds_snapshot: dict[str, Any] | None,
+        persist_production_evidence: bool,
+    ) -> dict[str, Any]:
         prediction["predicted_outcome"] = max(
             prediction["probabilities"], key=prediction["probabilities"].get
         )
@@ -238,7 +326,12 @@ class PredictionService:
         prediction = apply_market_decision(prediction, context)
         prediction["model_key"] = self.model_key
         prediction["competition_id"] = self.competition_id
-        self._save_current(prediction)
+        self._save_current(
+            prediction,
+            kickoff=kickoff,
+            odds_snapshot=odds_snapshot,
+            persist_production_evidence=persist_production_evidence,
+        )
         return prediction
 
     async def prepare_context(
@@ -260,13 +353,44 @@ class PredictionService:
         if self.player_value_service is not None:
             await self.player_value_service.enrich(context, str(fixture.get("league_key") or ""))
         apply_player_impact(context)
+        context.setdefault("elo", self._elo_ratings(prediction_timestamp))
+        try:
+            from .team_stats import attach_team_stats
 
-    def prepare_snapshot(self, fixture: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        standings = _standings_evidence(self.repository, fixture)
+            attach_team_stats(
+                self.repository,
+                fixture,
+                context,
+                prediction_timestamp=prediction_timestamp,
+            )
+        except Exception:
+            pass
+
+    def prepare_snapshot(
+        self,
+        fixture: dict[str, Any],
+        context: dict[str, Any],
+        *,
+        prediction_timestamp: Any | None = None,
+    ) -> dict[str, Any]:
+        standings = _standings_evidence(
+            self.repository,
+            fixture,
+            prediction_timestamp=prediction_timestamp,
+        )
         quality = _data_completeness(context, standings)
         return {
-            "evidence": _evidence_snapshot(fixture, context, standings),
-            "odds": _odds_snapshot(fixture, context),
+            "evidence": _evidence_snapshot(
+                fixture,
+                context,
+                standings,
+                captured_at=prediction_timestamp,
+            ),
+            "odds": _odds_snapshot(
+                fixture,
+                context,
+                captured_at=prediction_timestamp,
+            ),
             "standings": standings,
             "quality": quality,
         }
@@ -312,24 +436,161 @@ class PredictionService:
                 # Raw provenance is additive; preserve the existing prediction path on failure.
                 continue
 
-    def _save_current(self, prediction: dict[str, Any]) -> None:
-        self.repository.save(prediction)
-        prune = getattr(self.repository, "prune_prediction_history", None)
-        if callable(prune):
-            prune(
-                DEFAULT_PROMPT_CONTRACT.version,
-                competition_id=self.competition_id,
-                fixture_id=prediction["fixture_id"],
-                model_key=self.model_key,
+    def _save_current(
+        self,
+        prediction: dict[str, Any],
+        *,
+        kickoff: datetime | None,
+        odds_snapshot: dict[str, Any] | None,
+        persist_production_evidence: bool = True,
+    ) -> None:
+        if (
+            kickoff is not None
+            and not bool(getattr(self.repository, "is_historical_replay", False))
+            and _utc_now() >= kickoff
+        ):
+            raise ValueError("模型返回时比赛已开球，赛前预测已冻结，不能写入")
+        expected_goals = prediction.get("expected_goals") or {}
+        revision = {
+            "prediction_id": prediction["id"],
+            "match_id": prediction["fixture_id"],
+            "fixture_id": prediction["fixture_id"],
+            "competition_id": self.competition_id,
+            "model_key": self.model_key,
+            "prediction_cutoff_at": prediction.get("prediction_cutoff_at") or prediction["created_at"],
+            "model_version": prediction["model_version"],
+            "feature_version": prediction.get("feature_version") or FEATURE_VERSION,
+            "feature_snapshot_id": prediction.get("feature_snapshot_id"),
+            "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
+            "probability_home": (prediction.get("probabilities") or {}).get("home"),
+            "probability_draw": (prediction.get("probabilities") or {}).get("draw"),
+            "probability_away": (prediction.get("probabilities") or {}).get("away"),
+            "expected_home_goals": expected_goals.get("home"),
+            "expected_away_goals": expected_goals.get("away"),
+            "uncertainty": prediction.get("uncertainty") or {
+                "forecast_confidence": prediction.get("forecast_confidence")
+            },
+            "data_quality": {
+                "score": prediction.get("data_completeness"),
+                "fields": prediction.get("evidence_fields") or {},
+            },
+            "model_agreement": prediction.get("model_agreement"),
+            "created_at": prediction["created_at"],
+        }
+        is_historical_replay = bool(
+            getattr(self.repository, "is_historical_replay", False)
+        )
+        production_saver = None
+        if not is_historical_replay and persist_production_evidence:
+            production_saver = getattr(
+                self.repository,
+                "save_prediction_with_production_evidence",
+                None,
             )
+        production_evidence_reason = None
+        stored_market_snapshot = None
+        if not is_historical_replay and callable(production_saver):
+            if kickoff is None:
+                raise ValueError("Production prediction kickoff is required")
+            leakage_audit = prediction.get("leakage_audit") or {}
+            leakage_audit_id = str(leakage_audit.get("audit_id") or "")
+            if not leakage_audit_id:
+                raise ValueError("Production prediction leakage audit id is required")
+            try:
+                round4_result = TransparentProbabilityEngine().calculate(
+                    prediction.get("feature_snapshot") or {},
+                    match_id=str(prediction["fixture_id"]),
+                    feature_snapshot_id=prediction.get("feature_snapshot_id"),
+                )
+            except ProbabilityEngineError as error:
+                if str(error) != "insufficient critical feature evidence for both teams":
+                    raise
+                production_saver = None
+                production_evidence_reason = "insufficient_critical_feature_evidence"
+            if callable(production_saver):
+                odds_reader = getattr(self.repository, "odds_snapshots", None)
+                if callable(odds_reader):
+                    round5_odds = list(
+                        odds_reader(str(prediction["fixture_id"])) or []
+                    )
+                else:
+                    round5_odds = [odds_snapshot] if odds_snapshot else []
+                round5_result = Round5ProbabilityEngine().calculate(
+                    round4_result,
+                    round5_odds,
+                    kickoff=kickoff,
+                )
+                model_probability = dict(round5_result["model_probability"])
+                round5_audit = round5_result["round5_probability_audit"]
+                revision.update(
+                    {
+                        "probabilities": model_probability,
+                        "model_probabilities": model_probability,
+                        "probability_home": model_probability["home"],
+                        "probability_draw": model_probability["draw"],
+                        "probability_away": model_probability["away"],
+                        "probability_model_version": round5_audit.get(
+                            "probability_model_version"
+                        ),
+                        "probability_calculation_version": round5_audit.get(
+                            "probability_calculation_version"
+                        ),
+                    }
+                )
+        if not is_historical_replay and callable(production_saver):
+            stored = production_saver(
+                prediction,
+                revision,
+                round5_result,
+                kickoff_at=kickoff,
+                leakage_audit_id=leakage_audit_id,
+            )
+            stored_revision = (
+                stored.get("revision") if isinstance(stored, dict) else None
+            )
+            stored_market_snapshot = (
+                stored.get("market_snapshot") if isinstance(stored, dict) else None
+            )
+            if not isinstance(stored_revision, dict):
+                raise ValueError(
+                    "Production evidence writer did not return a prediction revision"
+                )
+        else:
+            atomic_saver = getattr(self.repository, "save_prediction_with_revision", None)
+            if callable(atomic_saver):
+                stored_revision = atomic_saver(prediction, revision)
+            else:
+                self.repository.save(prediction)
+                revision_saver = getattr(self.repository, "save_prediction_revision", None)
+                stored_revision = revision_saver(revision) if callable(revision_saver) else None
+        if stored_revision:
+            prediction["revision_number"] = stored_revision.get("revision_number")
+            if callable(production_saver):
+                prediction["prediction_revision_id"] = (
+                    f"{prediction['id']}:{stored_revision['revision_number']}"
+                )
+                if isinstance(stored_market_snapshot, dict):
+                    prediction["round5_market_snapshot_id"] = stored_market_snapshot.get(
+                        "market_snapshot_id"
+                    )
+            elif production_evidence_reason:
+                prediction["production_evidence_status"] = "unavailable"
+                prediction["production_evidence_reason"] = production_evidence_reason
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _evidence_snapshot(
     fixture: dict[str, Any],
     context: dict[str, Any],
     standings: dict[str, Any],
+    *,
+    captured_at: Any | None = None,
 ) -> dict[str, Any]:
-    created_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    captured = parse_timestamp(captured_at) or datetime.now(UTC)
+    created_at = captured.isoformat()
     payload = {"fixture": fixture, "context": context, "standings": standings}
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return {
@@ -345,11 +606,16 @@ def _evidence_snapshot(
     }
 
 
-def _odds_snapshot(fixture: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
+def _odds_snapshot(
+    fixture: dict[str, Any],
+    context: dict[str, Any],
+    *,
+    captured_at: Any | None = None,
+) -> dict[str, Any] | None:
     odds = context.get("odds")
     if not isinstance(odds, dict):
         return None
-    captured_at = datetime.now(UTC).isoformat()
+    captured_at = (parse_timestamp(captured_at) or datetime.now(UTC)).isoformat()
     source_updated_at = str(odds.get("updated_at")) if odds.get("updated_at") else None
     source = odds.get("source") or context.get("source") or "unknown"
     bookmaker = odds.get("bookmaker")
@@ -498,12 +764,32 @@ def _model_availability(value: Any) -> dict[str, Any]:
     return availability
 
 
-def _standings_evidence(repository: Any, fixture: dict[str, Any]) -> dict[str, Any]:
+def _standings_evidence(
+    repository: Any,
+    fixture: dict[str, Any],
+    *,
+    prediction_timestamp: Any | None = None,
+) -> dict[str, Any]:
     reader = getattr(repository, "league_snapshots", None)
     snapshots = reader(fixture.get("league_key")) if callable(reader) else []
-    snapshot = snapshots[0] if snapshots else {}
+    cutoff = parse_timestamp(prediction_timestamp)
+    eligible = [
+        item
+        for item in snapshots
+        if cutoff is None
+        or (
+            (updated_at := parse_timestamp(item.get("updated_at"))) is not None
+            and updated_at <= cutoff
+        )
+    ]
+    snapshot = max(
+        eligible,
+        key=lambda item: parse_timestamp(item.get("updated_at")) or datetime.min.replace(tzinfo=UTC),
+        default={},
+    )
     table = snapshot.get("standings") or []
     return {
+        "snapshot_id": snapshot.get("snapshot_id") or snapshot.get("id"),
         "source": snapshot.get("source"),
         "season": snapshot.get("season"),
         "updated_at": snapshot.get("updated_at"),

@@ -15,6 +15,8 @@ from typing import Any, Mapping
 
 import httpx
 
+from .prediction_intelligence import parse_timestamp
+
 BASE_URL = "https://api.clubelo.com"
 
 
@@ -98,13 +100,17 @@ def sync_ratings(repository: Any, csv_text: str, *, localize: Any = None) -> dic
     return {"status": "ok", "ratings": len(ratings), "updated_at": now}
 
 
-def stored_ratings(repository: Any) -> dict[str, float]:
+def stored_ratings(repository: Any, *, as_of: Any | None = None) -> dict[str, float]:
     """Read the stored rating map (Chinese name -> rating) for predictions."""
 
     reader = getattr(repository, "team_snapshot", None)
     if not callable(reader):
         return {}
     snapshot = reader("clubeelo", "ratings") or {}
+    cutoff = parse_timestamp(as_of)
+    updated_at = parse_timestamp(snapshot.get("updated_at"))
+    if cutoff is not None and (updated_at is None or updated_at > cutoff):
+        return {}
     ratings = (snapshot.get("payload") or snapshot).get("ratings") or {}
     result: dict[str, float] = {}
     for key, item in ratings.items():

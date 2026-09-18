@@ -27,7 +27,7 @@ def set_fitted_params_provider(provider: Callable[[], dict | None] | None) -> No
     _FITTED_PARAMS_PROVIDER = provider
 
 
-def _league_fitted_params(league_key: Any) -> dict | None:
+def _league_fitted_params(league_key: Any, *, as_of: Any | None = None) -> dict | None:
     if _FITTED_PARAMS_PROVIDER is None:
         return None
     try:
@@ -36,9 +36,33 @@ def _league_fitted_params(league_key: Any) -> dict | None:
         if not entry or entry.get("status") != "ok":
             # 不足样本的联赛没有可用参数：不注入、不挂拟合版本后缀。
             return None
-        return {**entry, "fitted_version": data.get("fitted_version")}
+        cutoff = _parse_timestamp(as_of)
+        training_cutoff = _parse_timestamp(data.get("training_cutoff"))
+        if as_of is not None and (
+            cutoff is None
+            or training_cutoff is None
+            or training_cutoff > cutoff
+        ):
+            return None
+        return {
+            **entry,
+            "fitted_version": data.get("fitted_version"),
+            "training_cutoff": data.get("training_cutoff"),
+        }
     except Exception:
         return None
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _dixon_coles_tau(home_goals: int, away_goals: int, home_xg: float, away_xg: float, rho: float = POISSON_DC_RHO) -> float:
@@ -148,7 +172,10 @@ def predict(fixture: dict, context: dict) -> dict:
     impact = context.get("player_impact") or {}
     home_retention = _attack_retention(impact.get("home"), lineup.get("home_strength"))
     away_retention = _attack_retention(impact.get("away"), lineup.get("away_strength"))
-    fitted = _league_fitted_params(fixture.get("league_key"))
+    fitted = _league_fitted_params(
+        fixture.get("league_key"),
+        as_of=context.get("prediction_cutoff_at") or recent.get("as_of"),
+    )
     baseline_home = float(fitted.get("home_xg")) if fitted and fitted.get("home_xg") else DEFAULT_HOME_XG_BASELINE
     baseline_away = float(fitted.get("away_xg")) if fitted and fitted.get("away_xg") else DEFAULT_AWAY_XG_BASELINE
     rho = max(-0.2, min(0.0, float(fitted.get("rho")))) if fitted and fitted.get("rho") is not None else POISSON_DC_RHO
@@ -328,4 +355,3 @@ def _attack_retention(impact: dict | None, legacy_strength: object) -> float:
         return min(1.0, max(0.5, float(legacy_strength)))
     except (TypeError, ValueError):
         return 1.0
-

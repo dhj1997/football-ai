@@ -19,7 +19,7 @@ from typing import Any, Callable, Iterable, Mapping
 from sqlalchemy import text
 
 ENVIRONMENTS: tuple[str, ...] = ("local", "test", "staging", "production")
-MIGRATION_VERSION = "p15-migrations-v1"
+MIGRATION_VERSION = "round6.5-production-evidence-v1"
 
 
 class EnvironmentContract:
@@ -95,6 +95,42 @@ MIGRATIONS: tuple[dict[str, Any], ...] = (
             "CREATE TABLE IF NOT EXISTS research_runs (run_id VARCHAR(255) PRIMARY KEY, status VARCHAR(32) NOT NULL, job_id VARCHAR(255) NULL, created_at VARCHAR(64) NOT NULL, payload TEXT NOT NULL)",
         ),
     },
+    {
+        "id": "0005-round2-data-integrity",
+        "description": "Add point-in-time feature, prediction revision and leakage audit tables",
+        "statements": (
+            "CREATE TABLE IF NOT EXISTS feature_snapshots (snapshot_id VARCHAR(255) PRIMARY KEY, fixture_id VARCHAR(255) NOT NULL, prediction_id VARCHAR(255) NULL, evidence_snapshot_id VARCHAR(255) NULL, prediction_cutoff_at VARCHAR(64) NOT NULL, computed_at VARCHAR(64) NOT NULL, feature_version VARCHAR(128) NOT NULL, leakage_detected BOOLEAN NOT NULL, payload LONGTEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS feature_values (feature_value_id VARCHAR(255) PRIMARY KEY, snapshot_id VARCHAR(255) NOT NULL, ordinal INTEGER NOT NULL, feature_name VARCHAR(255) NOT NULL, feature_value LONGTEXT NOT NULL, source VARCHAR(255) NOT NULL, source_record_id VARCHAR(255) NOT NULL, computed_at VARCHAR(64) NOT NULL, available_at VARCHAR(64) NULL, prediction_cutoff_at VARCHAR(64) NOT NULL, feature_version VARCHAR(128) NOT NULL, payload LONGTEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS prediction_revisions (prediction_id VARCHAR(255) NOT NULL, revision_number INTEGER NOT NULL, fixture_id VARCHAR(255) NOT NULL, competition_id VARCHAR(128) NOT NULL, model_key VARCHAR(64) NOT NULL, prediction_cutoff_at VARCHAR(64) NOT NULL, model_version VARCHAR(128) NOT NULL, feature_version VARCHAR(128) NOT NULL, feature_snapshot_id VARCHAR(255) NOT NULL, evidence_snapshot_id VARCHAR(255) NOT NULL, probability_home DECIMAL(10, 8) NOT NULL, probability_draw DECIMAL(10, 8) NOT NULL, probability_away DECIMAL(10, 8) NOT NULL, expected_home_goals DECIMAL(10, 6) NULL, expected_away_goals DECIMAL(10, 6) NULL, uncertainty TEXT NULL, data_quality TEXT NULL, model_agreement TEXT NULL, created_at VARCHAR(64) NOT NULL, payload LONGTEXT NOT NULL, PRIMARY KEY (prediction_id, revision_number), UNIQUE (competition_id, fixture_id, model_key, revision_number))",
+            "CREATE TABLE IF NOT EXISTS leakage_audits (audit_id VARCHAR(255) PRIMARY KEY, prediction_id VARCHAR(255) NOT NULL, feature_snapshot_id VARCHAR(255) NULL, status VARCHAR(16) NOT NULL, prediction_cutoff_at VARCHAR(64) NULL, violations LONGTEXT NOT NULL, features_checked INTEGER NOT NULL, features_passed INTEGER NOT NULL, features_failed INTEGER NOT NULL, audited_at VARCHAR(64) NOT NULL, payload LONGTEXT NOT NULL)",
+        ),
+    },
+    {
+        "id": "0006-round3-feature-engine",
+        "description": "Add Feature Engine v2 registry, value metadata and player impact rules",
+        "statements": (
+            "CREATE TABLE IF NOT EXISTS feature_registry (id VARCHAR(255) PRIMARY KEY, feature_name VARCHAR(255) NOT NULL, feature_group VARCHAR(32) NOT NULL, entity_type VARCHAR(32) NOT NULL, description TEXT NOT NULL, formula TEXT NOT NULL, source VARCHAR(255) NOT NULL, calculation_version VARCHAR(128) NOT NULL, status VARCHAR(32) NOT NULL, created_at VARCHAR(64) NOT NULL, deprecated_at VARCHAR(64) NULL, payload LONGTEXT NOT NULL, UNIQUE (feature_name, calculation_version))",
+            "CREATE TABLE IF NOT EXISTS player_impact_rules (id VARCHAR(255) PRIMARY KEY, player_id VARCHAR(255) NOT NULL, role VARCHAR(64) NOT NULL, impact_type VARCHAR(64) NOT NULL, impact_value DECIMAL(12, 6) NOT NULL, confidence DECIMAL(8, 6) NOT NULL, source VARCHAR(255) NOT NULL, available_at VARCHAR(64) NOT NULL, rule_version VARCHAR(128) NOT NULL, status VARCHAR(32) NOT NULL, created_at VARCHAR(64) NOT NULL, deprecated_at VARCHAR(64) NULL, payload LONGTEXT NOT NULL)",
+        ),
+        "column_additions": (
+            ("feature_values", "registry_id", "VARCHAR(255) NULL"),
+            ("feature_values", "entity_type", "VARCHAR(32) NULL"),
+            ("feature_values", "entity_id", "VARCHAR(255) NULL"),
+            ("feature_values", "value_type", "VARCHAR(32) NULL"),
+            ("feature_values", "calculation_version", "VARCHAR(128) NULL"),
+            ("feature_values", "source_record_ids", "LONGTEXT NULL"),
+            ("feature_values", "quality_score", "DECIMAL(8, 6) NULL"),
+            ("feature_values", "missing_reason", "VARCHAR(255) NULL"),
+        ),
+    },
+    {
+        "id": "0007-round6-5-production-evidence",
+        "description": "Add nullable physical persistence time for Round 5 evidence",
+        "statements": (),
+        "column_additions": (
+            ("market_snapshots", "persisted_at", "VARCHAR(64) NULL"),
+        ),
+    },
 )
 
 
@@ -158,6 +194,18 @@ def run_migrations(repository: Any, *, dry_run: bool = True) -> dict[str, Any]:
                         connection.execute(text("ROLLBACK TO SAVEPOINT migration_dry_run"))
                 else:
                     connection.execute(text(statement))
+            ensure_column = getattr(repository, "_ensure_column", None)
+            for table, column, definition in migration.get("column_additions", ()):
+                if not callable(ensure_column):
+                    raise RuntimeError("repository does not support idempotent column migrations")
+                if dry_run:
+                    connection.execute(text("SAVEPOINT migration_column_dry_run"))
+                    try:
+                        ensure_column(connection, table, column, definition)
+                    finally:
+                        connection.execute(text("ROLLBACK TO SAVEPOINT migration_column_dry_run"))
+                else:
+                    ensure_column(connection, table, column, definition)
             applied.append({"id": migration["id"], "description": migration["description"]})
         if not dry_run:
             now = datetime.now(UTC).replace(microsecond=0).isoformat()

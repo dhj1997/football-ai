@@ -79,6 +79,112 @@ def test_migrations_apply_is_idempotent_and_recorded(tmp_path) -> None:
     assert count == len(MIGRATIONS)
 
 
+def test_migrations_upgrade_pre_round2_database(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "pre-round2.db"))
+    from sqlalchemy import inspect, text
+
+    with repository.engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE schema_migrations ("
+                "migration_id VARCHAR(64) PRIMARY KEY, "
+                "description VARCHAR(255) NOT NULL, "
+                "applied_at VARCHAR(64) NOT NULL)"
+            )
+        )
+        for migration in MIGRATIONS:
+            if migration["id"] == "0005-round2-data-integrity":
+                break
+            for statement in migration["statements"]:
+                connection.execute(text(statement))
+            connection.execute(
+                text(
+                    "INSERT INTO schema_migrations (migration_id, description, applied_at) "
+                    "VALUES (:migration_id, :description, :applied_at)"
+                ),
+                {
+                    "migration_id": migration["id"],
+                    "description": migration["description"],
+                    "applied_at": "2026-09-14T00:00:00+00:00",
+                },
+            )
+
+    result = run_migrations(repository, dry_run=False)
+
+    assert [item["id"] for item in result["applied"]] == [
+        "0005-round2-data-integrity",
+        "0006-round3-feature-engine",
+        "0007-round6-5-production-evidence",
+    ]
+    assert {
+        "feature_snapshots",
+        "feature_values",
+        "prediction_revisions",
+        "leakage_audits",
+    }.issubset(inspect(repository.engine).get_table_names())
+    market_columns = {
+        column["name"]: column
+        for column in inspect(repository.engine).get_columns("market_snapshots")
+    }
+    assert market_columns["persisted_at"]["nullable"] is True
+
+
+def test_round3_migration_upgrades_pre_round3_database(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "pre-round3.db"))
+    from sqlalchemy import inspect, text
+
+    with repository.engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE schema_migrations ("
+                "migration_id VARCHAR(64) PRIMARY KEY, "
+                "description VARCHAR(255) NOT NULL, "
+                "applied_at VARCHAR(64) NOT NULL)"
+            )
+        )
+        for migration in MIGRATIONS:
+            if migration["id"] == "0006-round3-feature-engine":
+                break
+            for statement in migration["statements"]:
+                connection.execute(text(statement))
+            connection.execute(
+                text(
+                    "INSERT INTO schema_migrations (migration_id, description, applied_at) "
+                    "VALUES (:migration_id, :description, :applied_at)"
+                ),
+                {
+                    "migration_id": migration["id"],
+                    "description": migration["description"],
+                    "applied_at": "2026-09-15T00:00:00+00:00",
+                },
+            )
+
+    result = run_migrations(repository, dry_run=False)
+
+    assert [item["id"] for item in result["applied"]] == [
+        "0006-round3-feature-engine",
+        "0007-round6-5-production-evidence",
+    ]
+    schema = inspect(repository.engine)
+    assert {"feature_registry", "player_impact_rules"}.issubset(schema.get_table_names())
+    feature_columns = {column["name"] for column in schema.get_columns("feature_values")}
+    assert {
+        "registry_id",
+        "entity_type",
+        "entity_id",
+        "value_type",
+        "calculation_version",
+        "source_record_ids",
+        "quality_score",
+        "missing_reason",
+    }.issubset(feature_columns)
+    market_columns = {
+        column["name"]: column
+        for column in schema.get_columns("market_snapshots")
+    }
+    assert market_columns["persisted_at"]["nullable"] is True
+
+
 def test_sqlite_backup_is_verified_by_restoring(tmp_path) -> None:
     database_path = tmp_path / "prod.db"
     repository = PredictionRepository(str(database_path))

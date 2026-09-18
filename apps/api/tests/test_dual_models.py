@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime
 from types import MethodType, SimpleNamespace
 
@@ -108,6 +109,38 @@ def test_prediction_services_run_for_both_models() -> None:
     assert set(started) == {"deepseek", "chatgpt"}
 
 
+def test_dual_models_assign_one_production_evidence_owner() -> None:
+    ownership: dict[str, bool] = {}
+
+    class Service(FakePredictionService):
+        async def create(
+            self,
+            fixture: dict,
+            context: dict,
+            persist_production_evidence: bool = True,
+        ) -> dict:
+            ownership[self.model_key] = persist_production_evidence
+            return {
+                "id": f"prediction-{self.model_key}",
+                "model_key": self.model_key,
+                "model_probabilities": {"home": 0.5, "draw": 0.3, "away": 0.2},
+            }
+
+    started: list[str] = []
+    service = DualPredictionService(
+        {
+            "deepseek": Service("deepseek", started),
+            "chatgpt": Service("chatgpt", started),
+        },
+        "dual",
+    )
+
+    results = asyncio.run(service.create(fixture(), {}))
+
+    assert len(results) == 2
+    assert ownership == {"deepseek": True, "chatgpt": False}
+
+
 def test_player_names_are_resolved_once_before_both_models() -> None:
     started: list[str] = []
     service = DualPredictionService(
@@ -156,6 +189,44 @@ def test_live_ensemble_uses_registry_weights_and_keeps_poisson_baseline() -> Non
     assert ensemble["weights_source"] == "model_registry"
     assert ensemble["weights"]["poisson"] == 0.7
     assert ensemble["base_predictions"]["poisson"] == {"home": 0.3, "draw": 0.3, "away": 0.4}
+
+
+def test_ensemble_annotation_does_not_mutate_saved_pre_match_prediction() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.saved: list[dict] = []
+
+        def fixture_settlements(self, **_filters: object) -> list[dict]:
+            return []
+
+        def update_prediction(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("an ensemble annotation must not update a frozen prediction")
+
+    class Service:
+        def __init__(self, model_key: str, repository: Repository) -> None:
+            self.model_key = model_key
+            self.model_provider = FakeProvider()
+            self.repository = repository
+
+        async def create(self, _fixture: dict, _context: dict) -> dict:
+            result = {
+                "id": f"prediction-{self.model_key}",
+                "model_key": self.model_key,
+                "model_probabilities": {"home": 0.7, "draw": 0.2, "away": 0.1},
+            }
+            self.repository.saved.append(deepcopy(result))
+            return result
+
+    repository = Repository()
+    service = DualPredictionService(
+        {"deepseek": Service("deepseek", repository), "chatgpt": Service("chatgpt", repository)},
+        "dual",
+    )
+
+    results = asyncio.run(service.create(fixture(), {}))
+
+    assert results[0]["p3_ensemble"]["ensemble_probabilities"]
+    assert all("p3_ensemble" not in item for item in repository.saved)
 
 
 def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_path) -> None:

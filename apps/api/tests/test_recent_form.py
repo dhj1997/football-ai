@@ -84,6 +84,82 @@ def test_recent_form_reports_insufficient_and_home_away_splits() -> None:
     assert result["home_form"]["sample_status"] == "insufficient"
 
 
+def test_rolling_features_do_not_use_future_matches() -> None:
+    cutoff = datetime(2026, 9, 15, 12, tzinfo=UTC)
+    fixtures = [
+        _fixture(index, kickoff=cutoff - timedelta(days=index))
+        for index in range(1, 13)
+    ]
+    unavailable_result = _fixture(
+        99,
+        kickoff=cutoff - timedelta(minutes=30),
+    )
+    unavailable_result["completed_at"] = (cutoff + timedelta(hours=1)).isoformat()
+    unavailable_result["score"] = {"home": 99, "away": 0}
+    fixtures.append(unavailable_result)
+
+    result = RecentFormService(FakeRepository(fixtures)).team_form(
+        "team:epl:home",
+        as_of=cutoff,
+        league="EPL",
+    )
+
+    assert result["season_matches_used"] == 12
+    assert "canonical-99" not in result["season_source_record_ids"]
+    assert all(item["available_at"] <= cutoff.isoformat() for item in result["matches"])
+    for window in (3, 5, 8, 10):
+        assert result["rolling"][f"last_{window}"]["sample_count"] == window
+    assert result["season_average"]["sample_count"] == 12
+    assert result["season_average"]["goals_for"] < 99
+
+
+def test_season_average_excludes_prior_seasons_when_season_is_inferred() -> None:
+    cutoff = datetime(2026, 9, 15, 12, tzinfo=UTC)
+    current_season = [
+        _fixture(index, kickoff=cutoff - timedelta(days=index))
+        for index in range(1, 4)
+    ]
+    prior_season = _fixture(90, kickoff=datetime(2026, 5, 1, 12, tzinfo=UTC))
+    prior_season["score"] = {"home": 90, "away": 0}
+    target = {
+        "id": "upcoming-season-boundary",
+        "league_key": "epl",
+        "kickoff": (cutoff + timedelta(days=1)).isoformat(),
+        "home_team": TEAM,
+        "away_team": OPPONENT,
+    }
+
+    context = RecentFormService(
+        FakeRepository([*current_season, prior_season])
+    ).context_for_fixture(target, as_of=cutoff)
+
+    assert context is not None
+    assert context["snapshot"]["home"]["season_matches_used"] == 3
+    assert "canonical-90" not in context["snapshot"]["home"]["season_source_record_ids"]
+
+
+def test_date_only_result_is_available_from_next_day() -> None:
+    cutoff = datetime(2026, 9, 15, 18, tzinfo=UTC)
+    fixture = _fixture(91, kickoff=cutoff.replace(hour=12))
+    fixture["kickoff_date_only"] = True
+
+    before_next_day = RecentFormService(FakeRepository([fixture])).team_form(
+        "team:epl:home",
+        as_of=cutoff,
+        league="EPL",
+    )
+    next_day = RecentFormService(FakeRepository([fixture])).team_form(
+        "team:epl:home",
+        as_of=cutoff + timedelta(days=1),
+        league="EPL",
+    )
+
+    assert before_next_day["matches"] == []
+    assert next_day["matches"][0]["availability_basis"] == (
+        "inferred_next_day_from_date_only_kickoff"
+    )
+
+
 def test_recent_form_isolated_by_league_and_as_of_snapshot_feeds_p3() -> None:
     cutoff = datetime(2026, 8, 30, 12, tzinfo=UTC)
     fixtures = [_fixture(index, kickoff=cutoff - timedelta(days=index)) for index in range(1, 4)]

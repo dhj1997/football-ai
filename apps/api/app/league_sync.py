@@ -67,9 +67,17 @@ class LeagueSyncService:
             return await self._refresh()
 
     async def _refresh(self) -> dict[str, Any]:
+        from .team_names import to_chinese_team_name
+
         snapshots = await self.provider.standings()
         supported = {definition.key for definition in self.competitions}
         snapshots = [snapshot for snapshot in snapshots if str(snapshot.get("league_key") or "") in supported]
+        for snapshot in snapshots:
+            # 积分行队名统一翻译成中文，保证与赛程/比赛的球队名可匹配。
+            for row in snapshot.get("standings") or []:
+                team = row.get("team") or {}
+                if team.get("name"):
+                    team["name"] = to_chinese_team_name(str(team["name"]))
         self.repository.save_league_snapshots(snapshots)
         return self._state("updated", snapshots)
 

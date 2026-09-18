@@ -14,12 +14,14 @@ from .prompt_contract import DEFAULT_PROMPT_CONTRACT
 from .prediction_service import PredictionService
 
 
-P7_3_VERSION = "p7.3-historical-multimodel-v1"
+P7_3_VERSION = "p7.3-historical-multimodel-v2"
 MODEL_ALIASES = {"gpt": "chatgpt", "chatgpt": "chatgpt", "deepseek": "deepseek"}
 
 
 class _HistoricalWriteBarrier:
     """Delegate reads while making PredictionService persistence methods no-ops."""
+
+    is_historical_replay = True
 
     def __init__(self, repository: Any) -> None:
         self.repository = repository
@@ -32,6 +34,22 @@ class _HistoricalWriteBarrier:
 
     def save(self, *_: Any, **__: Any) -> None:
         return None
+
+    def save_feature_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return snapshot
+
+    def save_leakage_audit(self, audit: dict[str, Any]) -> dict[str, Any]:
+        return audit
+
+    def save_prediction_revision(self, revision: dict[str, Any]) -> dict[str, Any]:
+        return {**revision, "revision_number": revision.get("revision_number") or 1}
+
+    def save_prediction_with_revision(
+        self,
+        prediction: dict[str, Any],
+        revision: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {**(revision or prediction), "revision_number": (revision or {}).get("revision_number") or 1}
 
     def prune_prediction_history(self, *_: Any, **__: Any) -> None:
         return None

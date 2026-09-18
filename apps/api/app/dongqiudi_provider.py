@@ -236,17 +236,39 @@ class DongqiudiProvider:
         return {"odds": {} if isinstance(odds, Exception) else odds, "dongqiudi_analysis": {"errors": [str(odds)[:240]]} if isinstance(analysis, Exception) else analysis}
 
     async def team(self, team_id: str | int) -> dict[str, Any]:
-        """Fetch the public team profile and one-time roster."""
+        """Fetch the profile and roster used by the public ``/team/{id}`` page.
+
+        The page uses the profile endpoint first, then loads the roster tab from
+        ``member_v2``.  Some fixture feeds provide the internal ``500xxxxx`` ID
+        while the page URL uses ``xxxxx`` (and vice versa), so retry with the
+        profile's canonical ID when the first roster response is empty.
+        """
 
         team_id = str(team_id)
-        profile, roster = await asyncio.gather(
-            self._get_json(f"{self.base_url}/api/data/v1/detail/team/{team_id}", params={"app": "dqd", "lang": "zh-cn"}),
-            self._get_json(f"{self.sport_data_base_url}/soccer/biz/dqd/v1/team/member_v2/{team_id}", params={"app": "dqd"}),
+        profile = await self._get_json(
+            f"{self.base_url}/api/data/v1/detail/team/{team_id}",
+            params={"app": "dqd", "lang": "zh-cn"},
         )
         base = profile.get("base_info") or profile.get("base_info_v_1") or {}
         if not base:
             raise RuntimeError(f"Dongqiudi returned incomplete team profile: {team_id}")
-        sections = ((roster.get("data") or {}).get("list") or [])
+        canonical_id = str(base.get("team_id") or "")
+        roster_ids = list(dict.fromkeys(item for item in (team_id, canonical_id) if item))
+        roster: dict[str, Any] = {}
+        sections: list[dict[str, Any]] = []
+        roster_id_used = team_id
+        for roster_id in roster_ids:
+            candidate = await self._get_json(
+                f"{self.sport_data_base_url}/soccer/biz/dqd/v1/team/member_v2/{roster_id}",
+                params={"app": "dqd"},
+            )
+            candidate_sections = _team_member_sections(candidate)
+            if candidate_sections:
+                roster, sections = candidate, candidate_sections
+                roster_id_used = roster_id
+                break
+        if not sections:
+            raise RuntimeError(f"懂球帝球队页阵容为空：{team_id}")
         players: list[dict[str, Any]] = []
         coaches: list[dict[str, Any]] = []
         for section in sections:
@@ -263,6 +285,8 @@ class DongqiudiProvider:
                     "position": title or item.get("type") or "未知位置",
                     "nationality": item.get("nationality_name"),
                     "photo": item.get("person_logo") or None,
+                    "shirt_number": item.get("shirtnumber") or None,
+                    "statistics": item.get("statistic") or [],
                     "market_value": None,
                     "market_value_currency": "EUR",
                     "market_value_source": None,
@@ -286,6 +310,8 @@ class DongqiudiProvider:
             "coach": coaches,
             "roster_count": len(players),
             "source": "dongqiudi",
+            "team_page_url": f"{self.base_url}/team/{team_id.removeprefix('500')}",
+            "roster_endpoint": f"{self.sport_data_base_url}/soccer/biz/dqd/v1/team/member_v2/{roster_id_used}",
             "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
             "raw_profile": profile,
         }
@@ -315,9 +341,9 @@ class DongqiudiProvider:
             return "asian_qualifiers"
         if name in {"欧国联", "欧洲国家联赛", "uefa nations league", "nations league"} and area in {"欧洲", "europe"}:
             return "nations_league"
-        if "英超" in name or "premier league" in name:
+        if ("英超" in name or "premier league" in name) and area in {"英格兰", "英国", "england", "united kingdom"}:
             return "epl"
-        if "西甲" in name or "laliga" in name or "la liga" in name:
+        if ("西甲" in name or "laliga" in name or "la liga" in name) and area in {"西班牙", "spain", "españa"}:
             return "laliga"
         return None
 
@@ -378,6 +404,17 @@ def _integer(value: Any) -> int | None:
         return int(value) if value not in (None, "") else None
     except (TypeError, ValueError):
         return None
+
+
+def _team_member_sections(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the roster groups returned by the team page's member tab."""
+
+    data = payload.get("data")
+    if isinstance(data, dict):
+        sections = data.get("list")
+    else:
+        sections = data
+    return [item for item in (sections or []) if isinstance(item, dict) and item.get("data")]
 
 
 def _hongkong_water_to_decimal(value: Any) -> float | None:

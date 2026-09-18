@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any, Iterable, Mapping
 
 from .historical_validation import parse_timestamp
+from .recent_form import result_available_at
 
 FITTING_VERSION = "model-fitting-v1"
 MAX_GOALS = 10
@@ -97,8 +98,10 @@ def _finished_rows(fixture_rows: Iterable[Mapping[str, Any]]) -> Iterable[tuple[
         league = normalize_competition_key(
             row.get("canonical_league") or row.get("league_key")
         ) or str(row.get("canonical_league") or row.get("league_key") or "").casefold()
-        kickoff = parse_timestamp(row.get("kickoff"))
-        yield league, int(score["home"]), int(score["away"]), kickoff.isoformat() if kickoff else ""
+        available_at = result_available_at(row)
+        if available_at is None:
+            continue
+        yield league, int(score["home"]), int(score["away"]), available_at.isoformat()
 
 
 def fit_from_repository(repository: Any, *, min_matches: int = 30) -> dict[str, Any]:
@@ -107,11 +110,10 @@ def fit_from_repository(repository: Any, *, min_matches: int = 30) -> dict[str, 
     reader = getattr(repository, "list_fixtures", None)
     fixture_rows = reader() if callable(reader) else []
     by_league: dict[str, list[tuple[int, int]]] = {}
-    kickoffs: list[str] = []
-    for league, home, away, kickoff in _finished_rows(fixture_rows or []):
+    result_availability: list[str] = []
+    for league, home, away, available_at in _finished_rows(fixture_rows or []):
         by_league.setdefault(league or "unknown", []).append((home, away))
-        if kickoff:
-            kickoffs.append(kickoff)
+        result_availability.append(available_at)
     leagues: dict[str, Any] = {}
     for league, scores in sorted(by_league.items()):
         result = fit_league(scores)
@@ -125,7 +127,7 @@ def fit_from_repository(repository: Any, *, min_matches: int = 30) -> dict[str, 
         "fitted_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "dataset": {
             "finished_matches": sum(len(scores) for scores in by_league.values()),
-            "training_cutoff": max(kickoffs) if kickoffs else None,
+            "training_cutoff": max(result_availability) if result_availability else None,
             "leagues": {league: len(scores) for league, scores in sorted(by_league.items())},
         },
         "leagues": leagues,
@@ -170,5 +172,7 @@ def load_fitted_params(repository: Any) -> dict[str, Any] | None:
                 "fitted_version": row.get("model_version"),
                 "leagues": parameters,
                 "fitted_at": row.get("created_at"),
+                "training_cutoff": row.get("training_cutoff")
+                or ((row.get("payload") or {}).get("dataset") or {}).get("training_cutoff"),
             }
     return None

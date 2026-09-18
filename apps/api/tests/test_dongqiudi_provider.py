@@ -7,9 +7,50 @@ from app.data import CHINA_TZ
 from app.dongqiudi_sync import DongqiudiSyncService, _dongqiudi_recent_matches, odds_fingerprint
 
 
+@pytest.mark.asyncio
+async def test_dongqiudi_team_uses_profile_id_when_page_roster_is_empty() -> None:
+    calls = []
+
+    class Provider(DongqiudiProvider):
+        async def _get_json(self, url, *, params):
+            calls.append(url)
+            if "/detail/team/77677" in url:
+                return {"base_info": {"team_id": "50077677", "team_name": "武汉三镇"}}
+            if url.endswith("/member_v2/77677"):
+                return {"data": {"list": []}}
+            assert url.endswith("/member_v2/50077677")
+            return {"data": {"list": [{"title": "前锋", "data": [{"person_id": "1", "person_name": "John Doe", "age": "21岁"}]}]}}
+
+    result = await Provider().team("77677")
+
+    assert result["roster_count"] == 1
+    assert result["roster"][0]["name"] != "John Doe"
+    assert result["team_page_url"].endswith("/team/77677")
+    assert calls[-1].endswith("/member_v2/50077677")
+
+
+@pytest.mark.asyncio
+async def test_dongqiudi_team_rejects_empty_page_roster() -> None:
+    class Provider(DongqiudiProvider):
+        async def _get_json(self, url, *, params):
+            if "/detail/team/" in url:
+                return {"base_info": {"team_id": "50077677", "team_name": "武汉三镇"}}
+            return {"data": {"list": []}}
+
+    with pytest.raises(RuntimeError, match="阵容为空"):
+        await Provider().team("77677")
+
+
 def test_dongqiudi_does_not_map_malaysia_fa_cup_to_china_fa_cup() -> None:
     assert DongqiudiProvider.normalize_league({"name": "马足协杯", "area_name": "马来西亚"}) is None
     assert DongqiudiProvider.normalize_league({"name": "中国足协杯", "area_name": "中国"}) == "cfa_cup"
+
+
+def test_dongqiudi_does_not_map_foreign_league_named_laliga_or_premier_league() -> None:
+    assert DongqiudiProvider.normalize_league({"name": "西甲", "area_name": "其他"}) is None
+    assert DongqiudiProvider.normalize_league({"name": "英超", "area_name": "澳大利亚"}) is None
+    assert DongqiudiProvider.normalize_league({"name": "西甲", "area_name": "西班牙"}) == "laliga"
+    assert DongqiudiProvider.normalize_league({"name": "Premier League", "area_name": "England"}) == "epl"
 
 
 def test_dongqiudi_maps_requested_international_competitions() -> None:

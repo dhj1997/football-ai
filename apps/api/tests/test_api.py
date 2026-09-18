@@ -19,9 +19,162 @@ from app.data import CHINA_TZ, demo_context, demo_fixtures, unavailable_context
 from app.main import app, deepseek_provider, evidence_provider, player_name_service, repository, schedule_provider, schedule_sync, settings
 from app.prediction import predict
 from app.prompt_contract import DEFAULT_PROMPT_CONTRACT
+import app.main as main_module
 
 
 client = TestClient(app)
+
+
+def test_match_features_resolves_exact_audit_passed_revision(monkeypatch) -> None:
+    snapshots = [
+        {
+            "snapshot_id": "feature:old",
+            "fixture_id": "fixture-explain",
+            "prediction_cutoff_at": "2026-09-16T10:00:00+00:00",
+            "feature_version": "round3-feature-engine-v2",
+            "features": [
+                {
+                    "feature_name": "team_elo",
+                    "feature_group": "elo",
+                    "feature_value": 1510.0,
+                    "calculation_version": "elo-feature-v1",
+                    "registry_id": "feature:team_elo:elo-feature-v1",
+                }
+            ],
+        },
+        {
+            "snapshot_id": "feature:new",
+            "fixture_id": "fixture-explain",
+            "prediction_cutoff_at": "2026-09-16T11:00:00+00:00",
+            "feature_version": "round3-feature-engine-v2",
+            "features": [],
+        },
+    ]
+
+    class FeatureRepository:
+        def feature_snapshots(self, **kwargs):
+            return deepcopy(snapshots)
+
+        def leakage_audits(self, **kwargs):
+            return [
+                {"feature_snapshot_id": "feature:old", "status": "PASS"},
+                {"feature_snapshot_id": "feature:new", "status": "PASS"},
+            ]
+
+        def prediction_revision(self, prediction_id, revision):
+            assert prediction_id == "prediction-explain"
+            assert revision == 1
+            return {"feature_snapshot_id": "feature:old"}
+
+        def feature_registry(self, **kwargs):
+            return [
+                {
+                    "id": "feature:team_elo:elo-feature-v1",
+                    "feature_name": "team_elo",
+                    "feature_group": "elo",
+                    "calculation_version": "elo-feature-v1",
+                    "description": "Competition-scoped overall team Elo",
+                    "formula": "Standard Elo",
+                }
+            ]
+
+    monkeypatch.setattr(main_module, "repository", FeatureRepository())
+
+    response = client.get(
+        "/match/fixture-explain/features",
+        params={"prediction_id": "prediction-explain", "revision": 1},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["feature_snapshot_id"] == "feature:old"
+    assert payload["audit_status"] == "PASS"
+    assert payload["groups"]["elo"][0]["formula"] == "Standard Elo"
+
+
+def test_match_probability_adds_cutoff_safe_round5_market_layers(monkeypatch) -> None:
+    cutoff = "2026-09-16T10:00:00+00:00"
+    fixture_id = "fixture-round5-api"
+    feature_snapshot = {
+        "snapshot_id": "feature:round5-api",
+        "fixture_id": fixture_id,
+        "prediction_cutoff_at": cutoff,
+        "computed_at": cutoff,
+        "feature_version": "round3-feature-engine-v2",
+        "leakage_detected": False,
+        "leakage_check": {"passed": True, "violations": []},
+        "features": [
+            {
+                "feature_name": "team_elo",
+                "feature_value": value,
+                "source": "completed_match_results",
+                "status": "available",
+                "quality_score": 0.9,
+                "available_at": cutoff,
+                "prediction_cutoff_at": cutoff,
+                "feature_version": "round3-feature-engine-v2",
+                "side": side,
+            }
+            for side, value in (("home", 1520.0), ("away", 1480.0))
+        ],
+    }
+    odds_snapshot = {
+        "id": "odds:round5-api",
+        "fixture_id": fixture_id,
+        "captured_at": cutoff,
+        "source_updated_at": cutoff,
+        "source": "dongqiudi",
+        "bookmaker": "market-a",
+        "quotes": [
+            {
+                "market": "1x2",
+                "selection": selection,
+                "price": price,
+                "source": "dongqiudi",
+                "bookmaker": "market-a",
+                "captured_at": cutoff,
+                "source_updated_at": cutoff,
+            }
+            for selection, price in (("home", 2.0), ("draw", 3.5), ("away", 4.0))
+        ],
+    }
+
+    class Round5Repository:
+        def feature_snapshots(self, **kwargs):
+            return [deepcopy(feature_snapshot)]
+
+        def leakage_audits(self, **kwargs):
+            return [
+                {
+                    "feature_snapshot_id": feature_snapshot["snapshot_id"],
+                    "status": "PASS",
+                    "audited_at": cutoff,
+                }
+            ]
+
+        def odds_snapshots(self, requested_fixture_id):
+            assert requested_fixture_id == fixture_id
+            return [deepcopy(odds_snapshot)]
+
+        def fixture(self, requested_fixture_id):
+            assert requested_fixture_id == fixture_id
+            return {"id": fixture_id, "kickoff": "2026-09-16T12:00:00+00:00"}
+
+    monkeypatch.setattr(main_module, "repository", Round5Repository())
+
+    response = client.get(f"/match/{fixture_id}/probability")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["market_status"] == "MODEL_PLUS_MARKET"
+    assert payload["market_fusion_applied"] is True
+    assert payload["market_prior_detail"]["source_odds_snapshot_ids"] == ["odds:round5-api"]
+    assert abs(sum(payload["model_probability"].values()) - 1.0) < 1e-10
+    assert abs(sum(payload["market_prior"].values()) - 1.0) < 1e-10
+    assert abs(sum(payload["final_probability"].values()) - 1.0) < 1e-10
+    assert payload["round5_probability_audit"]["market_fusion_count"] == 1
+    for outcome in ("home", "draw", "away"):
+        assert abs(payload["probabilities"][outcome] - payload["model_probability"][outcome]) < 1e-10
 
 
 def test_runtime_model_config_requires_admin_and_updates_in_process() -> None:
@@ -191,6 +344,168 @@ def test_p3_intelligence_endpoints_return_read_only_contracts() -> None:
     assert client.get("/api/historical-snapshots").status_code == 200
     assert client.get("/api/backtest/runs").status_code == 200
     assert client.get("/api/backtest/runs/missing-run").status_code == 404
+
+
+def test_round6_probability_backtest_rejects_non_strict_filters(monkeypatch) -> None:
+    headers = {"x-admin-key": "dev-admin-key"}
+    received_filters = []
+    monkeypatch.setattr(
+        main_module,
+        "_round6_probability_report",
+        lambda **filters: received_filters.append(filters) or {"status": "insufficient_data"},
+    )
+    invalid_queries = (
+        {"limit": "1.0"},
+        {"limit": "0"},
+        {"start": "2026-09-17T00:00:00Z"},
+        {"start": "2026-02-30"},
+        {"league": "Premier League"},
+        {"league": ""},
+        {"model_weight": "0.70"},
+        {"search": "weights"},
+    )
+    invalid_bodies = (
+        {"limit": True},
+        {"limit": 1.0},
+        {"limit": 0},
+        {"limit": "30"},
+        {"end": "2026-09-17T00:00:00Z"},
+        {"end": "2026-02-30"},
+        {"league": "EPL"},
+        {"league": " epl"},
+        {"market_weight": 0.40},
+        {"search": "weights"},
+    )
+
+    valid = client.get(
+        "/api/admin/backtest/probability",
+        headers=headers,
+        params={
+            "start": "2026-09-01",
+            "end": "2026-09-17",
+            "league": "epl",
+            "limit": "30",
+        },
+    )
+    assert valid.status_code == 200
+    assert received_filters == [
+        {
+            "start": "2026-09-01",
+            "end": "2026-09-17",
+            "league": "epl",
+            "limit": 30,
+        }
+    ]
+    for params in invalid_queries:
+        response = client.get(
+            "/api/admin/backtest/probability",
+            headers=headers,
+            params=params,
+        )
+        assert response.status_code == 422, params
+    for payload in invalid_bodies:
+        response = client.post(
+            "/api/admin/backtest/probability",
+            headers=headers,
+            json=payload,
+        )
+        assert response.status_code == 422, payload
+
+
+def test_backtest_run_simulation_flag_is_derived_per_run(monkeypatch) -> None:
+    runs = [
+        {
+            "run_id": "backtest:legacy",
+            "name": "p12-rolling",
+            "code_version": "p12-backtest-v1",
+        },
+        {
+            "run_id": "round6:probability",
+            "name": "round6-temporal-probability-evaluation",
+            "code_version": "round6-v1",
+            "config": {"backtest_version": "round6-v1"},
+        },
+    ]
+
+    class BacktestRepository:
+        def backtest_runs(self, _status=None, _limit=100):
+            return deepcopy(runs)
+
+        def backtest_run(self, run_id):
+            return next(
+                (deepcopy(item) for item in runs if item["run_id"] == run_id),
+                None,
+            )
+
+    monkeypatch.setattr(main_module, "repository", BacktestRepository())
+
+    listed = client.get("/api/backtest/runs")
+    legacy = client.get("/api/backtest/runs/backtest:legacy")
+    round6 = client.get("/api/backtest/runs/round6:probability")
+
+    assert listed.status_code == 200
+    listed_by_id = {item["run_id"]: item for item in listed.json()["items"]}
+    assert listed_by_id["backtest:legacy"]["is_simulated"] is True
+    assert listed_by_id["round6:probability"]["is_simulated"] is False
+    assert listed.json()["is_simulated"] is False
+    assert legacy.json()["is_simulated"] is True
+    assert legacy.json()["item"]["is_simulated"] is True
+    assert round6.json()["is_simulated"] is False
+    assert round6.json()["item"]["is_simulated"] is False
+
+
+def test_round6_backtest_persistence_rejects_collisions_and_reuses_races(
+    monkeypatch,
+) -> None:
+    run = {
+        "run_id": "round6:stable",
+        "name": "round6-temporal-probability-evaluation",
+        "started_at": "2026-09-17T00:00:00+00:00",
+        "status": "insufficient_data",
+        "payload": {"backtest_version": "round6-v1"},
+    }
+    monkeypatch.setattr(
+        main_module,
+        "_round6_probability_report",
+        lambda **_filters: {"status": "insufficient_data"},
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_round6_backtest_run",
+        lambda _report: deepcopy(run),
+    )
+
+    class ConflictingRepository:
+        def backtest_run(self, _run_id):
+            return {**deepcopy(run), "status": "ok"}
+
+        def save_backtest_run(self, _run):
+            raise AssertionError("conflicting run must not be saved")
+
+    monkeypatch.setattr(main_module, "repository", ConflictingRepository())
+    conflict = client.post(
+        "/api/admin/backtest/probability",
+        headers={"x-admin-key": "dev-admin-key"},
+        json={},
+    )
+    assert conflict.status_code == 409
+
+    class RacingRepository:
+        def backtest_run(self, _run_id):
+            return None
+
+        def save_backtest_run(self, candidate):
+            return deepcopy(candidate)
+
+    monkeypatch.setattr(main_module, "repository", RacingRepository())
+    raced = client.post(
+        "/api/admin/backtest/probability",
+        headers={"x-admin-key": "dev-admin-key"},
+        json={},
+    )
+    assert raced.status_code == 200
+    assert raced.json()["reused"] is True
+    assert raced.json()["run"] == run
 
 
 def test_p5_data_registry_and_history_endpoints_are_read_only() -> None:
@@ -444,11 +759,11 @@ def test_prediction_requires_admin_key() -> None:
     assert response.status_code == 401
 
 
-def test_prediction_allows_started_and_live_fixtures_but_rejects_finished() -> None:
-    for fixture_id, status, kickoff_delta, expected_status in (
-        ("api-started-scheduled", "scheduled", timedelta(minutes=-5), 200),
-        ("api-live", "live", timedelta(minutes=-30), 200),
-        ("api-finished", "finished", timedelta(hours=-2), 409),
+def test_prediction_rejects_all_post_kickoff_pre_match_writes() -> None:
+    for fixture_id, status, kickoff_delta in (
+        ("api-started-scheduled", "scheduled", timedelta(minutes=-5)),
+        ("api-live", "live", timedelta(minutes=-30)),
+        ("api-finished", "finished", timedelta(hours=-2)),
     ):
         fixture = seed_real_fixture(fixture_id, 7000 + len(fixture_id))
         fixture.update(
@@ -466,15 +781,8 @@ def test_prediction_allows_started_and_live_fixtures_but_rejects_finished() -> N
             headers={"x-admin-key": "dev-admin-key"},
         )
 
-        assert response.status_code == expected_status
-        if expected_status == 200:
-            payload = response.json()
-            assert payload["predictions"]
-            assert payload["bets"] == []
-            assert all(item["fixture_status_at_prediction"] == status for item in payload["predictions"])
-            assert all(item["score_at_prediction"] == fixture["score"] for item in payload["predictions"])
-        else:
-            assert "不能生成预测" in response.json()["detail"]
+        assert response.status_code == 409
+        assert "赛前预测已冻结" in response.json()["detail"]
 
 
 def test_fixture_detail_never_falls_back_to_legacy_prediction_bet() -> None:

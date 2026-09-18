@@ -3,8 +3,10 @@
 import asyncio
 import inspect
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
+from .leakage_audit import FutureDataLeakageError
 from .prediction_intelligence import build_performance_profiles, weighted_ensemble
 
 
@@ -40,6 +42,10 @@ class DualPredictionService:
         historical_snapshot: dict[str, Any] | None = None,
         prediction_timestamp: Any | None = None,
     ) -> list[dict[str, Any]]:
+        requested_timestamp = prediction_timestamp or (historical_snapshot or {}).get(
+            "prediction_timestamp"
+        )
+        preparation_timestamp = requested_timestamp or datetime.now(UTC).isoformat()
         selected = [self.services[key] for key in (model_keys or self.model_keys) if key in self.services]
         if not selected:
             return []
@@ -55,13 +61,23 @@ class DualPredictionService:
         if snapshot_bundle is None and callable(prepare_context) and callable(prepare_snapshot):
             context_parameters = inspect.signature(prepare_context).parameters
             context_kwargs = {
-                "prediction_timestamp": prediction_timestamp,
-            } if prediction_timestamp is not None and "prediction_timestamp" in context_parameters else {}
+                "prediction_timestamp": preparation_timestamp,
+            } if "prediction_timestamp" in context_parameters else {}
             await prepare_context(fixture, context, **context_kwargs)
-            snapshot_bundle = prepare_snapshot(fixture, context)
+            snapshot_timestamp = requested_timestamp or datetime.now(UTC).isoformat()
+            snapshot_parameters = inspect.signature(prepare_snapshot).parameters
+            snapshot_kwargs = {
+                "prediction_timestamp": snapshot_timestamp,
+            } if "prediction_timestamp" in snapshot_parameters else {}
+            snapshot_bundle = prepare_snapshot(fixture, context, **snapshot_kwargs)
             if callable(persist_snapshot_bundle):
                 persist_snapshot_bundle(snapshot_bundle)
             prepared_context = True
+        prediction_timestamp = (
+            requested_timestamp
+            or ((snapshot_bundle or {}).get("evidence") or {}).get("captured_at")
+            or datetime.now(UTC).isoformat()
+        )
         async def create_one(service: Any) -> Any:
             parameters = inspect.signature(service.create).parameters
             kwargs: dict[str, Any] = {}
@@ -71,6 +87,8 @@ class DualPredictionService:
                 kwargs["prepared_context"] = prepared_context or snapshot_bundle is not None
             if prediction_timestamp is not None and "prediction_timestamp" in parameters:
                 kwargs["prediction_timestamp"] = prediction_timestamp
+            if "persist_production_evidence" in parameters:
+                kwargs["persist_production_evidence"] = service is primary
             return await service.create(fixture, context, **kwargs)
 
         results = await asyncio.gather(
@@ -78,8 +96,11 @@ class DualPredictionService:
             return_exceptions=True,
         )
         predictions: list[dict[str, Any]] = []
+        leakage_errors: list[FutureDataLeakageError] = []
         for service, result in zip(selected, results):
             if isinstance(result, Exception):
+                if isinstance(result, FutureDataLeakageError):
+                    leakage_errors.append(result)
                 logger.warning(
                     "prediction failed for fixture %s model %s: %r",
                     fixture.get("id"),
@@ -90,6 +111,8 @@ class DualPredictionService:
                 continue
             else:
                 predictions.append(result)
+        if leakage_errors:
+            raise leakage_errors[0]
         base_predictions = {
             str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek"): item.get("model_probabilities") or item.get("probabilities") or {}
             for item in predictions
@@ -125,19 +148,11 @@ class DualPredictionService:
             league_key=fixture.get("league_key"),
         )
         ensemble["weights_source"] = "model_registry" if learned_weights else "defaults"
-        repository = getattr(primary, "repository", None)
-        metadata_updater = getattr(repository, "update_prediction", None)
-        for item in predictions:
-            item["p3_ensemble"] = ensemble
-            if callable(metadata_updater) and item.get("id"):
-                metadata = {
-                    **(item.get("metadata") or {}),
-                    "p3_ensemble": ensemble,
-                }
-                try:
-                    metadata_updater(item["id"], {"metadata": metadata})
-                except Exception:
-                    # P3 explainability must not make an otherwise valid prediction fail.
-                    continue
-                item["metadata"] = metadata
-        return predictions
+        # The individual services have already persisted their immutable
+        # pre-match prediction and revision by this point.  The ensemble is a
+        # derived response annotation; writing it back through
+        # ``update_prediction`` would mutate the serving payload without a
+        # corresponding append-only revision.  Return shallow copies so even
+        # in-memory repository fakes cannot observe that annotation as a
+        # mutation of the persisted object.
+        return [{**item, "p3_ensemble": ensemble} for item in predictions]

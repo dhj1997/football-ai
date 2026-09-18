@@ -76,6 +76,25 @@ const dateTabs: Array<{ key: DateFilter; label: string }> = [
   { key: "history", label: "历史" },
 ];
 
+const FAVORITES_KEY = "greencompass:favorite-fixtures";
+
+function readFavorites(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(window.localStorage.getItem(FAVORITES_KEY) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+function writeFavorites(ids: string[]) {
+  try {
+    window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(ids));
+  } catch {
+    return;
+  }
+}
+
 function DateStrip({
   selected,
   onSelect,
@@ -365,11 +384,15 @@ function FixtureRow({
   selected = false,
   onSelect,
   href,
+  isFavorite = false,
+  onToggleFavorite,
 }: {
   fixture: Fixture;
   selected?: boolean;
   onSelect?: () => void;
   href?: string;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
 }) {
   const [renderedAt] = useState(() => Date.now());
   const kickoffHasPassed = new Date(fixture.kickoff).getTime() <= renderedAt;
@@ -412,10 +435,39 @@ function FixtureRow({
               : "neutral";
   const content = (
     <>
-      <span className="flex w-14 shrink-0 flex-col items-start gap-1.5">
+      {onToggleFavorite ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleFavorite();
+          }}
+          aria-label={isFavorite ? "取消关注" : "关注这场比赛"}
+          aria-pressed={isFavorite}
+          className={`shrink-0 self-start text-sm leading-none transition-colors ${
+            isFavorite ? "text-amber-400" : "text-slate-600 hover:text-slate-400"
+          }`}
+        >
+          {isFavorite ? "★" : "☆"}
+        </button>
+      ) : null}
+      <span className="flex w-20 shrink-0 flex-col items-start gap-1">
         <strong className="font-mono text-xs font-bold tabular-nums text-slate-300">
           {formatKickoff(fixture.kickoff)}
         </strong>
+        <span
+          className="inline-flex max-w-full items-center gap-1 rounded-md border border-slate-700 bg-pitch-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
+          title={fixture.league.name || fixture.league_key.toUpperCase()}
+          aria-label={`联赛 ${fixture.league.name || fixture.league_key.toUpperCase()}`}
+        >
+          <i
+            aria-hidden="true"
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${leagueDot(fixture.league_key)}`}
+          />
+          <span className="truncate">
+            {fixture.league.name || fixture.league_key.toUpperCase()}
+          </span>
+        </span>
         <StatusBadge variant={rowStatusVariant}>{statusText}</StatusBadge>
       </span>
       <span className="flex min-w-0 flex-1 items-center justify-center gap-2">
@@ -802,6 +854,10 @@ function ScoreCenterHome({
   selectedId,
   detail,
   onSelect,
+  favorites,
+  onlyFavorites,
+  onToggleOnlyFavorites,
+  onToggleFavorite,
 }: {
   fixtures: Fixture[];
   loading: boolean;
@@ -809,8 +865,15 @@ function ScoreCenterHome({
   selectedId: string | null;
   detail: FixtureDetail | null;
   onSelect: (fixtureId: string) => void;
+  favorites: string[];
+  onlyFavorites: boolean;
+  onToggleOnlyFavorites: () => void;
+  onToggleFavorite: (fixtureId: string) => void;
 }) {
-  const orderedFixtures = [...fixtures].sort((left, right) => {
+  const visibleFixtures = onlyFavorites
+    ? fixtures.filter((fixture) => favorites.includes(fixture.id))
+    : fixtures;
+  const orderedFixtures = [...visibleFixtures].sort((left, right) => {
     const priority = {
       live: 0,
       scheduled: 1,
@@ -823,7 +886,6 @@ function ScoreCenterHome({
       new Date(left.kickoff).getTime() - new Date(right.kickoff).getTime()
     );
   });
-  const groups = groupFixturesByLeague(orderedFixtures);
   const emptyMessage =
     dataMode === "unconfigured"
       ? "请先配置赛程数据源"
@@ -840,21 +902,39 @@ function ScoreCenterHome({
         <SectionHeader
           eyebrow="FIXTURE QUEUE"
           title="比赛列表"
-          meta={`${fixtures.length} 场 · 按状态与时间排序`}
+          meta={`${visibleFixtures.length} 场 · 按状态与时间排序`}
         />
+        <button
+          type="button"
+          onClick={onToggleOnlyFavorites}
+          aria-pressed={onlyFavorites}
+          className={`self-start rounded-lg px-3 py-1.5 text-xs transition-colors ${
+            onlyFavorites
+              ? "bg-amber-500/20 text-amber-400"
+              : "bg-pitch-800 text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          {onlyFavorites ? "★ 只看已关注" : "☆ 只看已关注"}
+        </button>
         {loading ? (
           <LoadingState className="border-0 bg-transparent">
             正在读取比赛
           </LoadingState>
-        ) : groups.length ? (
-          groups.map((group) => (
-            <FixtureGroupCard
-              key={group.league.id}
-              group={group}
-              selectedFixtureId={selectedFixture?.id ?? null}
-              onSelect={onSelect}
-            />
-          ))
+        ) : orderedFixtures.length ? (
+          <Card className="overflow-hidden">
+            <div className="divide-y divide-slate-800/60">
+              {orderedFixtures.map((fixture) => (
+                <FixtureRow
+                  key={fixture.id}
+                  fixture={fixture}
+                  selected={fixture.id === selectedFixture?.id}
+                  onSelect={() => onSelect(fixture.id)}
+                  isFavorite={favorites.includes(fixture.id)}
+                  onToggleFavorite={() => onToggleFavorite(fixture.id)}
+                />
+              ))}
+            </div>
+          </Card>
         ) : (
           <EmptyState icon={<CalendarDays size={20} aria-hidden="true" />}>
             {emptyMessage}
@@ -1047,7 +1127,17 @@ const positionLabels: Record<string, string> = {
   Midfielder: "中场",
   Attacker: "前锋",
   Forward: "前锋",
+  Other: "其他",
 };
+
+function squadPosition(position: string) {
+  const value = position.trim().toLocaleLowerCase();
+  if (["goalkeeper", "门将", "守门员"].includes(value)) return "Goalkeeper";
+  if (["defender", "后卫"].includes(value)) return "Defender";
+  if (["midfielder", "中场"].includes(value)) return "Midfielder";
+  if (["attacker", "forward", "前锋"].includes(value)) return "Attacker";
+  return "Other";
+}
 
 function playerNameStatus(player: { name_status?: string }) {
   return player.name_status === "machine_translated" ? "自动音译" : "";
@@ -1095,10 +1185,10 @@ function SquadTable({
   teamName: string;
   players: SquadPlayer[];
 }) {
-  const groups = ["Goalkeeper", "Defender", "Midfielder", "Attacker", "Forward"]
+  const groups = ["Goalkeeper", "Defender", "Midfielder", "Attacker", "Other"]
     .map((position) => ({
       position,
-      rows: players.filter((player) => player.position === position),
+      rows: players.filter((player) => squadPosition(player.position) === position),
     }))
     .filter((group) => group.rows.length > 0);
   return (
@@ -3157,6 +3247,8 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
   // 日期横条选中的具体日期（ISO）；设置后优先于 dateFilter 生效。
   const [specificDate, setSpecificDate] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState<string[]>(() => readFavorites());
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
   const leagueFilter = "all" as const;
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -3254,6 +3346,16 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
       active = false;
     };
   }, [selectedId]);
+
+  function toggleFavorite(fixtureId: string) {
+    setFavorites((current) => {
+      const next = current.includes(fixtureId)
+        ? current.filter((id) => id !== fixtureId)
+        : [...current, fixtureId];
+      writeFavorites(next);
+      return next;
+    });
+  }
 
   async function runPrediction() {
     if (!selectedId) return;
@@ -3396,6 +3498,10 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
             setSuccess(null);
             setSelectedId(fixtureId);
           }}
+          favorites={favorites}
+          onlyFavorites={onlyFavorites}
+          onToggleOnlyFavorites={() => setOnlyFavorites((value) => !value)}
+          onToggleFavorite={toggleFavorite}
         />
       </main>
     );
@@ -3558,7 +3664,9 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
           {loading ? (
             <LoadingState>正在读取赛程</LoadingState>
           ) : fixtures.length ? (
-            groupFixturesByLeague(fixtures).map((group) => (
+            groupFixturesByLeague(
+              onlyFavorites ? fixtures.filter((item) => favorites.includes(item.id)) : fixtures,
+            ).map((group) => (
               <FixtureGroupCard
                 key={group.league.id}
                 group={group}
