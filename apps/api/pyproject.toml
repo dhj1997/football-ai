@@ -21,3 +21,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 全局 Temp 下的 pytest-of-monster 根目录被并行进程留下损坏 ACL，
+# basetemp 指向项目本地目录绕开；.pytest_tmp 已加入 .gitignore。
+addopts = "--basetemp=.pytest_tmp"
