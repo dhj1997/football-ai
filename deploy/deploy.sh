@@ -17,10 +17,10 @@ echo "[1/6] 打包本地代码（排除 .venv / node_modules / .next / .env / �
 tar -czf "/tmp/${PKG}" \
   --exclude='.git' --exclude='.venv' --exclude='node_modules' --exclude='.next' \
   --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' --exclude='.tmp' --exclude='.pytest_tmp' --exclude='.pytest_cache' --exclude='__pycache__' \
-  apps deploy docs AGENTS.md DESIGN.md PRODUCT.md README.md package.json pnpm-workspace.yaml 2>/dev/null \
+  apps deploy docs AGENTS.md DESIGN.md PRODUCT.md README.md package.json 2>/dev/null \
   || tar -czf "/tmp/${PKG}" --exclude='.git' --exclude='.venv' --exclude='node_modules' --exclude='.next' \
       --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' --exclude='.tmp' --exclude='.pytest_tmp' --exclude='.pytest_cache' --exclude='__pycache__' \
-      apps deploy AGENTS.md README.md package.json pnpm-workspace.yaml
+      apps deploy AGENTS.md README.md package.json
 
 echo "[2/6] 上传到服务器"
 # MSYS_NO_PATHCONV=1 阻止 Git Bash 把远端 /tmp 路径改写成 Windows 路径；本地路径需显式转成 Windows 格式
