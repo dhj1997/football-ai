@@ -142,7 +142,8 @@ async def probe_chain(
                     json={
                         "model": provider.model,
                         "messages": [{"role": "user", "content": "只回复两个字：正常"}],
-                        "max_tokens": 16,
+                        # 推理模型会把 token 先花在 reasoning 上，预算太小会得到空正文
+                        "max_tokens": 512,
                         "stream": False,
                     },
                 )
