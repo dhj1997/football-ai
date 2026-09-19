@@ -70,6 +70,7 @@ from .model_fitting import fit_from_repository, fitted_record, load_fitted_param
 from .prediction import set_fitted_params_provider
 from .clubeelo_provider import ClubEloProvider, sync_ratings as sync_clubeelo_ratings
 from .football_data_provider import fetch_season_csv, sync_season
+from .free_llm_provider import FreeLlmChainProvider, probe_chain
 from .match_stats_sync import sync_match_stats
 from .understat_provider import (
     UNDERSTAT_LEAGUE_MAP,
@@ -294,6 +295,14 @@ deepseek_provider = DeepSeekProvider(
     settings.deepseek_max_retries,
     settings.deepseek_max_tokens,
 )
+deepseek_chain_provider = FreeLlmChainProvider(
+    deepseek_provider,
+    quya_base_url=settings.free_llm_quya_base_url,
+    quya_model=settings.free_llm_quya_model,
+    quya_api_key=settings.quya_llm_key,
+    candidate_timeout_seconds=settings.free_llm_candidate_timeout_seconds,
+    enabled=settings.free_llm_enabled,
+)
 player_value_provider = NullPlayerValueProvider()
 player_value_service = PlayerValueService(player_value_provider, repository)
 player_stats_service = PlayerStatsService(repository)
@@ -326,7 +335,7 @@ player_name_provider = FallbackPlayerNameProvider(
 )
 player_name_service = PlayerNameService(player_name_provider, repository)
 deepseek_prediction_service = PredictionService(
-    deepseek_provider,
+    deepseek_chain_provider,
     repository,
     "deepseek",
     settings.simulation_competition_id,
@@ -2365,6 +2374,15 @@ async def run_automation_job(job_name: str, force: bool = False) -> dict:
         return await automation_runner.run_job(job_name, force=force)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/admin/free-llm/probe", dependencies=[Depends(require_admin)])
+async def probe_free_llm() -> dict:
+    """Probe every free-LLM chain link with a tiny chat request."""
+
+    candidates = deepseek_chain_provider._candidates()
+    report = await probe_chain(candidates)
+    return {"items": report, "count": len(report)}
 
 
 @app.get("/api/admin/model-config", dependencies=[Depends(require_admin)])

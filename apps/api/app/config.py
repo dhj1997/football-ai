@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # Deployment environment: local | test | staging | production (P15).
     environment: str = "local"
     api_deepseek_key: str = ""
+    quya_llm_key: str = ""
+    free_llm_quya_base_url: str = "https://api.quya.org/v1"
+    free_llm_quya_model: str = "deepseek-v4-flash"
+    free_llm_candidate_timeout_seconds: float = 45.0
+    free_llm_enabled: bool = True
     deepseek_enabled: bool = True
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
