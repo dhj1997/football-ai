@@ -39,6 +39,10 @@ class AutomationRunner:
         historical_data_service: Any | None = None,
         model_registry_service: Any | None = None,
         football_data_service: Any | None = None,
+        understat_service: Any | None = None,
+        api_football_service: Any | None = None,
+        espn_team_service: Any | None = None,
+        weather_service: Any | None = None,
         clubeelo_service: Any | None = None,
         dongqiudi_team_service: Any | None = None,
         squad_fallback_provider: Any | None = None,
@@ -56,6 +60,10 @@ class AutomationRunner:
         self.historical_data_service = historical_data_service
         self.model_registry_service = model_registry_service
         self.football_data_service = football_data_service
+        self.understat_service = understat_service
+        self.api_football_service = api_football_service
+        self.espn_team_service = espn_team_service
+        self.weather_service = weather_service
         self.clubeelo_service = clubeelo_service
         self.dongqiudi_team_service = dongqiudi_team_service
         self.squad_fallback_provider = squad_fallback_provider
@@ -93,6 +101,34 @@ class AutomationRunner:
             self._jobs["fd_backfill"] = (
                 max(60, int(getattr(settings, "automation_fd_backfill_interval_minutes", 360))),
                 self._sync_football_data,
+            )
+        if understat_service is not None:
+            self._jobs["understat_xg"] = (
+                max(60, int(getattr(settings, "automation_understat_interval_minutes", 360))),
+                self._sync_understat_xg,
+            )
+        if api_football_service is not None and getattr(api_football_service, "configured", True):
+            self._jobs["match_stats_backfill"] = (
+                max(30, int(getattr(settings, "automation_match_stats_interval_minutes", 60))),
+                self._backfill_match_stats,
+            )
+            self._jobs["discipline_backfill"] = (
+                max(30, int(getattr(settings, "automation_discipline_interval_minutes", 60))),
+                self._backfill_discipline,
+            )
+            self._jobs["transfers_backfill"] = (
+                max(60, int(getattr(settings, "automation_transfers_interval_minutes", 1440))),
+                self._backfill_transfers,
+            )
+        if espn_team_service is not None and getattr(espn_team_service, "configured", False):
+            self._jobs["player_stats_backfill"] = (
+                max(60, int(getattr(settings, "automation_player_stats_interval_minutes", 1440))),
+                self._backfill_player_stats,
+            )
+        if weather_service is not None:
+            self._jobs["weather_refresh"] = (
+                max(30, int(getattr(settings, "automation_weather_interval_minutes", 60))),
+                self._refresh_weather,
             )
         if clubeelo_service is not None and bool(getattr(settings, "clubeelo_enabled", True)):
             self._jobs["clubeelo"] = (
@@ -360,6 +396,84 @@ class AutomationRunner:
                 self.repository.save_sync_marker(marker, int(result.get("matches") or 0))
                 return {**result, "item_count": int(result.get("matches") or 0)}
         return {"status": "complete", "reason": "所有赛季已回填", "item_count": 0}
+
+    async def _sync_understat_xg(self) -> dict[str, Any]:
+        """Refresh current-season Understat xG/xPoints on finished fixtures."""
+
+        from .competition_registry import season_for
+        from .team_names import to_chinese_team_name
+        from .understat_provider import UNDERSTAT_LEAGUE_MAP, sync_understat_xg
+
+        today = datetime.now(UTC).date()
+        totals: dict[str, Any] = {"status": "completed", "leagues": {}, "item_count": 0}
+        fetcher = getattr(self.understat_service, "fetch_league_data", None) or self.understat_service
+        for league in UNDERSTAT_LEAGUE_MAP:
+            season = season_for(league, today)
+            data = await fetcher(league, season)
+            if data is None:
+                totals["leagues"][league] = {"status": "unavailable", "season": season}
+                continue
+            result = sync_understat_xg(self.repository, data, league, localize=to_chinese_team_name)
+            totals["leagues"][league] = {**result, "season": season}
+            totals["item_count"] += int(result.get("item_count") or 0)
+        return totals
+
+    async def _backfill_match_stats(self) -> dict[str, Any]:
+        """Enrich finished fixtures with API-Football match statistics."""
+
+        from .match_stats_sync import sync_match_stats
+        from .team_names import to_chinese_team_name
+
+        limit = max(1, int(getattr(self.settings, "match_stats_backfill_limit", 25)))
+        return await sync_match_stats(
+            self.repository,
+            self.api_football_service,
+            limit=limit,
+            localize=to_chinese_team_name,
+        )
+
+    async def _backfill_player_stats(self) -> dict[str, Any]:
+        """Refresh season player statistics for the next stale teams (ESPN)."""
+
+        from .player_stats import sync_player_stats
+
+        limit = max(1, int(getattr(self.settings, "player_stats_backfill_limit", 8)))
+        return await sync_player_stats(self.repository, self.espn_team_service, limit=limit)
+
+    async def _refresh_weather(self) -> dict[str, Any]:
+        """Refresh kickoff forecasts for upcoming fixtures (Open-Meteo)."""
+
+        from .weather_sync import sync_weather
+
+        return await sync_weather(
+            self.repository,
+            self.weather_service,
+            horizon_days=max(1, int(getattr(self.settings, "weather_horizon_days", 7))),
+            limit=max(1, int(getattr(self.settings, "weather_backfill_limit", 30))),
+            stale_after_hours=max(1, int(getattr(self.settings, "weather_stale_hours", 6))),
+        )
+
+    async def _backfill_discipline(self) -> dict[str, Any]:
+        """Backfill card events onto finished fixtures (API-Football)."""
+
+        from .discipline_sync import sync_discipline
+        from .team_names import to_chinese_team_name
+
+        limit = max(1, int(getattr(self.settings, "discipline_backfill_limit", 25)))
+        return await sync_discipline(
+            self.repository,
+            self.api_football_service,
+            limit=limit,
+            localize=to_chinese_team_name,
+        )
+
+    async def _backfill_transfers(self) -> dict[str, Any]:
+        """Refresh transfer records for the next stale teams (API-Football)."""
+
+        from .transfers_sync import sync_transfers
+
+        limit = max(1, int(getattr(self.settings, "transfers_backfill_limit", 6)))
+        return await sync_transfers(self.repository, self.api_football_service, limit=limit)
 
     async def _sync_clubeelo(self) -> dict[str, Any]:
         from .clubeelo_provider import sync_ratings

@@ -131,6 +131,127 @@ class ApiFootballProvider:
         response["items"] = [item for item in response.get("items") or [] if item.get("score")]
         return response
 
+    async def fixture_statistics(self, fixture_id: int | str) -> dict[str, int] | None:
+        """Return per-team shots / shots on target / corners for one fixture.
+
+        API-Football lists the home team first in the statistics response.
+        None when the fixture has no statistics yet (live or not started).
+        """
+
+        if not self.configured:
+            raise RuntimeError("API_FOOTBALL_KEY is not configured")
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"x-apisports-key": self.api_key},
+            timeout=15,
+        ) as client:
+            response = await client.get("/fixtures/statistics", params={"fixture": fixture_id})
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("errors"):
+            raise RuntimeError(f"API-Football statistics error for {fixture_id}: {payload['errors']}")
+        teams = payload.get("response") or []
+        if len(teams) != 2:
+            return None
+        mapped = [self._map_fixture_statistics(team.get("statistics") or []) for team in teams]
+        home, away = mapped
+        if home is None or away is None:
+            return None
+        return {
+            "home_shots": home[0],
+            "away_shots": away[0],
+            "home_shots_on_target": home[1],
+            "away_shots_on_target": away[1],
+            "home_corners": home[2],
+            "away_corners": away[2],
+        }
+
+    async def fixture_events(self, fixture_id: int | str) -> dict[str, list] | None:
+        """Return raw card events of one fixture; None when none are recorded."""
+
+        if not self.configured:
+            raise RuntimeError("API_FOOTBALL_KEY is not configured")
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"x-apisports-key": self.api_key},
+            timeout=15,
+        ) as client:
+            response = await client.get("/fixtures/events", params={"fixture": fixture_id})
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("errors"):
+            raise RuntimeError(f"API-Football events error for {fixture_id}: {payload['errors']}")
+        cards = []
+        for event in payload.get("response") or []:
+            if not isinstance(event, dict) or event.get("type") != "Card":
+                continue
+            detail = str(event.get("detail") or "").strip()
+            if not detail:
+                continue
+            cards.append(
+                {
+                    "team": str((event.get("team") or {}).get("name") or ""),
+                    "detail": detail,
+                    "player": str((event.get("player") or {}).get("name") or "") or None,
+                }
+            )
+        return {"cards": cards} if cards else None
+
+    async def team_transfers(self, team_id: int | str) -> list[dict]:
+        """Map one team's recorded transfers (in/out) to flat rows."""
+
+        if not self.configured:
+            raise RuntimeError("API_FOOTBALL_KEY is not configured")
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"x-apisports-key": self.api_key},
+            timeout=15,
+        ) as client:
+            response = await client.get("/transfers", params={"team": team_id})
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("errors"):
+            raise RuntimeError(f"API-Football transfers error for team {team_id}: {payload['errors']}")
+        rows: list[dict] = []
+        for entry in payload.get("response") or []:
+            player_name = str((entry.get("player") or {}).get("name") or "") or None
+            for transfer in entry.get("transfers") or []:
+                teams = transfer.get("teams") if isinstance(transfer.get("teams"), dict) else {}
+                rows.append(
+                    {
+                        "player": player_name,
+                        "date": str(transfer.get("date") or "")[:10] or None,
+                        "type": str(transfer.get("type") or "") or None,
+                        "in_team": str((teams.get("in") or {}).get("name") or "") or None,
+                        "in_team_id": (teams.get("in") or {}).get("id"),
+                        "out_team": str((teams.get("out") or {}).get("name") or "") or None,
+                        "out_team_id": (teams.get("out") or {}).get("id"),
+                    }
+                )
+        return rows
+
+    @staticmethod
+    def _map_fixture_statistics(rows: list) -> tuple[int, int, int] | None:
+        """Map one team's statistics list to (shots, shots on target, corners)."""
+
+        values: dict[str, int] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            label = str((row.get("type") or "")).strip().lower()
+            raw = row.get("value")
+            if raw is None:
+                continue
+            try:
+                value = int(str(raw).strip().rstrip("%"))
+            except ValueError:
+                continue
+            values[label] = value
+        try:
+            return values["total shots"], values["shots on goal"], values["corner kicks"]
+        except KeyError:
+            return None
+
     @staticmethod
     def _map_fixture(item: dict, league_key: str) -> dict:
         fixture = item["fixture"]

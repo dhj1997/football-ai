@@ -70,6 +70,12 @@ from .model_fitting import fit_from_repository, fitted_record, load_fitted_param
 from .prediction import set_fitted_params_provider
 from .clubeelo_provider import ClubEloProvider, sync_ratings as sync_clubeelo_ratings
 from .football_data_provider import fetch_season_csv, sync_season
+from .match_stats_sync import sync_match_stats
+from .understat_provider import (
+    UNDERSTAT_LEAGUE_MAP,
+    fetch_league_data as fetch_understat_league_data,
+    sync_understat_xg,
+)
 from .model_registry import ModelRegistry, ModelRegistryError
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
@@ -84,6 +90,9 @@ from .player_name_provider import (
     PlayerNameService,
 )
 from .player_value_provider import NullPlayerValueProvider, PlayerValueService
+from .player_stats import PlayerStatsService, sync_player_stats
+from .weather_provider import WeatherProvider
+from .weather_sync import sync_weather
 from .portfolio import PortfolioConfig
 from .production import (
     EnvironmentContract,
@@ -287,6 +296,7 @@ deepseek_provider = DeepSeekProvider(
 )
 player_value_provider = NullPlayerValueProvider()
 player_value_service = PlayerValueService(player_value_provider, repository)
+player_stats_service = PlayerStatsService(repository)
 chatgpt_provider = ChatGptProvider(
     settings.api_chatgpt_key,
     settings.chatgpt_model,
@@ -322,6 +332,7 @@ deepseek_prediction_service = PredictionService(
     settings.simulation_competition_id,
     player_value_service,
     settings.simulation_initial_bankroll,
+    player_stats_service=player_stats_service,
 )
 chatgpt_prediction_service = PredictionService(
     chatgpt_provider,
@@ -330,6 +341,7 @@ chatgpt_prediction_service = PredictionService(
     settings.simulation_competition_id,
     player_value_service,
     settings.simulation_initial_bankroll,
+    player_stats_service=player_stats_service,
 )
 model_registry_service = ModelRegistry(repository)
 active_prediction_services = {
@@ -398,6 +410,10 @@ automation_runner = AutomationRunner(
     historical_data_service=historical_data_service,
     model_registry_service=model_registry_service,
     football_data_service=fetch_season_csv,
+    understat_service=fetch_understat_league_data,
+    api_football_service=provider,
+    espn_team_service=team_provider,
+    weather_service=WeatherProvider(),
     clubeelo_service=clubeelo_provider,
     dongqiudi_team_service=dongqiudi_provider,
     squad_fallback_provider=espn_evidence_provider,
@@ -2118,6 +2134,63 @@ async def sync_clubeelo() -> dict:
 
     csv_text = await clubeelo_provider.fetch_on()
     return sync_clubeelo_ratings(repository, csv_text, localize=to_chinese_team_name)
+
+
+@app.post("/api/admin/discipline/sync", dependencies=[Depends(require_admin)])
+async def sync_discipline_endpoint(limit: int = 25) -> dict:
+    """Backfill card events onto finished fixtures via API-Football."""
+
+    from .discipline_sync import sync_discipline
+
+    return await sync_discipline(repository, provider, limit=limit, localize=to_chinese_team_name)
+
+
+@app.post("/api/admin/transfers/sync", dependencies=[Depends(require_admin)])
+async def sync_transfers_endpoint(limit: int = 6) -> dict:
+    """Refresh transfer records for the next stale teams via API-Football."""
+
+    from .transfers_sync import sync_transfers
+
+    return await sync_transfers(repository, provider, limit=limit)
+
+
+@app.post("/api/admin/weather/sync", dependencies=[Depends(require_admin)])
+async def sync_weather_endpoint(limit: int = 30) -> dict:
+    """Refresh kickoff forecasts for upcoming fixtures (Open-Meteo)."""
+
+    return await sync_weather(
+        repository,
+        WeatherProvider(),
+        horizon_days=int(getattr(settings, "weather_horizon_days", 7)),
+        limit=limit,
+        stale_after_hours=int(getattr(settings, "weather_stale_hours", 6)),
+    )
+
+
+@app.post("/api/admin/player-stats/sync", dependencies=[Depends(require_admin)])
+async def sync_player_stats_endpoint(limit: int = 8) -> dict:
+    """Refresh season player statistics for the next stale teams (ESPN)."""
+
+    return await sync_player_stats(repository, team_provider, limit=limit)
+
+
+@app.post("/api/admin/match-stats/sync", dependencies=[Depends(require_admin)])
+async def sync_match_stats_endpoint(limit: int = 25) -> dict:
+    """Backfill shots/SOT/corners onto finished fixtures via API-Football."""
+
+    return await sync_match_stats(repository, provider, limit=limit, localize=to_chinese_team_name)
+
+
+@app.post("/api/admin/understat/sync", dependencies=[Depends(require_admin)])
+async def sync_understat(league: str, season: int) -> dict:
+    """Enrich finished fixtures with Understat per-match xG/xPoints."""
+
+    if league not in UNDERSTAT_LEAGUE_MAP:
+        raise HTTPException(status_code=400, detail="仅支持 epl / laliga")
+    data = await fetch_understat_league_data(league, season)
+    if data is None:
+        raise HTTPException(status_code=404, detail="该赛季 Understat 数据不可用")
+    return sync_understat_xg(repository, data, league, localize=to_chinese_team_name)
 
 
 @app.get("/api/admin/model-fitting/active", dependencies=[Depends(require_admin)])

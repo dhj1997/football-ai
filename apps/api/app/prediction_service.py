@@ -45,12 +45,14 @@ class PredictionService:
         competition_id: str = "legacy",
         player_value_service: Any | None = None,
         initial_bankroll: float = 1000.0,
+        player_stats_service: Any | None = None,
     ) -> None:
         self.model_provider = model_provider
         self.repository = repository
         self.model_key = model_key or getattr(model_provider, "provider_name", "deepseek")
         self.competition_id = competition_id
         self.player_value_service = player_value_service
+        self.player_stats_service = player_stats_service
         self.initial_bankroll = max(0.0, float(initial_bankroll))
 
     def _elo_ratings(self, prediction_timestamp: Any | None = None) -> dict[str, float]:
@@ -352,6 +354,13 @@ class PredictionService:
             context["recent_form"] = recent_form
         if self.player_value_service is not None:
             await self.player_value_service.enrich(context, str(fixture.get("league_key") or ""))
+        if self.player_stats_service is not None:
+            # 球员赛季统计只增强证据层；失败不阻断预测。
+            try:
+                league_key = str(fixture.get("league_key") or "")
+                await self.player_stats_service.enrich(context, league_key, _fixture_season(fixture, league_key))
+            except Exception:
+                pass
         apply_player_impact(context)
         context.setdefault("elo", self._elo_ratings(prediction_timestamp))
         try:
@@ -365,6 +374,25 @@ class PredictionService:
             )
         except Exception:
             pass
+        try:
+            from .weather_sync import attach_weather
+
+            attach_weather(fixture, context)
+        except Exception:
+            pass
+        try:
+            from .discipline_sync import attach_discipline
+
+            attach_discipline(self.repository, fixture, context, prediction_timestamp)
+        except Exception:
+            pass
+        try:
+            from .transfers_sync import attach_transfers
+
+            attach_transfers(self.repository, fixture, context)
+        except Exception:
+            pass
+        _attach_match_context(fixture, context)
 
     def prepare_snapshot(
         self,
@@ -721,6 +749,8 @@ def _model_input(
                     "defense_contribution": player.get("defense_contribution"),
                     "replacement_contribution": player.get("replacement_contribution"),
                     "absence_impact": player.get("absence_impact"),
+                    "yellow_cards": (player.get("statistics") or {}).get("yellow_cards"),
+                    "red_cards": (player.get("statistics") or {}).get("red_cards"),
                     "market_value_eur": player.get("market_value_eur"),
                 }
                 for player in (context.get("squads") or {}).get(side, [])[:35]
@@ -735,6 +765,45 @@ def _model_input(
         "evidence_source": context.get("source"),
         "evidence_synced_at": context.get("synced_at"),
     }
+
+
+CUP_LEAGUES = {"cfa_cup", "ucl", "acl"}
+
+
+def _attach_match_context(fixture: dict[str, Any], context: dict[str, Any]) -> None:
+    """Competition stage / cup context for rotation and motivation reading."""
+
+    league_key = str(fixture.get("league_key") or "")
+    evidence = fixture.get("evidence") if isinstance(fixture.get("evidence"), dict) else {}
+    competition = evidence.get("competition") if isinstance(evidence.get("competition"), dict) else {}
+    league = fixture.get("league") if isinstance(fixture.get("league"), dict) else {}
+    round_text = str(competition.get("round") or "") or None
+    name = str(competition.get("name") or league.get("name") or "") or None
+    is_cup = league_key in CUP_LEAGUES
+    if round_text is None and not is_cup and name is None:
+        return
+    context["match_context"] = {
+        "competition": name,
+        "round": round_text,
+        "is_cup": is_cup,
+        "note": "杯赛或联赛阶段可能影响轮换与战意" if is_cup else None,
+        "source": "api-football" if round_text else "fixture",
+    }
+
+
+def _fixture_season(fixture: dict[str, Any], league_key: str) -> str:
+    """Season key for player statistics lookups (provider season year)."""
+
+    from datetime import date as _date, datetime as _datetime
+
+    from .competition_registry import season_for
+
+    raw = str(fixture.get("fixture_date") or "")
+    try:
+        day = _date.fromisoformat(raw[:10])
+    except ValueError:
+        day = _datetime.now(UTC).date()
+    return str(season_for(league_key, day))
 
 
 def _model_odds(odds: Any) -> Any:

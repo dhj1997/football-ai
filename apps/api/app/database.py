@@ -205,6 +205,34 @@ class PredictionRepository:
             connection.execute(
                 text(
                     """
+                    CREATE TABLE IF NOT EXISTS player_stats_snapshots (
+                        id VARCHAR(255) PRIMARY KEY,
+                        league VARCHAR(64) NOT NULL,
+                        season VARCHAR(32) NOT NULL,
+                        team_id VARCHAR(255) NOT NULL,
+                        player_id VARCHAR(255) NOT NULL,
+                        synced_at VARCHAR(64) NOT NULL,
+                        payload TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS venue_locations (
+                        query_hash VARCHAR(64) PRIMARY KEY,
+                        query_text VARCHAR(255) NOT NULL,
+                        latitude DECIMAL(9, 6) NOT NULL,
+                        longitude DECIMAL(9, 6) NOT NULL,
+                        synced_at VARCHAR(64) NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
                     CREATE TABLE IF NOT EXISTS bets (
                         id VARCHAR(255) PRIMARY KEY,
                         prediction_id VARCHAR(255) NOT NULL UNIQUE,
@@ -780,6 +808,8 @@ class PredictionRepository:
                     "team_snapshots",
                     "player_value_snapshots",
                     "player_name_snapshots",
+                    "player_stats_snapshots",
+                    "venue_locations",
                     "bets",
                     "bet_executions",
                     "bankroll_transactions",
@@ -4941,6 +4971,190 @@ class PredictionRepository:
                 parameters,
             ).mappings().all()
         return [json.loads(row["payload"]) for row in rows]
+
+    def save_player_stats(self, rows: list[dict[str, Any]]) -> int:
+        """Upsert per-player season statistics snapshots (idempotent)."""
+
+        if not rows:
+            return 0
+        with self.engine.begin() as connection:
+            for row in rows:
+                parameters = {
+                    "id": row["id"],
+                    "league": row.get("league") or "",
+                    "season": str(row.get("season") or ""),
+                    "team_id": str(row.get("team_id") or ""),
+                    "player_id": str(row.get("player_id") or ""),
+                    "synced_at": row.get("synced_at") or datetime.now(UTC).replace(microsecond=0).isoformat(),
+                    "payload": json.dumps(row, ensure_ascii=False),
+                }
+                exists = connection.execute(
+                    text("SELECT id FROM player_stats_snapshots WHERE id = :id"),
+                    parameters,
+                ).first()
+                if exists:
+                    connection.execute(
+                        text(
+                            "UPDATE player_stats_snapshots SET league = :league, season = :season, "
+                            "team_id = :team_id, player_id = :player_id, synced_at = :synced_at, payload = :payload "
+                            "WHERE id = :id"
+                        ),
+                        parameters,
+                    )
+                else:
+                    connection.execute(
+                        text(
+                            "INSERT INTO player_stats_snapshots "
+                            "(id, league, season, team_id, player_id, synced_at, payload) "
+                            "VALUES (:id, :league, :season, :team_id, :player_id, :synced_at, :payload)"
+                        ),
+                        parameters,
+                    )
+        return len(rows)
+
+    def player_stats(self, player_ids: list[str], season: str) -> list[dict[str, Any]]:
+        """Return season statistics snapshots for the requested player ids."""
+
+        if not player_ids:
+            return []
+        parameters = {f"player_{index}": player_id for index, player_id in enumerate(player_ids)}
+        parameters["season"] = str(season)
+        placeholders = ", ".join(f":{key}" for key in parameters if key.startswith("player_"))
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM player_stats_snapshots "
+                    f"WHERE player_id IN ({placeholders}) AND season = :season "
+                    "ORDER BY synced_at"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def player_stats_synced_at(self, team_id: str, season: str) -> str | None:
+        """Latest sync timestamp across a team's player statistics rows."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT MAX(synced_at) AS latest FROM player_stats_snapshots "
+                    "WHERE team_id = :team_id AND season = :season AND player_id != '__league_teams__'"
+                ),
+                {"team_id": str(team_id), "season": str(season)},
+            ).mappings().first()
+        return row["latest"] if row else None
+
+    def save_league_teams(self, league: str, season: str, teams: list[dict[str, Any]]) -> None:
+        """Cache one league-season's provider team list (one request per season)."""
+
+        identifier = f"pstats:espn:teams:{league}:{season}"
+        self.save_player_stats(
+            [
+                {
+                    "id": identifier,
+                    "league": league,
+                    "season": str(season),
+                    "team_id": f"league:{league}",
+                    "player_id": "__league_teams__",
+                    "synced_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+                    "teams": teams,
+                }
+            ]
+        )
+
+    def league_teams(self, league: str, season: str) -> list[dict[str, Any]] | None:
+        """Return the cached provider team list, or None when never synced."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT payload FROM player_stats_snapshots "
+                    "WHERE id = :id AND player_id = '__league_teams__'"
+                ),
+                {"id": f"pstats:espn:teams:{league}:{season}"},
+            ).mappings().first()
+        return json.loads(row["payload"]).get("teams") if row else None
+
+    def save_team_transfers(self, team_id: str, season: str, transfers: list[dict[str, Any]], synced_at: str | None = None) -> None:
+        """Store one team's transfer records (one row per team-season)."""
+
+        identifier = f"transfers:api-football:{team_id}:{season}"
+        self.save_player_stats(
+            [
+                {
+                    "id": identifier,
+                    "league": "",
+                    "season": str(season),
+                    "team_id": str(team_id),
+                    "player_id": "__transfers__",
+                    "synced_at": synced_at or datetime.now(UTC).replace(microsecond=0).isoformat(),
+                    "transfers": transfers,
+                }
+            ]
+        )
+
+    def team_transfers_row(self, team_id: str, season: str) -> dict[str, Any] | None:
+        """Return one team's stored transfer records, or None when never synced."""
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT payload FROM player_stats_snapshots "
+                    "WHERE id = :id AND player_id = '__transfers__'"
+                ),
+                {"id": f"transfers:api-football:{team_id}:{season}"},
+            ).mappings().first()
+        return json.loads(row["payload"]) if row else None
+
+    def save_venue_location(self, query: str, latitude: float, longitude: float) -> None:
+        """Cache one geocoded venue query (geocoders are rate limited)."""
+
+        query_text = str(query or "").strip()
+        if not query_text:
+            return
+        query_hash = hashlib.sha1(query_text.encode("utf-8")).hexdigest()
+        parameters = {
+            "query_hash": query_hash,
+            "query_text": query_text[:255],
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "synced_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        }
+        with self.engine.begin() as connection:
+            exists = connection.execute(
+                text("SELECT query_hash FROM venue_locations WHERE query_hash = :query_hash"),
+                parameters,
+            ).first()
+            if exists:
+                connection.execute(
+                    text(
+                        "UPDATE venue_locations SET latitude = :latitude, longitude = :longitude, "
+                        "synced_at = :synced_at WHERE query_hash = :query_hash"
+                    ),
+                    parameters,
+                )
+            else:
+                connection.execute(
+                    text(
+                        "INSERT INTO venue_locations (query_hash, query_text, latitude, longitude, synced_at) "
+                        "VALUES (:query_hash, :query_text, :latitude, :longitude, :synced_at)"
+                    ),
+                    parameters,
+                )
+
+    def venue_location(self, query: str) -> tuple[float, float] | None:
+        """Return the cached coordinates for one geocode query."""
+
+        query_text = str(query or "").strip()
+        if not query_text:
+            return None
+        query_hash = hashlib.sha1(query_text.encode("utf-8")).hexdigest()
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT latitude, longitude FROM venue_locations WHERE query_hash = :query_hash"),
+                {"query_hash": query_hash},
+            ).mappings().first()
+        return (float(row["latitude"]), float(row["longitude"])) if row else None
 
     @staticmethod
     def _current_balance(

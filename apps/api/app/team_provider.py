@@ -49,6 +49,59 @@ class EspnTeamProvider:
             updated_at,
         )
 
+    async def teams(self, league_key: str) -> list[dict[str, Any]]:
+        """Map one league's provider team list (one request per league)."""
+
+        slug = self._slug(league_key)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=20, headers={"User-Agent": "football-ai/0.1 (+team-data)"}) as client:
+            response = await client.get(f"/apis/site/v2/sports/soccer/{slug}/teams")
+            response.raise_for_status()
+            payload = response.json()
+        wrapped = (((payload.get("sports") or [{}])[0].get("leagues") or [{}])[0].get("teams")) or []
+        return [
+            {"id": str(team["id"]), "name": team.get("displayName") or team.get("name") or ""}
+            for item in wrapped
+            if isinstance(item, dict) and isinstance((team := item.get("team")), dict) and team.get("id") is not None
+        ]
+
+    async def team_players(self, league_key: str, team_id: str) -> list[dict[str, Any]]:
+        """Map one team's roster with current-season statistics (one request).
+
+        Rows reuse the exact ``player_impact`` statistics keys and the ESPN
+        athlete id space shared with the stored squad evidence.
+        """
+
+        slug = self._slug(league_key)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=20, headers={"User-Agent": "football-ai/0.1 (+team-data)"}) as client:
+            response = await client.get(f"/apis/site/v2/sports/soccer/{slug}/teams/{team_id}/roster")
+            response.raise_for_status()
+            payload = response.json()
+        players = []
+        for athlete in payload.get("athletes") or []:
+            try:
+                mapped = _map_player(athlete)
+            except (AttributeError, TypeError):
+                continue
+            if mapped.get("provider_player_id") is None:
+                continue
+            players.append(
+                {
+                    "provider_player_id": str(mapped["provider_player_id"]),
+                    "name": mapped.get("original_name") or mapped.get("name"),
+                    "position": mapped.get("position"),
+                    "statistics": mapped.get("statistics") or {},
+                }
+            )
+        return players
+
+    def _slug(self, league_key: str) -> str:
+        if not self.configured:
+            raise RuntimeError("ESPN team provider is not configured")
+        slug = self.LEAGUE_SLUGS.get(league_key)
+        if not slug:
+            raise ValueError(f"Unsupported league: {league_key}")
+        return slug
+
     @classmethod
     def _map_team(
         cls,

@@ -156,7 +156,7 @@ def test_attach_team_stats_injects_context_for_supported_league(tmp_path) -> Non
     assert context["team_stats"]["away"]["corners_against"] == pytest.approx((7 + 6) / 2)
 
     # 非支持联赛不注入。
-    other = {**fixture, "league_key": "csl", "home_team": {"name": "Arsenal"}, "away_team": {"name": "Nottingham"}}
+    other = {**fixture, "league_key": "ucl", "home_team": {"name": "Arsenal"}, "away_team": {"name": "Nottingham"}}
     other_context: dict = {}
     attach_team_stats(
         repository,
@@ -166,6 +166,38 @@ def test_attach_team_stats_injects_context_for_supported_league(tmp_path) -> Non
         min_matches=1,
     )
     assert "team_stats" not in other_context
+
+
+def test_team_stat_profiles_dedupe_parallel_rows_and_span_leagues(tmp_path) -> None:
+    from app import team_stats as team_stats_module
+
+    team_stats_module._CACHE.clear()
+    repository = PredictionRepository(str(tmp_path / "stats-dedup.db"))
+    repository.initialize()
+
+    def match_row(row_id: str, source: str, league_key: str, home_shots: int) -> dict:
+        return {
+            "id": row_id,
+            "source": source,
+            "league_key": league_key,
+            "fixture_date": "2026-09-12",
+            "kickoff": "2026-09-12T11:00:00+00:00",
+            "status": "finished",
+            "home_team": {"name": "上海海港"},
+            "away_team": {"name": "上海申花"},
+            "score": {"home": 2, "away": 1},
+            "match_stats": {"home_shots": home_shots, "away_shots": 9, "home_shots_on_target": 5, "away_shots_on_target": 3, "home_corners": 6, "away_corners": 4},
+        }
+
+    # 同一场比赛的两个平行行：football-data 优先，只计一次。
+    repository.upsert_fixture(match_row("dqyd-1", "dongqiudi", "csl", 11))
+    repository.upsert_fixture(match_row("fd-1", "football-data", "csl", 15))
+
+    profiles = team_stat_profiles(repository, before_iso="2026-09-20T00:00:00+00:00", min_matches=1)
+
+    assert profiles["上海海港"]["matches"] == 1.0
+    assert profiles["上海海港"]["shots_for"] == 15
+    assert profiles["上海海港"]["source"] == "football-data"
 
 
 def test_clubeelo_parse_and_store_ratings(tmp_path) -> None:

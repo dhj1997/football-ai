@@ -71,6 +71,8 @@ class EspnEvidenceProvider:
                 "away": _squad(away_roster[0]),
             },
             "odds": _odds(summary.get("odds") or [], updated_at),
+            "referee": _referee(summary.get("gameInfo") or {}, updated_at),
+            "venue": _venue_info(summary.get("gameInfo") or {}),
             "source": "espn-evidence",
             "synced_at": updated_at,
             "espn_event_id": event_id,
@@ -312,6 +314,35 @@ def _availability(home_payload: dict[str, Any], away_payload: dict[str, Any], up
         "updated_at": checked_at if players else None,
         "checked_at": checked_at,
     }
+
+
+def _referee(game_info: dict[str, Any], updated_at: str) -> dict[str, Any] | None:
+    """Map the assigned referee from the summary gameInfo when present."""
+
+    officials = game_info.get("officials") or []
+    for official in officials:
+        if not isinstance(official, dict):
+            continue
+        position = str((official.get("position") or {}).get("name") or "").casefold()
+        if position != "referee":
+            continue
+        name = str(official.get("fullName") or official.get("displayName") or "").strip()
+        if name:
+            return {"name": name, "source": "espn", "captured_at": updated_at}
+    return None
+
+
+def _venue_info(game_info: dict[str, Any]) -> dict[str, Any] | None:
+    """Map venue identity and address for downstream weather geocoding."""
+
+    venue = game_info.get("venue") if isinstance(game_info.get("venue"), dict) else {}
+    name = str(venue.get("fullName") or venue.get("shortName") or "").strip()
+    address = venue.get("address") if isinstance(venue.get("address"), dict) else {}
+    city = str(address.get("city") or "").strip()
+    country = str(address.get("country") or "").strip()
+    if not name and not city:
+        return None
+    return {"name": name or None, "city": city or None, "country": country or None, "source": "espn"}
 
 
 def _team_profile(team: dict[str, Any], fixture_team: dict[str, Any]) -> dict[str, Any]:

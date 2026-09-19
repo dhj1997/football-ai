@@ -131,6 +131,9 @@ class ApiFootballEvidenceProvider:
                 "away": _squad(away_squad, public_data["away"].get("players") or []),
             },
             "odds": _odds(odds, updated_at),
+            "referee": _referee(item, updated_at),
+            "team_ids": _team_ids(item),
+            "competition": _competition(item),
             "source": "api-football-single-fixture",
             "synced_at": updated_at,
         }
@@ -470,6 +473,42 @@ def _team_profile(
         "city": venue.get("city") or public_team.get("strLocation"),
         "website": public_team.get("strWebsite") or None,
     }
+
+
+def _team_ids(item: dict[str, Any]) -> dict[str, int] | None:
+    """Map API-Football team ids for downstream team-scoped lookups."""
+
+    teams = item.get("teams") if isinstance(item, dict) else None
+    if not isinstance(teams, dict):
+        return None
+    home = (teams.get("home") or {}).get("id")
+    away = (teams.get("away") or {}).get("id")
+    if home is None or away is None:
+        return None
+    return {"home": int(home), "away": int(away)}
+
+
+def _competition(item: dict[str, Any]) -> dict[str, str] | None:
+    """Map league identity and round for match-context evidence."""
+
+    league = item.get("league") if isinstance(item, dict) else None
+    if not isinstance(league, dict):
+        return None
+    name = str(league.get("name") or "").strip()
+    round_text = str(league.get("round") or "").strip()
+    if not name and not round_text:
+        return None
+    return {"name": name or None, "round": round_text or None, "season": str(league.get("season") or "") or None}
+
+
+def _referee(item: dict[str, Any], updated_at: str) -> dict[str, Any] | None:
+    """Map the assigned referee from the /fixtures response when present."""
+
+    fixture = item.get("fixture") if isinstance(item, dict) else None
+    name = str((fixture or {}).get("referee") or "").strip()
+    if not name:
+        return None
+    return {"name": name, "source": "api-football", "captured_at": updated_at}
 
 
 def _squad(payload: dict[str, Any], public_players: list[dict[str, Any]]) -> list[dict[str, Any]]:

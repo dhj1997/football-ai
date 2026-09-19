@@ -1,9 +1,11 @@
-"""As-of team stat profiles from Football-Data historical matches.
+"""As-of team stat profiles from finished matches with match_stats.
 
 Profiles are per-team averages (shots / shots on target / corners / goals,
 for and against) computed only from finished matches strictly before the
 reference time, keyed by localized team name. One scan per calendar day is
-cached in-process to bound read cost.
+cached in-process to bound read cost. Sources are mixed freely (Football-Data
+archives, API-Football statistics) but each physical match counts once even
+when parallel provider rows exist.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from .historical_validation import parse_timestamp
 from .recent_form import result_available_at
 
 _CACHE: dict[str, dict[str, dict[str, Any]]] = {}
-SUPPORTED_LEAGUES: tuple[str, ...] = ("epl", "laliga")
+SUPPORTED_LEAGUES: tuple[str, ...] = ("epl", "laliga", "csl", "cfa_cup")
 
 
 def team_stat_profiles(
@@ -71,6 +73,7 @@ def attach_team_stats(
         home = profiles.get(home_name)
         away = profiles.get(away_name)
         if home and away:
+            sources = sorted({*(home.get("source") or "").split("+"), *(away.get("source") or "").split("+")} - {""})
             context["team_stats"] = {
                 "home": home,
                 "away": away,
@@ -79,7 +82,7 @@ def attach_team_stats(
                     str(home.get("available_at") or ""),
                     str(away.get("available_at") or ""),
                 ) or None,
-                "source": "football-data",
+                "source": "+".join(sources) or "match-stats",
                 "source_record_ids": sorted(
                     set((home.get("source_record_ids") or []) + (away.get("source_record_ids") or []))
                 ),
@@ -104,11 +107,8 @@ def _scan(
     accumulated: dict[str, dict[str, list[float]]] = {}
     available_times: dict[str, list[datetime]] = {}
     source_record_ids: dict[str, set[str]] = {}
-    for row in rows or []:
-        if row.get("status") != "finished" or row.get("source") != "football-data":
-            continue
-        if str(row.get("league_key") or "") not in leagues:
-            continue
+    match_sources: dict[str, set[str]] = {}
+    for row in _deduped_rows(rows or [], leagues):
         available_at = result_available_at(row)
         if available_at is None or available_at > before:
             continue
@@ -123,6 +123,7 @@ def _scan(
             source_record_ids.setdefault(team, set()).add(
                 str(row.get("canonical_fixture_id") or row.get("id") or "")
             )
+            match_sources.setdefault(team, set()).add(str(row.get("source") or "unknown"))
             bucket = accumulated.setdefault(
                 team,
                 {"shots_for": [], "shots_against": [], "shots_on_target_for": [], "shots_on_target_against": [], "corners_for": [], "corners_against": [], "goals_for": [], "goals_against": []},
@@ -148,7 +149,35 @@ def _scan(
         for key, values in bucket.items():
             profile[key] = round(sum(values) / len(values), 3) if values else 0.0
         profile["available_at"] = max(available_times.get(team) or []).isoformat()
-        profile["source"] = "football-data"
+        profile["source"] = "+".join(sorted(match_sources.get(team) or {"unknown"}))
         profile["source_record_ids"] = sorted(value for value in source_record_ids.get(team, set()) if value)
         profiles[team] = profile
     return profiles
+
+
+def _deduped_rows(rows: list, leagues: tuple[str, ...]) -> list:
+    """One row per physical match: Football-Data rows win, then kickoff order."""
+
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            0 if row.get("source") == "football-data" else 1,
+            str(row.get("kickoff") or ""),
+            str(row.get("id") or ""),
+        ),
+    )
+    seen: set[tuple[str, str, str, str]] = set()
+    deduped: list = []
+    for row in ordered:
+        if row.get("status") != "finished":
+            continue
+        if str(row.get("league_key") or "") not in leagues:
+            continue
+        home = str(((row.get("home_team") or {}).get("name")) or "")
+        away = str(((row.get("away_team") or {}).get("name")) or "")
+        key = (str(row.get("league_key") or ""), str(row.get("fixture_date") or ""), home, away)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped

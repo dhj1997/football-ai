@@ -298,6 +298,9 @@ def build_feature_snapshot(
         ("head_to_head", evidence.get("head_to_head"), "match_results"),
         ("news_evidence", evidence.get("news") or evidence.get("news_evidence"), "news_evidence"),
         ("elo", evidence.get("elo"), "elo"),
+        ("discipline", evidence.get("discipline"), "discipline"),
+        ("transfers", evidence.get("transfers"), "transfers"),
+        ("match_context", evidence.get("match_context"), "match_context"),
     )
     for name, value, default_source in category_features:
         value_mapping = value if isinstance(value, Mapping) else {}
@@ -619,7 +622,7 @@ def cutoff_safe_prediction_inputs(
     safe.pop("player_impact", None)
     if not usable("odds"):
         safe["odds"] = None
-    for name in ("weather", "referee", "head_to_head", "news_evidence", "elo"):
+    for name in ("weather", "referee", "head_to_head", "news_evidence", "elo", "discipline", "transfers", "match_context"):
         if not usable(name):
             safe.pop("news" if name == "news_evidence" else name, None)
             if name == "news_evidence":
