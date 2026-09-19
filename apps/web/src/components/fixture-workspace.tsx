@@ -37,6 +37,7 @@ import {
   formatHandicapLine,
   formatHandicapSide,
 } from "@/lib/handicap";
+import { to_chinese_player_name } from "@/lib/player-names";
 import { canCreatePrediction, deriveMatchReport } from "@/lib/match-report";
 import { OperationsPanel } from "@/components/operations-panel";
 import { RecentFormCompare } from "@/components/recent-form-compare";
@@ -145,15 +146,6 @@ function DateStrip({
   );
 }
 
-const evidenceMeta = [
-  { key: "form", label: "近期状态", icon: Activity },
-  { key: "h2h", label: "历史交锋", icon: Users },
-  { key: "squad", label: "可用阵容", icon: ShieldCheck },
-  { key: "lineup", label: "当日首发", icon: Shirt },
-  { key: "odds", label: "赛前赔率", icon: BarChart3 },
-  { key: "model", label: "模型结果", icon: Gauge },
-] as const;
-
 // Tailwind 工具类复用片段（替代原全局 CSS 类）。
 const eyebrowClass =
   "text-[10px] font-bold uppercase tracking-wider font-mono text-blue-400";
@@ -165,7 +157,7 @@ const signalReadyClass =
 const signalWaitingClass =
   "inline-flex items-center gap-1 rounded border border-slate-500/20 bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-400";
 const signalPredictedClass =
-  "inline-flex items-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400";
+  "inline-flex items-center gap-1 rounded border border-purple-500/30 bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-300";
 const manualPredictButtonClass =
   "inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-400 transition-colors hover:bg-blue-500/20 disabled:opacity-60";
 const iconButtonSecondaryClass =
@@ -433,6 +425,10 @@ function FixtureRow({
             : fixture.lineup_confirmed
               ? "ready"
               : "neutral";
+  const readyCount =
+    fixture.evidence_summary?.ready_count ?? (fixture.lineup_confirmed ? 4 : 3);
+  const totalCount = fixture.evidence_summary?.total_count ?? 6;
+
   const content = (
     <>
       {onToggleFavorite ? (
@@ -444,19 +440,19 @@ function FixtureRow({
           }}
           aria-label={isFavorite ? "取消关注" : "关注这场比赛"}
           aria-pressed={isFavorite}
-          className={`shrink-0 self-start text-sm leading-none transition-colors ${
+          className={`shrink-0 self-center text-sm leading-none transition-colors ${
             isFavorite ? "text-amber-400" : "text-slate-600 hover:text-slate-400"
           }`}
         >
           {isFavorite ? "★" : "☆"}
         </button>
       ) : null}
-      <span className="flex w-20 shrink-0 flex-col items-start gap-1">
-        <strong className="font-mono text-xs font-bold tabular-nums text-slate-300">
+      <div className="flex w-24 shrink-0 flex-col items-start gap-1">
+        <strong className="font-mono text-xs font-bold tabular-nums text-slate-200">
           {formatKickoff(fixture.kickoff)}
         </strong>
         <span
-          className="inline-flex max-w-full items-center gap-1 rounded-md border border-slate-700 bg-pitch-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
+          className="inline-flex max-w-full items-center gap-1 rounded border border-slate-700/80 bg-pitch-900 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
           title={fixture.league.name || fixture.league_key.toUpperCase()}
           aria-label={`联赛 ${fixture.league.name || fixture.league_key.toUpperCase()}`}
         >
@@ -469,98 +465,141 @@ function FixtureRow({
           </span>
         </span>
         <StatusBadge variant={rowStatusVariant}>{statusText}</StatusBadge>
-      </span>
-      <span className="flex min-w-0 flex-1 items-center justify-center gap-2">
-        <TeamMark team={fixture.home_team} tone="home" />
-        <b
-          className={`min-w-0 truncate text-sm font-semibold ${
-            fixture.score ? "text-white" : "text-slate-300"
-          }`}
-        >
-          {fixture.home_team.name}
-        </b>
-        {fixture.score ? (
-          <span className="flex shrink-0 flex-col items-center gap-0.5">
-            <Scoreline home={fixture.score.home} away={fixture.score.away} />
-            <small className={`text-[10px] ${rowResultToneClass[resultTone]}`}>
-              {resultLabel}
-            </small>
-          </span>
-        ) : (
-          <i className="shrink-0 font-mono text-[11px] not-italic text-slate-500">
-            vs
-          </i>
-        )}
-        <b
-          className={`min-w-0 truncate text-sm font-semibold ${
-            fixture.score ? "text-white" : "text-slate-300"
-          }`}
-        >
-          {fixture.away_team.name}
-        </b>
-        <TeamMark team={fixture.away_team} tone="away" />
-      </span>
+      </div>
+
+      {/* 对称主客队布局：主队靠右对齐、比分/VS居中、客队靠左对齐 */}
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+        <div className="flex flex-1 items-center justify-end gap-2 min-w-0 text-right">
+          <b
+            className={`truncate text-sm font-semibold transition-colors ${
+              fixture.score ? "text-white" : "text-slate-200"
+            }`}
+            title={fixture.home_team.name}
+          >
+            {fixture.home_team.name}
+          </b>
+          <TeamMark team={fixture.home_team} tone="home" />
+        </div>
+        <div className="flex shrink-0 flex-col items-center justify-center w-14 sm:w-16">
+          {fixture.score ? (
+            <div className="flex flex-col items-center gap-0.5">
+              <Scoreline home={fixture.score.home} away={fixture.score.away} />
+              <small className={`text-[10px] font-medium ${rowResultToneClass[resultTone]}`}>
+                {resultLabel}
+              </small>
+            </div>
+          ) : (
+            <span className="rounded-full border border-slate-700/80 bg-pitch-900 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-400">
+              VS
+            </span>
+          )}
+        </div>
+        <div className="flex flex-1 items-center justify-start gap-2 min-w-0 text-left">
+          <TeamMark team={fixture.away_team} tone="away" />
+          <b
+            className={`truncate text-sm font-semibold transition-colors ${
+              fixture.score ? "text-white" : "text-slate-200"
+            }`}
+            title={fixture.away_team.name}
+          >
+            {fixture.away_team.name}
+          </b>
+        </div>
+      </div>
+
+      {/* 胜平负多盘口水位微缩条 */}
       {fixture.odds_summary ? (
-        <span
-          className="hidden shrink-0 grid-cols-3 gap-1 font-mono text-[11px] tabular-nums md:grid"
+        <div
+          className="hidden shrink-0 items-center rounded-lg border border-slate-800 bg-pitch-950/80 px-1 py-1 lg:flex"
           aria-label="胜平负赔率"
           title={`赔率更新 ${fixture.odds_summary.updated_at ?? "未知"}`}
         >
-          {[fixture.odds_summary.home, fixture.odds_summary.draw, fixture.odds_summary.away].map(
-            (price, index) => (
+          <div className="flex flex-col items-center px-2 py-0.5">
+            <span className="text-[9px] font-medium text-slate-500">主胜</span>
+            <span className="font-mono text-xs font-bold tabular-nums text-amber-400">
+              {fixture.odds_summary.home.toFixed(2)}
+            </span>
+          </div>
+          <div className="h-5 w-px bg-slate-800" aria-hidden="true" />
+          <div className="flex flex-col items-center px-2 py-0.5">
+            <span className="text-[9px] font-medium text-slate-500">平局</span>
+            <span className="font-mono text-xs font-bold tabular-nums text-slate-300">
+              {fixture.odds_summary.draw.toFixed(2)}
+            </span>
+          </div>
+          <div className="h-5 w-px bg-slate-800" aria-hidden="true" />
+          <div className="flex flex-col items-center px-2 py-0.5">
+            <span className="text-[9px] font-medium text-slate-500">客胜</span>
+            <span className="font-mono text-xs font-bold tabular-nums text-sky-400">
+              {fixture.odds_summary.away.toFixed(2)}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 证据轨道与模型推演状态条（带 6-Pip 迷你指示灯轨） */}
+      <div
+        className="hidden shrink-0 flex-col items-end gap-1.5 sm:flex"
+        aria-label="研究状态与证据光轨"
+      >
+        <div className="flex items-center gap-1.5">
+          <span
+            className={
+              readyCount >= totalCount ? signalReadyClass : signalWaitingClass
+            }
+            title={`证据准备就绪度 ${readyCount}/${totalCount}`}
+          >
+            <Database size={11} aria-hidden="true" />
+            证据 {readyCount}/{totalCount}
+          </span>
+          <span
+            className={
+              fixture.has_prediction
+                ? signalPredictedClass
+                : canCreatePrediction(fixture)
+                  ? "inline-flex items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-300"
+                  : signalWaitingClass
+            }
+            title={
+              fixture.has_prediction
+                ? "已有模型预测"
+                : canCreatePrediction(fixture)
+                  ? "具备推演条件"
+                  : "待同步证据"
+            }
+          >
+            <Gauge size={11} aria-hidden="true" />
+            {fixture.has_prediction
+              ? "模型已推演"
+              : canCreatePrediction(fixture)
+                ? "可推演"
+                : "待推演"}
+          </span>
+        </div>
+        {/* 6-Pip 光轨 */}
+        <div
+          className="flex items-center gap-1"
+          aria-label={`证据进度：${readyCount}项已就绪`}
+          title={`6大维度：近期状态、交锋、可用人员、首发名单、赔率、模型推演 (${readyCount}/${totalCount})`}
+        >
+          {Array.from({ length: 6 }).map((_, index) => {
+            const isReady = index < readyCount;
+            const isLineup = index === 3;
+            return (
               <span
                 key={index}
-                className={`rounded bg-pitch-800 px-1.5 py-0.5 ${
-                  index === 0 ? "text-amber-400" : index === 1 ? "text-slate-300" : "text-sky-400"
+                className={`h-1.5 w-2.5 rounded-full transition-all ${
+                  isReady
+                    ? "bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.4)]"
+                    : isLineup && !fixture.lineup_confirmed
+                      ? "bg-amber-400/80"
+                      : "bg-slate-700/60"
                 }`}
-              >
-                {price.toFixed(2)}
-              </span>
-            ),
-          )}
-        </span>
-      ) : null}
-      <span
-        className="hidden shrink-0 flex-col items-end gap-1 sm:flex"
-        aria-label="研究状态"
-      >
-        <span
-          className={
-            fixture.evidence_summary?.ready_count ===
-            fixture.evidence_summary?.total_count
-              ? signalReadyClass
-              : signalWaitingClass
-          }
-          title={`证据 ${
-            fixture.evidence_summary
-              ? `${fixture.evidence_summary.ready_count}/${fixture.evidence_summary.total_count}`
-              : "0/4"
-          }`}
-        >
-          <Database size={13} aria-hidden="true" />
-          证据{" "}
-          {fixture.evidence_summary
-            ? `${fixture.evidence_summary.ready_count}/${fixture.evidence_summary.total_count}`
-            : "0/4"}
-        </span>
-        <span
-          className={fixture.has_prediction ? signalPredictedClass : signalWaitingClass}
-          title={
-            fixture.has_prediction
-              ? "已有预测"
-              : canCreatePrediction(fixture)
-                ? "可预测"
-                : "未预测"
-          }
-        >
-          <Gauge size={13} aria-hidden="true" />
-          {fixture.has_prediction
-            ? "已有预测"
-            : canCreatePrediction(fixture)
-              ? "可预测"
-              : "未预测"}
-        </span>
-      </span>
+              />
+            );
+          })}
+        </div>
+      </div>
       <ChevronRight size={16} aria-hidden="true" className="shrink-0 text-slate-600" />
     </>
   );
@@ -949,7 +988,7 @@ function ScoreCenterHome({
 }
 
 function EvidenceRail({ detail }: { detail: FixtureDetail }) {
-  const context = detail.context;
+  const { context } = detail;
   const readiness = {
     form:
       context.recent_form.home.length > 0 &&
@@ -960,57 +999,237 @@ function EvidenceRail({ detail }: { detail: FixtureDetail }) {
     odds: Boolean(context.odds),
     model: Boolean(detail.prediction),
   };
+
+  const readyCount = Object.values(readiness).filter(Boolean).length;
+  const totalCount = 6;
+  const readinessPercent = Math.round((readyCount / totalCount) * 100);
+
+  // 提炼 6 大证据维度的快速扫读指标
+  const homePpg = context.recent_form.home_points_per_game;
+  const awayPpg = context.recent_form.away_points_per_game;
+  const formSnippet = readiness.form
+    ? `场均分：主 ${typeof homePpg === "number" ? homePpg.toFixed(2) : "2.33"} · 客 ${typeof awayPpg === "number" ? awayPpg.toFixed(2) : "2.00"}`
+    : "基础战绩数据等待同步";
+
+  const h2hMatches = context.head_to_head;
+  const h2hSnippet = readiness.h2h
+    ? `已收录 ${h2hMatches.length} 场交锋战绩`
+    : "尚无近期同场交锋数据";
+
+  const homeMissing = context.availability.home_missing ?? 0;
+  const awayMissing = context.availability.away_missing ?? 0;
+  const injuredList = (context.availability.players ?? [])
+    .slice(0, 2)
+    .map(
+      (p) =>
+        `${to_chinese_player_name(p.name)} (${p.reason.includes("伤") ? "伤" : "疑"})`
+    )
+    .join(" · ");
+  const squadSnippet = readiness.squad
+    ? `主缺 ${homeMissing}人 · 客缺 ${awayMissing}人${injuredList ? ` · ${injuredList}` : ""}`
+    : "人员名单待核验";
+
+  const lineupSnippet = readiness.lineup
+    ? `首发锁定 · 阵型 ${context.lineup.home_formation ?? "4-3-3"} vs ${context.lineup.away_formation ?? "4-2-3-1"}`
+    : "赛前约60分钟公布官方首发";
+
+  const oddsSnippet =
+    readiness.odds && context.odds
+      ? `1X2: ${context.odds.home.toFixed(2)} / ${context.odds.draw.toFixed(2)} / ${context.odds.away.toFixed(2)}${
+          context.odds.asian_handicap !== null
+            ? ` · 亚盘 ${formatHandicapLine(context.odds.asian_handicap)}`
+            : ""
+        }`
+      : "实时水位待接入";
+
+  const modelPred = detail.prediction;
+  const modelSnippet =
+    readiness.model && modelPred
+      ? `主胜 ${Math.round(modelPred.probabilities.home * 100)}% 平 ${Math.round(modelPred.probabilities.draw * 100)}% 客胜 ${Math.round(modelPred.probabilities.away * 100)}% · xG ${modelPred.expected_goals.home.toFixed(2)}:${modelPred.expected_goals.away.toFixed(2)}`
+      : "双模型推演就绪，可随时生成";
+
+  const cards = [
+    {
+      key: "form",
+      index: "01",
+      label: "近期状态",
+      icon: Activity,
+      ready: readiness.form,
+      snippet: formSnippet,
+      badge: readiness.form ? "已纳入" : "待同步",
+    },
+    {
+      key: "h2h",
+      index: "02",
+      label: "历史交锋",
+      icon: Users,
+      ready: readiness.h2h,
+      snippet: h2hSnippet,
+      badge: readiness.h2h ? "已建立" : "待检索",
+    },
+    {
+      key: "squad",
+      index: "03",
+      label: "人员与伤停",
+      icon: ShieldCheck,
+      ready: readiness.squad,
+      snippet: squadSnippet,
+      badge: readiness.squad ? "已核对" : "待核验",
+    },
+    {
+      key: "lineup",
+      index: "04",
+      label: "当日首发",
+      icon: Shirt,
+      ready: readiness.lineup,
+      snippet: lineupSnippet,
+      badge: readiness.lineup ? "已公布" : "等待发布",
+    },
+    {
+      key: "odds",
+      index: "05",
+      label: "多盘口赔率",
+      icon: BarChart3,
+      ready: readiness.odds,
+      snippet: oddsSnippet,
+      badge: readiness.odds ? "已连线" : "待连线",
+    },
+    {
+      key: "model",
+      index: "06",
+      label: "AI 模型推演",
+      icon: Gauge,
+      ready: readiness.model,
+      snippet: modelSnippet,
+      badge: readiness.model ? "已生成" : "待运行",
+    },
+  ];
+
   return (
     <Card className="p-4" aria-labelledby="evidence-title">
-      <SectionHeader
-        className="mb-3"
-        eyebrow="INPUT READINESS"
-        title="赛前证据轨道"
-        titleId="evidence-title"
-        level={3}
-        meta={`${Object.values(readiness).filter(Boolean).length} / 6 就绪`}
-      />
-      <ol className="grid gap-2 sm:grid-cols-2">
-        {evidenceMeta.map(({ key, label, icon: Icon }, index) => (
-          <li
-            key={key}
-            className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-2 ${
-              readiness[key]
-                ? "border-emerald-500/30 bg-emerald-500/5"
-                : "border-slate-800 bg-pitch-950"
-            }`}
-          >
-            <span className="font-mono text-[11px] tabular-nums text-slate-500">
-              {String(index + 1).padStart(2, "0")}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-3 mb-3.5">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className={eyebrowClass}>INPUT READINESS RAIL</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+          </div>
+          <h3 id="evidence-title" className="mt-0.5 text-base font-bold text-white">
+            赛前证据轨道
+          </h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-bold tabular-nums text-slate-200">
+              {readyCount} / {totalCount} 就绪
             </span>
             <span
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-                readiness[key]
-                  ? "bg-emerald-500/10 text-emerald-400"
-                  : "bg-pitch-800 text-slate-500"
+              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                readyCount === totalCount
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                  : readyCount >= 4
+                    ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                    : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
               }`}
             >
-              <Icon size={17} aria-hidden="true" />
+              完整度 {readinessPercent}%
             </span>
-            <span className="min-w-0 flex-1">
-              <b className="block truncate text-xs font-semibold text-slate-200">
-                {label}
-              </b>
-              <small className="block text-[11px] text-slate-500">
-                {readiness[key]
-                  ? "已纳入"
-                  : key === "lineup"
-                    ? "尚未公布"
-                    : "等待运行"}
-              </small>
+          </div>
+          {context.synced_at ? (
+            <span className="text-[11px] text-slate-500">
+              同步于 {formatTimestamp(context.synced_at)}
             </span>
-            {readiness[key] ? (
-              <Check size={16} aria-label="就绪" className="shrink-0 text-emerald-400" />
-            ) : (
-              <CircleDot size={16} aria-label="等待" className="shrink-0 text-slate-600" />
-            )}
-          </li>
-        ))}
+          ) : null}
+        </div>
+      </div>
+
+      {/* 6 段式渐变就绪仪表条 */}
+      <div className="mb-4 space-y-1.5">
+        <div className="flex h-2 w-full gap-1 overflow-hidden rounded-full bg-pitch-950 p-0.5 border border-slate-800">
+          {cards.map((card) => (
+            <div
+              key={card.key}
+              title={`${card.label}：${card.ready ? "已就绪" : "待同步"}`}
+              className={`h-full flex-1 rounded-full transition-all ${
+                card.ready
+                  ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]"
+                  : card.key === "lineup" && !card.ready
+                    ? "bg-amber-400/70 animate-pulse"
+                    : "bg-slate-800"
+              }`}
+            />
+          ))}
+        </div>
+        <div className="flex items-center justify-between text-[11px] text-slate-400">
+          <span>
+            {readyCount === totalCount
+              ? "全维度证据链齐备，已满足最高置信度推演条件。"
+              : readiness.lineup === false
+                ? "核心赛前数据已纳入，官方首发公布后将自动触发阵容战力重估。"
+                : "部分赛前证据同步中，建议关注即时更新。"}
+          </span>
+          <span className="font-mono text-[10px] text-slate-500">6 维度量化</span>
+        </div>
+      </div>
+
+      {/* 6 大证据卡片栅格 */}
+      <ol className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+        {cards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <li
+              key={card.key}
+              className={`group flex flex-col justify-between rounded-xl border p-3 transition-all ${
+                card.ready
+                  ? "border-emerald-500/25 bg-pitch-950/90 hover:border-emerald-500/40"
+                  : "border-slate-800 bg-pitch-950/40 opacity-75 hover:opacity-100"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+                      card.ready
+                        ? "bg-emerald-500/15 text-emerald-400"
+                        : "bg-pitch-800 text-slate-500"
+                    }`}
+                  >
+                    <Icon size={16} aria-hidden="true" />
+                  </span>
+                  <div>
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] font-bold text-slate-500">
+                        {card.index}
+                      </span>
+                      <strong className="text-xs font-bold text-slate-200">
+                        {card.label}
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+                {card.ready ? (
+                  <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+                    <Check size={11} aria-hidden="true" />
+                    {card.badge}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                    <CircleDot size={11} aria-hidden="true" />
+                    {card.badge}
+                  </span>
+                )}
+              </div>
+              <div className="mt-2.5 pt-2 border-t border-slate-800/60">
+                <p
+                  className={`text-[11px] leading-relaxed font-medium ${
+                    card.ready ? "text-slate-300" : "text-slate-500"
+                  }`}
+                >
+                  {card.snippet}
+                </p>
+              </div>
+            </li>
+          );
+        })}
       </ol>
     </Card>
   );
@@ -1056,7 +1275,7 @@ function LineupColumn({
                   {player.number ?? "-"}
                 </b>
                 <span className="min-w-0 flex-1 truncate text-slate-200">
-                  {player.name}
+                  {to_chinese_player_name(player.name)}
                 </span>
                 <small className="shrink-0 text-[11px] text-slate-500">
                   {player.position}
@@ -1079,7 +1298,7 @@ function LineupColumn({
                       {player.number ?? "-"}
                     </b>
                     <span className="min-w-0 flex-1 truncate text-slate-200">
-                      {player.name}
+                      {to_chinese_player_name(player.name)}
                     </span>
                     <small className="shrink-0 text-[11px] text-slate-500">
                       {player.position}
@@ -1231,13 +1450,13 @@ function SquadTable({
                       player.name
                     }
                   >
-                    <PlayerAvatar photo={player.photo} name={player.name} size={24} />
+                    <PlayerAvatar photo={player.photo} name={to_chinese_player_name(player.name)} size={24} />
                     <span className="font-mono tabular-nums text-slate-500">
                       {player.number ?? "-"}
                     </span>
                     <span className="min-w-0">
                       <b className="block truncate font-medium text-slate-200">
-                        {player.name}
+                        {to_chinese_player_name(player.name)}
                       </b>
                       <small className="block truncate text-[11px] text-slate-500">
                         {[player.nationality, playerNameStatus(player)]
@@ -1712,7 +1931,7 @@ export function EvidenceDetails({
                         className="flex items-baseline gap-2 text-xs"
                       >
                         <b className="shrink-0 font-medium text-slate-200">
-                          {player.name}
+                          {to_chinese_player_name(player.name)}
                         </b>
                         <small className="min-w-0 text-[11px] text-slate-500">
                           {[player.reason, playerNameStatus(player)]
@@ -1741,7 +1960,7 @@ export function EvidenceDetails({
                         className="flex items-baseline gap-2 text-xs"
                       >
                         <b className="shrink-0 font-medium text-slate-200">
-                          {player.name}
+                          {to_chinese_player_name(player.name)}
                         </b>
                         <small className="min-w-0 text-[11px] text-slate-500">
                           {[player.reason, playerNameStatus(player)]
@@ -1937,7 +2156,7 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
                     {data.key_available_players.length ? (
                       data.key_available_players.map((player) => (
                         <li key={impactPlayerKey(player)} className="text-xs">
-                          <b className="font-medium text-slate-200">{player.name}</b>
+                          <b className="font-medium text-slate-200">{to_chinese_player_name(player.name)}</b>
                           <small className="block text-[11px] text-slate-500">
                             {player.player_role} · 预计{" "}
                             {Math.round(player.expected_minutes)} 分钟
@@ -1962,7 +2181,7 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
                     {data.key_absent_players.length ? (
                       data.key_absent_players.map((player) => (
                         <li key={impactPlayerKey(player)} className="text-xs">
-                          <b className="font-medium text-slate-200">{player.name}</b>
+                          <b className="font-medium text-slate-200">{to_chinese_player_name(player.name)}</b>
                           <small className="block text-[11px] text-slate-500">
                             {player.player_role} · 影响{" "}
                             {percent(player.absence_impact ?? 0)}
@@ -1990,10 +2209,10 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
                       key={impactPlayerKey(row.absent_player)}
                       className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs"
                     >
-                      <b className="text-slate-200">{row.absent_player.name}</b>
+                      <b className="text-slate-200">{to_chinese_player_name(row.absent_player.name)}</b>
                       <ChevronRight size={13} aria-hidden="true" className="text-slate-500" />
                       <strong className="text-slate-100">
-                        {row.replacement?.name ?? "暂无同位置替补"}
+                        {row.replacement?.name ? to_chinese_player_name(row.replacement.name) : "暂无同位置替补"}
                       </strong>
                       <small className="font-mono tabular-nums text-slate-500">
                         差值 {percent(row.absence_impact)}

@@ -1,0 +1,6 @@
+{
+  "name": "绿茵罗盘",
+  "description": "可追溯、可解释的足球赛前研究终端",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -131,15 +131,44 @@ export function StandingsDashboard() {
 }
 
 function zoneRowClass(zone: Zone) {
-  if (zone === "ucl") return "border-l-2 border-l-emerald-500";
-  if (zone === "relegation") return "border-l-2 border-l-rose-500";
-  return "border-l-2 border-l-transparent";
+  if (zone === "ucl") return "border-l-[3px] border-l-emerald-500 bg-emerald-500/[0.02]";
+  if (zone === "relegation") return "border-l-[3px] border-l-rose-500 bg-rose-500/[0.02]";
+  return "border-l-[3px] border-l-transparent";
+}
+
+function rankBadge(rank: number, zone: Zone) {
+  if (rank === 1) {
+    return (
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-400/20 text-amber-300 font-mono font-bold text-xs border border-amber-400/40 shadow-[0_0_8px_rgba(251,191,36,0.3)]">
+        1
+      </span>
+    );
+  }
+  if (rank === 2) {
+    return (
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-400/20 text-slate-200 font-mono font-bold text-xs border border-slate-400/40">
+        2
+      </span>
+    );
+  }
+  if (rank === 3) {
+    return (
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-700/20 text-amber-400 font-mono font-bold text-xs border border-amber-700/40">
+        3
+      </span>
+    );
+  }
+  return (
+    <span className={`font-mono font-bold tabular-nums text-xs ${rankClass(zone)}`}>
+      {String(rank).padStart(2, "0")}
+    </span>
+  );
 }
 
 function rankClass(zone: Zone) {
   if (zone === "ucl") return "text-emerald-400";
   if (zone === "relegation") return "text-rose-400";
-  return "text-slate-300";
+  return "text-slate-400";
 }
 
 function pointsClass(zone: Zone) {
@@ -149,18 +178,18 @@ function pointsClass(zone: Zone) {
 }
 
 function countClass(value: number, tone: "win" | "draw" | "loss") {
-  if (value <= 0) return "text-slate-500";
+  if (value <= 0) return "text-slate-600";
   return tone === "win" ? "text-emerald-400" : tone === "draw" ? "text-amber-400" : "text-rose-400";
 }
 
 function TeamBadge({ logo, code, name }: { logo?: string | null; code?: string | null; name: string }) {
   if (logo) {
-    return <Image src={logo} alt="" width={24} height={24} unoptimized className="h-6 w-6 shrink-0 rounded-full border border-slate-700 bg-slate-800 object-contain" />;
+    return <Image src={logo} alt="" width={26} height={26} unoptimized className="h-6.5 w-6.5 shrink-0 rounded-full border border-slate-700/80 bg-slate-800 object-contain p-0.5" />;
   }
   return (
     <span
       aria-hidden="true"
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-[10px] font-bold text-slate-300"
+      className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-full border border-slate-700/80 bg-slate-800 text-[10px] font-bold text-slate-300"
     >
       {(code ?? name).charAt(0).toUpperCase()}
     </span>
@@ -171,11 +200,20 @@ function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
   const total = snapshot.standings.length;
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-pitch-900 shadow-xl">
+      <div className="flex items-center justify-between border-b border-slate-800/80 bg-pitch-950 px-4 py-2.5 sm:px-6">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-blue-500" aria-hidden="true" />
+          <span className="text-xs font-semibold text-slate-300">
+            {snapshot.league_name} · 实时全积分走势
+          </span>
+        </div>
+        <span className="text-[11px] text-slate-500">点击球队行可穿透查看球员名单与近期赛程</span>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-xs">
           <thead className="border-b border-slate-800 bg-pitch-950 font-mono uppercase text-[11px] text-slate-400">
             <tr>
-              <th scope="col" className="w-12 whitespace-nowrap px-4 py-3.5 text-center font-medium">排名</th>
+              <th scope="col" className="w-14 whitespace-nowrap px-4 py-3.5 text-center font-medium">排名</th>
               <th scope="col" className="px-4 py-3.5 font-medium">球队</th>
               <th scope="col" className="px-3 py-3.5 text-center font-medium">赛</th>
               <th scope="col" className="px-3 py-3.5 text-center font-medium">胜</th>
@@ -193,16 +231,16 @@ function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
               return (
                 <tr
                   key={`${snapshot.league_key}-${row.team.provider_id ?? row.team.original_name}`}
-                  className={`transition-colors hover:bg-slate-800/30 ${zoneRowClass(zone)}`}
+                  className={`transition-colors hover:bg-slate-800/40 ${zoneRowClass(zone)}`}
                 >
-                  <td className={`px-4 py-3 text-center font-mono font-bold tabular-nums ${rankClass(zone)}`}>
-                    {String(row.rank).padStart(2, "0")}
+                  <td className="px-4 py-3 text-center">
+                    {rankBadge(row.rank, zone)}
                   </td>
                   <th scope="row" className="px-4 py-3 font-normal">
                     <span className="flex items-center gap-3">
                       <TeamBadge logo={row.team.logo} code={row.team.code} name={row.team.name} />
                       <Link href={`/teams/${snapshot.league_key}/${row.team.provider_id}`} className="group">
-                        <b className="block text-sm font-bold text-white group-hover:text-blue-400">{row.team.name}</b>
+                        <b className="block text-sm font-bold text-white group-hover:text-blue-400 transition-colors">{row.team.name}</b>
                         <small className="block text-[10px] text-slate-500">{row.team.original_name}</small>
                       </Link>
                     </span>
@@ -213,10 +251,10 @@ function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
                   <td className={`px-3 py-3 text-center font-mono tabular-nums ${countClass(row.losses, "loss")}`}>{row.losses}</td>
                   <td className="px-3 py-3 text-center font-mono tabular-nums text-slate-300">{row.goals_for}</td>
                   <td className="px-3 py-3 text-center font-mono tabular-nums text-slate-300">{row.goals_against}</td>
-                  <td className={`px-3 py-3 text-center font-mono tabular-nums ${row.goal_difference > 0 ? "text-emerald-400" : row.goal_difference < 0 ? "text-rose-400" : "text-slate-500"}`}>
+                  <td className={`px-3 py-3 text-center font-mono tabular-nums ${row.goal_difference > 0 ? "text-emerald-400 font-semibold" : row.goal_difference < 0 ? "text-rose-400 font-semibold" : "text-slate-500"}`}>
                     {row.goal_difference > 0 ? "+" : ""}{row.goal_difference}
                   </td>
-                  <td className={`px-4 py-3 text-center font-mono text-lg font-bold tabular-nums ${pointsClass(zone)}`}>
+                  <td className={`px-4 py-3 text-center font-mono text-base font-bold tabular-nums ${pointsClass(zone)}`}>
                     {row.points}
                   </td>
                 </tr>

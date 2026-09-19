@@ -1,10 +1,14 @@
 {
   "name": "football-ai-workspace",
   "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
   "scripts": {
-    "dev:web": "pnpm --dir apps/web dev",
-    "build:web": "pnpm --dir apps/web build",
-    "lint:web": "pnpm --dir apps/web lint"
+    "dev": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspace=apps/web",
+    "start": "npm run start --workspace=apps/web",
+    "lint": "npm run lint --workspace=apps/web"
   }
 }
 

@@ -43,6 +43,7 @@ import {
 } from "@/lib/api";
 import { formatHandicapSide } from "@/lib/handicap";
 import { canCreatePrediction, deriveMatchReport } from "@/lib/match-report";
+import { to_chinese_player_name } from "@/lib/player-names";
 import type { FixtureDetail } from "@/lib/types";
 
 type MatchTab =
@@ -623,7 +624,7 @@ function DecisionReport({
                 <p className="mt-2.5 text-xs leading-relaxed text-slate-400">
                   {team.players.length
                     ? team.players
-                        .map((player) => `${player.name}（${player.reason}）`)
+                        .map((player) => `${to_chinese_player_name(player.name)}（${player.reason}）`)
                         .join("、")
                     : "暂无已确认的关键缺阵球员"}
                 </p>

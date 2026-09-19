@@ -6,6 +6,7 @@ import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { DataFreshness, EmptyState, ErrorState, LoadingState, SectionHeader, StatusBadge } from "@/components/ui";
 import { fetchTeamDetail } from "@/lib/api";
+import { to_chinese_player_name } from "@/lib/player-names";
 import type { TeamDetailResponse, TeamSeasonMatch, TeamSnapshot } from "@/lib/types";
 
 function formatTimestamp(value: string) {
@@ -149,30 +150,39 @@ function TeamContent({ item }: { item: TeamSnapshot }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {item.roster.map((player) => (
-                  <tr key={player.id ?? player.original_name} className="transition-colors hover:bg-slate-800/30">
-                    <td className="px-4 py-3">
-                      <strong className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700 bg-slate-800 text-[11px] font-bold tabular-nums text-slate-300">{player.number ?? "-"}</strong>
-                    </td>
-                    <th scope="row" className="px-3 py-3 font-normal">
-                      <span className="block text-xs font-bold text-white">{player.name}</span>
-                      <small className="block text-[10px] text-slate-500">{player.nationality ?? "国籍未知"}</small>
-                    </th>
-                    <td className="px-3 py-3 font-sans text-slate-300">{player.position}</td>
-                    <td className="px-3 py-3 text-center tabular-nums text-slate-300">{player.age ?? "-"}</td>
-                    <td className="px-3 py-3 text-center font-bold tabular-nums text-white">{player.statistics.appearances}</td>
-                    <td className="px-3 py-3 text-center tabular-nums text-slate-300">{player.statistics.substitute_appearances}</td>
-                    <td className="px-3 py-3 text-center tabular-nums text-slate-300">{player.statistics.goals}</td>
-                    <td className="px-3 py-3 text-center tabular-nums text-slate-300">{player.statistics.assists}</td>
-                    <td className="px-3 py-3 text-center tabular-nums text-slate-300">{player.statistics.yellow_cards}</td>
-                    <td className="px-3 py-3 text-center tabular-nums text-slate-300">{player.statistics.red_cards}</td>
-                    <td className="px-4 py-3 text-center">
-                      <StatusBadge variant={player.injuries.length ? "danger" : "ready"}>
-                        {player.injuries.length ? "伤病" : player.status ?? "未知"}
-                      </StatusBadge>
-                    </td>
-                  </tr>
-                ))}
+                {item.roster.map((player) => {
+                  const chineseName = to_chinese_player_name(player.name);
+                  return (
+                    <tr key={player.id ?? player.original_name} className="transition-colors hover:bg-slate-800/40">
+                      <td className="px-4 py-3">
+                        <strong className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700/80 bg-slate-800 text-[11px] font-bold tabular-nums text-slate-300">
+                          {player.number ?? "-"}
+                        </strong>
+                      </td>
+                      <th scope="row" className="px-3 py-3 font-normal">
+                        <span className="block text-xs font-bold text-white">
+                          {chineseName}
+                        </span>
+                        <small className="block text-[10px] text-slate-500">
+                          {player.name !== chineseName ? `${player.name} · ` : ""}{player.nationality ?? "国籍未知"}
+                        </small>
+                      </th>
+                      <td className="px-3 py-3 font-sans text-slate-300">{player.position}</td>
+                      <td className="px-3 py-3 text-center tabular-nums text-slate-300">{player.age ? `${player.age}岁` : "-"}</td>
+                      <td className="px-3 py-3 text-center font-bold tabular-nums text-white">{player.statistics.appearances}</td>
+                      <td className="px-3 py-3 text-center tabular-nums text-slate-400">{player.statistics.substitute_appearances}</td>
+                      <td className="px-3 py-3 text-center tabular-nums font-semibold text-emerald-400">{player.statistics.goals}</td>
+                      <td className="px-3 py-3 text-center tabular-nums font-semibold text-blue-400">{player.statistics.assists}</td>
+                      <td className="px-3 py-3 text-center tabular-nums text-amber-400">{player.statistics.yellow_cards}</td>
+                      <td className="px-3 py-3 text-center tabular-nums text-rose-400">{player.statistics.red_cards}</td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusBadge variant={player.injuries.length ? "danger" : "ready"}>
+                          {player.injuries.length ? "伤停" : player.status ?? "正常"}
+                        </StatusBadge>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
