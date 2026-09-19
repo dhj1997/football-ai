@@ -414,10 +414,10 @@ function FixtureRow({
         : "draw"
     : "pending";
   const rowStatusVariant: StatusVariant =
-    fixture.status === "finished"
-      ? "neutral"
-      : fixture.status === "live"
-        ? "info"
+    fixture.status === "live"
+      ? "live"
+      : fixture.status === "finished"
+        ? "neutral"
         : fixture.status === "postponed" || fixture.status === "cancelled"
           ? "danger"
           : kickoffHasPassed
@@ -603,8 +603,10 @@ function FixtureRow({
   const className = `flex w-full items-center gap-3 border-l-4 p-4 text-left transition-colors ${
     selected
       ? "border-blue-500 bg-blue-500/5"
-      : "border-transparent hover:bg-slate-800/30"
-  }`;
+      : fixture.status === "live"
+        ? "border-rose-500/70 bg-rose-500/5 hover:bg-rose-500/10"
+        : "border-transparent hover:bg-slate-800/30"
+  }${fixture.status === "finished" && !selected ? " opacity-55 saturate-[.6]" : ""}`;
   if (href)
     return (
       <Link

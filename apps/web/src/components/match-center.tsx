@@ -105,7 +105,7 @@ function fixtureState(detail: FixtureDetail) {
 function fixtureStatusVariant(detail: FixtureDetail) {
   const { status } = detail.fixture;
   if (status === "finished") return "neutral" as const;
-  if (status === "live") return "ready" as const;
+  if (status === "live") return "live" as const;
   if (status === "postponed" || status === "cancelled") return "danger" as const;
   return "info" as const;
 }
