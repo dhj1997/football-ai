@@ -1,7 +1,8 @@
 "use client";
 
-import { Cpu, Filter, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { ChevronDown, ChevronRight, Cpu, Filter, RefreshCw } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { FormEvent } from "react";
 import {
   Card,
@@ -1293,6 +1294,7 @@ function EquityCurve({ points }: { points: BankrollSummary["equity_curve"] }) {
 }
 
 function BetHistory({ bets }: { bets: SimulatedBet[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   return (
     <section className={tableSectionClasses}>
       <SectionHeader
@@ -1333,11 +1335,17 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
                   <th className={headCellClasses}>状态</th>
                   <th className={headCellClasses}>净盈亏</th>
                   <th className={headCellClasses}>时间</th>
+                  <th className={headCellClasses}>详情</th>
                 </tr>
               </thead>
               <tbody className={tbodyClasses}>
                 {bets.map((bet) => (
-                  <tr key={bet.id} className={rowClasses}>
+                  <Fragment key={bet.id}>
+                  <tr
+                    className={`${rowClasses} cursor-pointer`}
+                    onClick={() => setExpandedId(expandedId === bet.id ? null : bet.id)}
+                    aria-expanded={expandedId === bet.id}
+                  >
                     <th scope="row" className={rowHeadClasses}>
                       <b className="block text-xs font-semibold text-slate-100">
                         {bet.home_team} vs {bet.away_team}
@@ -1392,7 +1400,22 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
                       )}
                     </td>
                     <td className={numberCellClasses}>{formatDate(bet.placed_at)}</td>
+                    <td className={cellClasses}>
+                      {expandedId === bet.id ? (
+                        <ChevronDown size={14} aria-hidden="true" className="text-slate-500" />
+                      ) : (
+                        <ChevronRight size={14} aria-hidden="true" className="text-slate-500" />
+                      )}
+                    </td>
                   </tr>
+                  {expandedId === bet.id ? (
+                    <tr>
+                      <td colSpan={10} className="border-y border-slate-800 bg-pitch-950/60 px-4 py-4">
+                        <BetDetail bet={bet} />
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -1404,6 +1427,59 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
         </EmptyState>
       )}
     </section>
+  );
+}
+
+function BetDetail({ bet }: { bet: SimulatedBet }) {
+  const items: Array<[string, ReactNode]> = [
+    ["开球时间", formatDate(bet.kickoff)],
+    ["下注时间", formatDate(bet.placed_at)],
+    ["联赛", leagueName(bet.league_key)],
+    ["下注模型", modelLabel(bet.model_key, bet.model_version)],
+    ["市场", bet.market === "1x2" ? "胜平负" : "亚洲盘"],
+    ["选择", selectionLabel(bet.selection, bet.handicap_line)],
+    ["赔率", bet.odds.toFixed(2)],
+    ["下注金额", bet.stake.toFixed(2)],
+    ["下注前余额", bet.balance_before.toFixed(2)],
+    ["下注后余额", bet.balance_after_placement.toFixed(2)],
+    ["结算时间", bet.settled_at ? formatDate(bet.settled_at) : "未结算"],
+    ["结算结果", bet.settlement_result ? settlementLabel(bet.settlement_result) : "—"],
+    ["返还金额", bet.return_amount === null ? "—" : bet.return_amount.toFixed(2)],
+    ["净盈亏", bet.net_profit === null ? "—" : signedMoney(bet.net_profit)],
+    ["结算后余额", bet.balance_after_settlement === null ? "—" : bet.balance_after_settlement.toFixed(2)],
+    ["预测版本", bet.model_version],
+  ];
+  return (
+    <div className="flex flex-col gap-3 text-xs">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <b className="text-sm font-semibold text-slate-100">
+          {bet.home_team} vs {bet.away_team}
+        </b>
+        <Link
+          className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300"
+          href={`/matches/${bet.fixture_id}`}
+        >
+          查看比赛详情 →
+        </Link>
+        <span className="font-mono text-[10px] text-slate-600">预测 {bet.prediction_id}</span>
+      </div>
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 md:grid-cols-4">
+        {items.map(([label, value]) => (
+          <div key={label} className="flex min-w-0 flex-col">
+            <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
+            <dd className="truncate font-medium text-slate-200" title={typeof value === "string" ? value : undefined}>
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {bet.reason ? (
+        <p className="rounded-lg border border-slate-800 bg-pitch-900/60 px-3 py-2 leading-relaxed text-slate-300">
+          <span className="mr-1.5 text-slate-500">下注理由：</span>
+          {bet.reason}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
