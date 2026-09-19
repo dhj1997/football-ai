@@ -1456,6 +1456,7 @@ def prediction_decisions(
                 "home_team": (fixture.get("home_team") or {}).get("name"),
                 "away_team": (fixture.get("away_team") or {}).get("name"),
                 "created_at": prediction.get("created_at"),
+                "score": fixture.get("score"),
                 "model_key": prediction.get("model_key") or experiment.get("model_key"),
                 "model_version": prediction.get("model_version"),
                 "strategy_id": experiment.get("strategy_id") or "baseline",

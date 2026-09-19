@@ -99,6 +99,7 @@ export function PerformanceDashboard() {
   const [strategies, setStrategies] = useState<StrategyPerformance[]>([]);
   const [metrics, setMetrics] = useState<PredictionMetrics | null>(null);
   const [selectedModel, setSelectedModel] = useState<ModelKey>("chatgpt");
+  const [dualDecisions, setDualDecisions] = useState<DecisionAudit[]>([]);
   const [filters, setFilters] = useState({
     league: "all" as LeagueFilter,
     season: "",
@@ -115,17 +116,19 @@ export function PerformanceDashboard() {
     setError(null);
     try {
       const query = metricQuery(filters);
-      const [summary, betData, decisionData, strategyData, metricData] =
+      const [summary, betData, decisionData, dualDecisionData, strategyData, metricData] =
         await Promise.all([
           fetchBankroll(),
           fetchBets(selectedModel),
           fetchDecisionAudits(query, selectedModel),
+          fetchDecisionAudits(query, "all"),
           fetchStrategyPerformance(query),
           fetchPredictionMetrics(query, selectedModel),
         ]);
       setBankroll(summary);
       setBets(betData.items);
       setDecisions(decisionData.items);
+      setDualDecisions(dualDecisionData.items);
       setStrategies(strategyData.items);
       setMetrics(metricData);
     } catch (reason) {
@@ -142,10 +145,12 @@ export function PerformanceDashboard() {
       fetchBankroll(),
       fetchBets(selectedModel),
       fetchDecisionAudits(query, selectedModel),
+      fetchDecisionAudits(query, "all"),
       fetchStrategyPerformance(query),
       fetchPredictionMetrics(query, selectedModel),
     ])
-      .then(([summary, betData, decisionData, strategyData, metricData]) => {
+      .then(([summary, betData, decisionData, dualDecisionData, strategyData, metricData]) => {
+        setDualDecisions(dualDecisionData.items);
         if (!active) return;
         setBankroll(summary);
         setBets(betData.items);
@@ -360,6 +365,7 @@ export function PerformanceDashboard() {
             }
           />
           <DecisionAuditTable decisions={visibleDecisions} />
+          <DualDisagreement decisions={dualDecisions} />
           <ClvTracker bets={visibleBets} />
           <BetHistory bets={visibleBets} />
           <SettlementHistory metrics={metrics} />
@@ -1607,6 +1613,163 @@ function ClvTracker({ bets }: { bets: SimulatedBet[] }) {
               是小样本下比盈亏更可靠的模型水平信号。
             </p>
           </>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+type DualOutcome = "home" | "draw" | "away";
+
+function dualOutcome(probabilities: unknown): DualOutcome | null {
+  if (!probabilities || typeof probabilities !== "object") return null;
+  const values = probabilities as Record<string, unknown>;
+  const home = Number(values.home);
+  const draw = Number(values.draw);
+  const away = Number(values.away);
+  if (![home, draw, away].every((value) => Number.isFinite(value))) return null;
+  if (home >= draw && home >= away) return "home";
+  if (away >= home && away >= draw) return "away";
+  return "draw";
+}
+
+function actualOutcome(score: { home: number; away: number } | null | undefined): DualOutcome | null {
+  if (!score || typeof score.home !== "number" || typeof score.away !== "number") return null;
+  if (score.home > score.away) return "home";
+  if (score.home < score.away) return "away";
+  return "draw";
+}
+
+const OUTCOME_LABELS: Record<DualOutcome, string> = {
+  home: "主胜",
+  draw: "平",
+  away: "客胜",
+};
+
+function DualDisagreement({ decisions }: { decisions: DecisionAudit[] }) {
+  const groups = new Map<string, Map<string, DecisionAudit>>();
+  for (const row of decisions) {
+    if (!row.model_probabilities) continue;
+    const modelKey = String(row.model_key ?? "unknown");
+    if (modelKey !== "deepseek" && modelKey !== "chatgpt") continue;
+    const bucket = groups.get(row.fixture_id) ?? new Map<string, DecisionAudit>();
+    bucket.set(modelKey, row);
+    groups.set(row.fixture_id, bucket);
+  }
+  const pairs = [...groups.values()].filter(
+    (bucket) => bucket.has("deepseek") && bucket.has("chatgpt"),
+  );
+  let agree = 0;
+  let disagree = 0;
+  let scored = 0;
+  let deepseekRight = 0;
+  let chatgptRight = 0;
+  const disagreementRows: Array<{
+    key: string;
+    date: string | null;
+    match: string;
+    deepseek: DualOutcome;
+    chatgpt: DualOutcome;
+    actual: DualOutcome | null;
+    deepseekBet: DecisionAudit | null;
+    chatgptBet: DecisionAudit | null;
+  }> = [];
+  for (const bucket of pairs) {
+    const deepseekRow = bucket.get("deepseek")!;
+    const chatgptRow = bucket.get("chatgpt")!;
+    const deepseekPick = dualOutcome(deepseekRow.model_probabilities);
+    const chatgptPick = dualOutcome(chatgptRow.model_probabilities);
+    if (!deepseekPick || !chatgptPick) continue;
+    const sample = deepseekRow.fixture_date ? deepseekRow : chatgptRow;
+    if (deepseekPick === chatgptPick) {
+      agree += 1;
+      continue;
+    }
+    disagree += 1;
+    const actual = actualOutcome(sample.score);
+    if (actual) {
+      scored += 1;
+      if (deepseekPick === actual) deepseekRight += 1;
+      if (chatgptPick === actual) chatgptRight += 1;
+    }
+    disagreementRows.push({
+      key: sample.fixture_id,
+      date: sample.fixture_date,
+      match: `${sample.home_team ?? "?"} vs ${sample.away_team ?? "?"}`,
+      deepseek: deepseekPick,
+      chatgpt: chatgptPick,
+      actual,
+      deepseekBet: deepseekRow.decision_status === "bet" ? deepseekRow : null,
+      chatgptBet: chatgptRow.decision_status === "bet" ? chatgptRow : null,
+    });
+  }
+  disagreementRows.sort((left, right) => (right.date ?? "").localeCompare(left.date ?? ""));
+  const recent = disagreementRows.slice(0, 12);
+  const deepseekShare = scored ? Math.round((deepseekRight / scored) * 100) : null;
+  const chatgptShare = scored ? Math.round((chatgptRight / scored) * 100) : null;
+
+  return (
+    <section className={tableSectionClasses} aria-label="双模型分歧">
+      <SectionHeader
+        eyebrow="DUAL MODEL DIVERGENCE"
+        title="双模型分歧"
+        meta={`${pairs.length} 场双模型覆盖 · ${disagree} 场分歧`}
+      />
+      <Card className="space-y-4 p-4">
+        <div className="grid gap-3 md:grid-cols-4">
+          <StatCard label="方向一致" value={`${agree} 场`} hint="两模型最高概率方向相同" />
+          <StatCard label="方向分歧" value={`${disagree} 场`} hint="两模型给出的赛果方向不同" />
+          <StatCard
+            label="分歧时 DeepSeek 命中"
+            value={scored ? `${deepseekRight}/${scored} · ${deepseekShare}%` : "待赛果"}
+            hint="分歧场次中有赛果样本的命中率"
+          />
+          <StatCard
+            label="分歧时 ChatGPT 命中"
+            value={scored ? `${chatgptRight}/${scored} · ${chatgptShare}%` : "待赛果"}
+            hint="分歧场次中有赛果样本的命中率"
+          />
+        </div>
+        {recent.length ? (
+          <div className="overflow-x-auto">
+            <table className={tableClasses}>
+              <thead>
+                <tr className={headRowClasses}>
+                  <th className={headCellClasses}>日期</th>
+                  <th className={headCellClasses}>比赛</th>
+                  <th className={headCellClasses}>DeepSeek</th>
+                  <th className={headCellClasses}>ChatGPT</th>
+                  <th className={headCellClasses}>实际</th>
+                  <th className={headCellClasses}>下注</th>
+                </tr>
+              </thead>
+              <tbody className={tbodyClasses}>
+                {recent.map((row) => (
+                  <tr key={row.key} className={rowClasses}>
+                    <td className={cellClasses}>{row.date ?? "—"}</td>
+                    <th scope="row" className={rowHeadClasses}>
+                      <b className="block text-xs font-semibold text-slate-100">{row.match}</b>
+                    </th>
+                    <td className={`${cellClasses} ${row.actual && row.deepseek === row.actual ? "text-emerald-400" : row.actual ? "text-rose-400" : "text-slate-300"}`}>
+                      {OUTCOME_LABELS[row.deepseek]}
+                    </td>
+                    <td className={`${cellClasses} ${row.actual && row.chatgpt === row.actual ? "text-emerald-400" : row.actual ? "text-rose-400" : "text-slate-300"}`}>
+                      {OUTCOME_LABELS[row.chatgpt]}
+                    </td>
+                    <td className={cellClasses}>{row.actual ? OUTCOME_LABELS[row.actual] : "未赛"}</td>
+                    <td className={cellClasses}>
+                      {[
+                        row.deepseekBet ? "DeepSeek" : null,
+                        row.chatgptBet ? "ChatGPT" : null,
+                      ].filter(Boolean).join(" / ") || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500">暂无分歧样本：双模型对当前覆盖的比赛判断一致。</p>
         )}
       </Card>
     </section>

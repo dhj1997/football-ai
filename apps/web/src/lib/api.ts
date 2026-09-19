@@ -230,7 +230,7 @@ export async function fetchBets(
 
 export async function fetchDecisionAudits(
   parameters = "",
-  model?: ModelKey,
+  model?: ModelKey | "all",
 ): Promise<{ items: DecisionAudit[]; count: number; is_simulated: true }> {
   const query = new URLSearchParams(parameters);
   if (model) query.set("model", model);

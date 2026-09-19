@@ -617,6 +617,8 @@ export interface DecisionAudit {
   home_team: string | null;
   away_team: string | null;
   created_at: string | null;
+  score?: { home: number; away: number } | null;
+  model_probabilities?: Record<string, number> | null;
   model_key: ModelKey | string | null;
   model_version: string | null;
   strategy_id: string;
