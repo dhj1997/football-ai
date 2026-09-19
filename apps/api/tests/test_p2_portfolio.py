@@ -133,9 +133,10 @@ def test_candidate_filter_rejects_ev_below_p2_threshold() -> None:
 
 
 def test_candidate_filter_rejects_implausible_edge_and_ev_as_data_anomaly() -> None:
-    assert not is_candidate_eligible(candidate(edge=0.447, ev=18.278), PortfolioConfig())
-    assert not is_candidate_eligible(candidate(edge=0.30, ev=0.20), PortfolioConfig())
-    assert not is_candidate_eligible(candidate(edge=0.10, ev=0.70), PortfolioConfig())
+    # 只有数学上离谱的值才作为数据异常拦截；25%-60% 区间按正常资格门槛放行。
+    assert not is_candidate_eligible(candidate(edge=0.947, ev=18.278), PortfolioConfig())
+    assert is_candidate_eligible(candidate(edge=0.30, ev=0.20), PortfolioConfig())
+    assert is_candidate_eligible(candidate(edge=0.10, ev=0.70), PortfolioConfig())
     assert is_candidate_eligible(candidate(edge=0.20, ev=0.30), PortfolioConfig())
 
 
@@ -345,7 +346,7 @@ def test_candidate_gate_reasons_reports_each_failed_gate() -> None:
     assert candidate_gate_reasons(candidate(edge=0.01), config) == ["edge_below_threshold"]
     assert candidate_gate_reasons(candidate(ev=0.03), config) == ["ev_below_threshold"]
     assert candidate_gate_reasons(
-        candidate(edge=0.447, ev=18.278), config
+        candidate(edge=0.947, ev=18.278), config
     ) == ["implausible_edge", "implausible_ev"]
     assert candidate_gate_reasons(candidate(data_quality=0.5), config) == ["data_quality_below_threshold"]
     assert candidate_gate_reasons(candidate(odds_age_minutes=None), config) == ["odds_age_missing"]

@@ -14,8 +14,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 BRAND_ROOT = Path(__file__).resolve().parent
 DIST = BRAND_ROOT / "dist"
-AMBER_TOP = (245, 158, 11)  # amber-500
-AMBER_BOTTOM = (234, 88, 12)  # orange-600
+AMBER_TOP = (16, 185, 129)  # emerald-500
+AMBER_BOTTOM = (13, 148, 136)  # teal-600
 PITCH_DARK = (6, 10, 24)  # slate-950 tinted
 WHITE = (255, 255, 255, 255)
 FONT_BOLD = "C:/Windows/Fonts/msyhbd.ttc"
@@ -27,7 +27,7 @@ def lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[in
 
 
 def diagonal_gradient(size: int) -> Image.Image:
-    """Smooth diagonal amber gradient built small and upscaled."""
+    """Smooth diagonal emerald gradient built small and upscaled."""
 
     small = Image.new("RGB", (64, 64))
     pixels = small.load()
@@ -38,7 +38,7 @@ def diagonal_gradient(size: int) -> Image.Image:
 
 
 def draw_compass(image: Image.Image, cx: float, cy: float, radius: float) -> None:
-    """White compass ring + needle + amber pivot, scaled to radius."""
+    """White compass ring + needle + emerald pivot, scaled to radius."""
 
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)

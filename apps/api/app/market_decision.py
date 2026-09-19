@@ -14,8 +14,8 @@ MIN_FORECAST_CONFIDENCE = 0.60
 MIN_STAKE_FRACTION = 0.01
 MAX_STAKE_FRACTION = 0.02
 # Values beyond these are treated as data anomalies, not opportunities.
-MAX_PLAUSIBLE_EDGE = 0.25
-MAX_PLAUSIBLE_EV = 0.60
+MAX_PLAUSIBLE_EDGE = 0.60
+MAX_PLAUSIBLE_EV = 1.50
 ODDS_MAX_AGE = timedelta(hours=12)
 REASON_TEXT = {
     "ai_unavailable": "AI服务不可用，未完成模型分析",

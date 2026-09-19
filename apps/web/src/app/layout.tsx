@@ -26,7 +26,7 @@ export default function RootLayout({
           <div className="flex items-center gap-3 sm:gap-5">
             <Link className="flex items-center gap-2.5 sm:gap-3" href="/" aria-label="返回赛程首页">
               <span
-                className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-tr from-amber-500 to-orange-600 text-base font-bold text-white shadow-lg shadow-amber-500/20 shrink-0"
+                className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-tr from-emerald-500 to-teal-600 text-base font-bold text-white shadow-lg shadow-emerald-500/20 shrink-0"
                 aria-hidden="true"
               >
                 罗
@@ -34,7 +34,7 @@ export default function RootLayout({
               <span>
                 <h1 className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm font-bold tracking-wide text-white">
                   绿茵罗盘
-                  <span className="hidden sm:inline-block rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-normal text-amber-400">
+                  <span className="hidden sm:inline-block rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] font-normal text-emerald-400">
                     PITCH COMPASS
                   </span>
                   <span className="hidden md:inline-block rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 font-mono text-[10px] font-normal text-slate-400">

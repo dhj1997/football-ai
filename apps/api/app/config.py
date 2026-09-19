@@ -120,8 +120,8 @@ class Settings(BaseSettings):
     automation_notify_interval_minutes: int = 5
     portfolio_min_edge: float = 0.05
     portfolio_min_ev: float = 0.05
-    portfolio_max_plausible_edge: float = 0.25
-    portfolio_max_plausible_ev: float = 0.60
+    portfolio_max_plausible_edge: float = 0.60
+    portfolio_max_plausible_ev: float = 1.50
     portfolio_max_odds_age_minutes: float = 720.0
     portfolio_stake_fraction: float = 0.01
     portfolio_max_single_bet_fraction: float = 0.02

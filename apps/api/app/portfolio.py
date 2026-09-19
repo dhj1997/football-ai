@@ -139,8 +139,8 @@ class PortfolioConfig:
 
     min_edge: float = 0.05
     min_ev: float = 0.05
-    max_plausible_edge: float = 0.25
-    max_plausible_ev: float = 0.60
+    max_plausible_edge: float = 0.60
+    max_plausible_ev: float = 1.50
     max_odds_age_minutes: float = 720.0
     stake_fraction: float = 0.01
     max_single_bet_fraction: float = 0.02

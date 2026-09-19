@@ -153,7 +153,8 @@ def test_insufficient_1x2_edge_falls_back_to_asian_handicap() -> None:
 
 def test_implausible_model_vs_market_deviation_blocks_execution() -> None:
     result = apply_market_decision(
-        prediction({"home": 0.2782, "draw": 0.2517, "away": 0.4702}),
+        # edge ≈ 0.925：超过 0.60 的数据异常上限才拦截；25%-60% 区间按正常判断放行
+        prediction({"home": 0.35, "draw": 0.30, "away": 0.35}),
         context(fresh_odds(home=5.5, draw=5.5, away=41.0)),
     )
 
