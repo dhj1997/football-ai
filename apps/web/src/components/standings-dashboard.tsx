@@ -200,28 +200,28 @@ function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
   const total = snapshot.standings.length;
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-pitch-900 shadow-xl">
-      <div className="flex items-center justify-between border-b border-slate-800/80 bg-pitch-950 px-4 py-2.5 sm:px-6">
+      <div className="flex items-center justify-between border-b border-slate-800/80 bg-pitch-950 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-blue-500" aria-hidden="true" />
-          <span className="text-xs font-semibold text-slate-300">
+          <span className="h-2.5 w-2.5 rounded-full bg-blue-500" aria-hidden="true" />
+          <span className="text-sm font-semibold text-slate-200">
             {snapshot.league_name} · 实时全积分走势
           </span>
         </div>
-        <span className="text-[11px] text-slate-500">点击球队行可穿透查看球员名单与近期赛程</span>
+        <span className="text-xs text-slate-400">点击球队行可穿透查看球员名单与近期赛程</span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-left text-xs">
-          <thead className="border-b border-slate-800 bg-pitch-950 font-mono uppercase text-[11px] text-slate-400">
+        <table className="w-full min-w-[760px] text-left text-sm">
+          <thead className="border-b border-slate-800 bg-pitch-950 text-xs font-semibold text-slate-300">
             <tr>
-              <th scope="col" className="w-14 whitespace-nowrap px-4 py-3.5 text-center font-medium">排名</th>
-              <th scope="col" className="px-4 py-3.5 font-medium">球队</th>
-              <th scope="col" className="px-3 py-3.5 text-center font-medium">赛</th>
-              <th scope="col" className="px-3 py-3.5 text-center font-medium">胜</th>
-              <th scope="col" className="px-3 py-3.5 text-center font-medium">平</th>
-              <th scope="col" className="px-3 py-3.5 text-center font-medium">负</th>
-              <th scope="col" className="px-3 py-3.5 text-center font-medium">进球</th>
-              <th scope="col" className="px-3 py-3.5 text-center font-medium">失球</th>
-              <th scope="col" className="px-3 py-3.5 text-center font-medium">净胜</th>
+              <th scope="col" className="w-14 whitespace-nowrap px-4 py-3.5 text-center font-semibold">排名</th>
+              <th scope="col" className="px-4 py-3.5 font-semibold">球队</th>
+              <th scope="col" className="px-3 py-3.5 text-center font-semibold">赛</th>
+              <th scope="col" className="px-3 py-3.5 text-center font-semibold">胜</th>
+              <th scope="col" className="px-3 py-3.5 text-center font-semibold">平</th>
+              <th scope="col" className="px-3 py-3.5 text-center font-semibold">负</th>
+              <th scope="col" className="px-3 py-3.5 text-center font-semibold">进球</th>
+              <th scope="col" className="px-3 py-3.5 text-center font-semibold">失球</th>
+              <th scope="col" className="px-3 py-3.5 text-center font-semibold">净胜</th>
               <th scope="col" className="px-4 py-3.5 text-center font-bold text-white">积分</th>
             </tr>
           </thead>
@@ -240,8 +240,8 @@ function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
                     <span className="flex items-center gap-3">
                       <TeamBadge logo={row.team.logo} code={row.team.code} name={row.team.name} />
                       <Link href={`/teams/${snapshot.league_key}/${row.team.provider_id}`} className="group">
-                        <b className="block text-sm font-bold text-white group-hover:text-blue-400 transition-colors">{row.team.name}</b>
-                        <small className="block text-[10px] text-slate-500">{row.team.original_name}</small>
+                        <b className="block text-sm sm:text-base font-bold text-white group-hover:text-blue-400 transition-colors">{row.team.name}</b>
+                        <small className="block text-xs text-slate-400">{row.team.original_name}</small>
                       </Link>
                     </span>
                   </th>
@@ -251,10 +251,10 @@ function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
                   <td className={`px-3 py-3 text-center font-mono tabular-nums ${countClass(row.losses, "loss")}`}>{row.losses}</td>
                   <td className="px-3 py-3 text-center font-mono tabular-nums text-slate-300">{row.goals_for}</td>
                   <td className="px-3 py-3 text-center font-mono tabular-nums text-slate-300">{row.goals_against}</td>
-                  <td className={`px-3 py-3 text-center font-mono tabular-nums ${row.goal_difference > 0 ? "text-emerald-400 font-semibold" : row.goal_difference < 0 ? "text-rose-400 font-semibold" : "text-slate-500"}`}>
+                  <td className={`px-3 py-3 text-center font-mono tabular-nums ${row.goal_difference > 0 ? "text-emerald-400 font-semibold" : row.goal_difference < 0 ? "text-rose-400 font-semibold" : "text-slate-400"}`}>
                     {row.goal_difference > 0 ? "+" : ""}{row.goal_difference}
                   </td>
-                  <td className={`px-4 py-3 text-center font-mono text-base font-bold tabular-nums ${pointsClass(zone)}`}>
+                  <td className={`px-4 py-3 text-center font-mono text-base sm:text-lg font-bold tabular-nums ${pointsClass(zone)}`}>
                     {row.points}
                   </td>
                 </tr>
@@ -263,7 +263,7 @@ function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
           </tbody>
         </table>
       </div>
-      <div className="flex flex-wrap justify-between items-center gap-2 border-t border-slate-800 bg-pitch-950 p-4 font-mono text-xs text-slate-500">
+      <div className="flex flex-wrap justify-between items-center gap-2 border-t border-slate-800 bg-pitch-950 p-4 font-mono text-xs text-slate-400">
         <div className="flex flex-wrap gap-4">
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" /> 欧战区 (1-{UCL_COUNT})</span>
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-500" aria-hidden="true" /> 降级区 (末{RELEGATION_COUNT}名)</span>

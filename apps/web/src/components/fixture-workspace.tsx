@@ -427,7 +427,7 @@ function FixtureRow({
               : "neutral";
   const readyCount =
     fixture.evidence_summary?.ready_count ?? (fixture.lineup_confirmed ? 4 : 3);
-  const totalCount = fixture.evidence_summary?.total_count ?? 6;
+  const totalCount = fixture.evidence_summary?.total_count ?? 4;
 
   const content = (
     <>
@@ -447,12 +447,12 @@ function FixtureRow({
           {isFavorite ? "★" : "☆"}
         </button>
       ) : null}
-      <div className="flex w-24 shrink-0 flex-col items-start gap-1">
+      <div className="flex w-20 sm:w-24 shrink-0 flex-col items-start gap-1">
         <strong className="font-mono text-xs font-bold tabular-nums text-slate-200">
           {formatKickoff(fixture.kickoff)}
         </strong>
         <span
-          className="inline-flex max-w-full items-center gap-1 rounded border border-slate-700/80 bg-pitch-900 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
+          className="inline-flex max-w-full items-center gap-1 rounded border border-slate-700/80 bg-pitch-900 px-1.5 py-0.5 text-xs font-medium text-slate-300"
           title={fixture.league.name || fixture.league_key.toUpperCase()}
           aria-label={`联赛 ${fixture.league.name || fixture.league_key.toUpperCase()}`}
         >
@@ -471,8 +471,8 @@ function FixtureRow({
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
         <div className="flex flex-1 items-center justify-end gap-2 min-w-0 text-right">
           <b
-            className={`truncate text-sm font-semibold transition-colors ${
-              fixture.score ? "text-white" : "text-slate-200"
+            className={`truncate text-sm sm:text-base font-bold transition-colors ${
+              fixture.score ? "text-white" : "text-slate-100"
             }`}
             title={fixture.home_team.name}
           >
@@ -480,16 +480,16 @@ function FixtureRow({
           </b>
           <TeamMark team={fixture.home_team} tone="home" />
         </div>
-        <div className="flex shrink-0 flex-col items-center justify-center w-14 sm:w-16">
+        <div className="flex shrink-0 flex-col items-center justify-center w-12 sm:w-16">
           {fixture.score ? (
             <div className="flex flex-col items-center gap-0.5">
               <Scoreline home={fixture.score.home} away={fixture.score.away} />
-              <small className={`text-[10px] font-medium ${rowResultToneClass[resultTone]}`}>
+              <small className={`text-xs font-medium ${rowResultToneClass[resultTone]}`}>
                 {resultLabel}
               </small>
             </div>
           ) : (
-            <span className="rounded-full border border-slate-700/80 bg-pitch-900 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-400">
+            <span className="rounded-full border border-slate-700/80 bg-pitch-900 px-2 py-0.5 font-mono text-xs font-bold text-slate-400">
               VS
             </span>
           )}
@@ -497,8 +497,8 @@ function FixtureRow({
         <div className="flex flex-1 items-center justify-start gap-2 min-w-0 text-left">
           <TeamMark team={fixture.away_team} tone="away" />
           <b
-            className={`truncate text-sm font-semibold transition-colors ${
-              fixture.score ? "text-white" : "text-slate-200"
+            className={`truncate text-sm sm:text-base font-bold transition-colors ${
+              fixture.score ? "text-white" : "text-slate-100"
             }`}
             title={fixture.away_team.name}
           >
@@ -507,29 +507,29 @@ function FixtureRow({
         </div>
       </div>
 
-      {/* 胜平负多盘口水位微缩条 */}
+      {/* 胜平负多盘口水位微缩条（超宽屏幕展示，避免挤压球队名） */}
       {fixture.odds_summary ? (
         <div
-          className="hidden shrink-0 items-center rounded-lg border border-slate-800 bg-pitch-950/80 px-1 py-1 lg:flex"
+          className="hidden shrink-0 items-center rounded-lg border border-slate-800 bg-pitch-950/80 px-1.5 py-1 2xl:flex"
           aria-label="胜平负赔率"
           title={`赔率更新 ${fixture.odds_summary.updated_at ?? "未知"}`}
         >
           <div className="flex flex-col items-center px-2 py-0.5">
-            <span className="text-[9px] font-medium text-slate-500">主胜</span>
+            <span className="text-[10px] font-medium text-slate-500">主胜</span>
             <span className="font-mono text-xs font-bold tabular-nums text-amber-400">
               {fixture.odds_summary.home.toFixed(2)}
             </span>
           </div>
           <div className="h-5 w-px bg-slate-800" aria-hidden="true" />
           <div className="flex flex-col items-center px-2 py-0.5">
-            <span className="text-[9px] font-medium text-slate-500">平局</span>
+            <span className="text-[10px] font-medium text-slate-500">平局</span>
             <span className="font-mono text-xs font-bold tabular-nums text-slate-300">
               {fixture.odds_summary.draw.toFixed(2)}
             </span>
           </div>
           <div className="h-5 w-px bg-slate-800" aria-hidden="true" />
           <div className="flex flex-col items-center px-2 py-0.5">
-            <span className="text-[9px] font-medium text-slate-500">客胜</span>
+            <span className="text-[10px] font-medium text-slate-500">客胜</span>
             <span className="font-mono text-xs font-bold tabular-nums text-sky-400">
               {fixture.odds_summary.away.toFixed(2)}
             </span>
@@ -537,29 +537,29 @@ function FixtureRow({
         </div>
       ) : null}
 
-      {/* 证据轨道与模型推演状态条（带 6-Pip 迷你指示灯轨） */}
+      {/* 证据轨道与模型推演状态条（动态指示灯轨） */}
       <div
         className="hidden shrink-0 flex-col items-end gap-1.5 sm:flex"
-        aria-label="研究状态与证据光轨"
+        aria-label="研究状态与证据轨道"
       >
         <div className="flex items-center gap-1.5">
           <span
-            className={
+            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
               readyCount >= totalCount ? signalReadyClass : signalWaitingClass
-            }
+            }`}
             title={`证据准备就绪度 ${readyCount}/${totalCount}`}
           >
-            <Database size={11} aria-hidden="true" />
+            <Database size={12} aria-hidden="true" />
             证据 {readyCount}/{totalCount}
           </span>
           <span
-            className={
+            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
               fixture.has_prediction
                 ? signalPredictedClass
                 : canCreatePrediction(fixture)
-                  ? "inline-flex items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-300"
+                  ? "border border-blue-500/30 bg-blue-500/10 text-blue-300"
                   : signalWaitingClass
-            }
+            }`}
             title={
               fixture.has_prediction
                 ? "已有模型预测"
@@ -568,32 +568,29 @@ function FixtureRow({
                   : "待同步证据"
             }
           >
-            <Gauge size={11} aria-hidden="true" />
+            <Gauge size={12} aria-hidden="true" />
             {fixture.has_prediction
-              ? "模型已推演"
+              ? "已推演"
               : canCreatePrediction(fixture)
                 ? "可推演"
                 : "待推演"}
           </span>
         </div>
-        {/* 6-Pip 光轨 */}
+        {/* 证据轨道指示灯（与证据总数精确对应） */}
         <div
           className="flex items-center gap-1"
           aria-label={`证据进度：${readyCount}项已就绪`}
-          title={`6大维度：近期状态、交锋、可用人员、首发名单、赔率、模型推演 (${readyCount}/${totalCount})`}
+          title={`证据维度准备进度 (${readyCount}/${totalCount})`}
         >
-          {Array.from({ length: 6 }).map((_, index) => {
+          {Array.from({ length: totalCount }).map((_, index) => {
             const isReady = index < readyCount;
-            const isLineup = index === 3;
             return (
               <span
                 key={index}
                 className={`h-1.5 w-2.5 rounded-full transition-all ${
                   isReady
                     ? "bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.4)]"
-                    : isLineup && !fixture.lineup_confirmed
-                      ? "bg-amber-400/80"
-                      : "bg-slate-700/60"
+                    : "bg-slate-700/60"
                 }`}
               />
             );
@@ -713,10 +710,16 @@ function QuickResearchPanel({
     );
   const readyDetail = detail?.fixture.id === fixture.id ? detail : null;
   const report = readyDetail ? deriveMatchReport(readyDetail) : null;
+  const primaryPrediction =
+    readyDetail?.prediction ??
+    readyDetail?.predictions?.deepseek ??
+    readyDetail?.predictions?.chatgpt ??
+    null;
+  const dualPredictions = readyDetail?.predictions;
   const evidenceReady =
     report?.evidenceReady ?? fixture.evidence_summary?.ready_count ?? 0;
   const evidenceTotal =
-    report?.evidenceTotal ?? fixture.evidence_summary?.total_count ?? 6;
+    report?.evidenceTotal ?? fixture.evidence_summary?.total_count ?? 4;
   const risk = !report
     ? { label: "读取中", tone: "waiting" }
     : report.evidenceQuality < 0.67
@@ -726,7 +729,7 @@ function QuickResearchPanel({
         : report.agreement < 0.78
           ? { label: "模型分歧", tone: "danger" }
           : { label: "可研究", tone: "ready" };
-  const probability = report?.probabilities;
+  const probability = primaryPrediction?.probabilities ?? report?.probabilities;
   const maxProbability = probability
     ? Math.max(probability.home, probability.draw, probability.away)
     : 0;
@@ -735,7 +738,7 @@ function QuickResearchPanel({
       <header className="space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className={eyebrowClass}>QUICK READOUT</span>
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-300">
             <i
               aria-hidden="true"
               className={`h-1.5 w-1.5 rounded-full ${leagueDot(fixture.league_key)}`}
@@ -743,8 +746,8 @@ function QuickResearchPanel({
             {fixture.league.name}
           </span>
         </div>
-        <h2 className="text-lg font-bold text-white">快速研究</h2>
-        <h3 className="text-base font-bold text-white">
+        <h2 className="text-xl font-bold text-white">快速研究</h2>
+        <h3 className="text-base sm:text-lg font-bold text-white">
           {fixture.home_team.name}{" "}
           <i className="px-0.5 text-xs font-normal not-italic text-slate-500">vs</i>{" "}
           {fixture.away_team.name}
@@ -755,9 +758,157 @@ function QuickResearchPanel({
       </header>
       {report ? (
         <>
+          {/* AI 预测结果核心展示块（不受下注状态限制，只要有预测就如实展现） */}
+          <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-3.5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.6)]" />
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-300">
+                  AI 智能推演预测
+                </span>
+              </div>
+              <span className="inline-flex items-center rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 font-mono text-xs font-semibold text-blue-300">
+                {primaryPrediction?.model_version ||
+                  (primaryPrediction?.model_key === "deepseek"
+                    ? "DeepSeek V3"
+                    : primaryPrediction?.model_key === "chatgpt"
+                      ? "GPT-5.6 Sol"
+                      : "多模型推演")}
+              </span>
+            </div>
+
+            {primaryPrediction ? (
+              <>
+                {/* 预测赛果、进球与置信度 */}
+                <div className="grid grid-cols-3 gap-2 rounded-lg border border-slate-800 bg-pitch-950/80 p-3 text-center">
+                  <div>
+                    <span className="block text-xs text-slate-400">推演预测</span>
+                    <strong className="mt-1 block text-base font-bold text-white">
+                      {outcomeText(
+                        primaryPrediction.forecast?.predicted_outcome ??
+                          primaryPrediction.predicted_outcome ??
+                          report.consensusOutcome,
+                      )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-slate-400">预期进球 xG</span>
+                    <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-slate-200">
+                      {primaryPrediction.expected_goals
+                        ? `${primaryPrediction.expected_goals.home.toFixed(2)} : ${primaryPrediction.expected_goals.away.toFixed(2)}`
+                        : "-"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-slate-400">置信度</span>
+                    <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-emerald-400">
+                      {primaryPrediction.forecast_confidence
+                        ? percent(primaryPrediction.forecast_confidence)
+                        : primaryPrediction.confidence || "良好"}
+                    </strong>
+                  </div>
+                </div>
+
+                {/* 胜平负三项概率条 */}
+                {probability && (
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
+                      <span className="text-slate-400">胜平负概率</span>
+                      <b className="font-mono font-bold tabular-nums text-slate-200">
+                        主胜 {Math.round(probability.home * 100)}% · 平{" "}
+                        {Math.round(probability.draw * 100)}% · 客胜{" "}
+                        {Math.round(probability.away * 100)}%
+                      </b>
+                    </div>
+                    <div
+                      className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800"
+                      aria-hidden="true"
+                    >
+                      <i
+                        className={`h-full ${probability.home === maxProbability ? "bg-rose-500" : "bg-blue-600"}`}
+                        style={{ width: `${probability.home * 100}%` }}
+                      />
+                      <i
+                        className={`h-full ${probability.draw === maxProbability ? "bg-rose-500" : "bg-slate-600"}`}
+                        style={{ width: `${probability.draw * 100}%` }}
+                      />
+                      <i
+                        className={`h-full ${probability.away === maxProbability ? "bg-rose-500" : "bg-amber-600"}`}
+                        style={{ width: `${probability.away * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 波胆预测比分 */}
+                {primaryPrediction.top_scores && primaryPrediction.top_scores.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="text-slate-400">比分预测:</span>
+                    {primaryPrediction.top_scores.slice(0, 3).map((item) => (
+                      <span
+                        key={item.score}
+                        className="inline-flex items-center gap-1 rounded bg-pitch-900 border border-slate-800 px-2 py-0.5 font-mono text-xs font-bold text-slate-200"
+                      >
+                        {item.score}
+                        <small className="font-normal text-slate-400">
+                          {percent(item.probability)}
+                        </small>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* AI 核心研判摘要 */}
+                {(primaryPrediction.analysis_summary ||
+                  primaryPrediction.model_recommendation?.reason ||
+                  primaryPrediction.recommendation?.reason) && (
+                  <div className="rounded-lg bg-pitch-950/90 border border-slate-800/80 p-3 text-xs leading-relaxed text-slate-200">
+                    <span className="block font-semibold text-blue-300 mb-1">
+                      AI 研判要点:
+                    </span>
+                    <p className="line-clamp-4">
+                      {primaryPrediction.analysis_summary ||
+                        primaryPrediction.model_recommendation?.reason ||
+                        primaryPrediction.recommendation?.reason}
+                    </p>
+                  </div>
+                )}
+
+                {/* 双模型并列对比（若同时包含 deepseek 和 chatgpt） */}
+                {dualPredictions?.chatgpt && dualPredictions?.deepseek && (
+                  <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-800/80 pt-2.5">
+                    <div className="rounded bg-pitch-950/70 p-2.5 border border-slate-800/60">
+                      <span className="font-semibold text-sky-400 block mb-0.5">GPT-5.6 Sol</span>
+                      <span className="font-mono text-slate-200 text-xs">
+                        {outcomeText(dualPredictions.chatgpt.predicted_outcome ?? dualPredictions.chatgpt.forecast?.predicted_outcome)} · 主{Math.round(dualPredictions.chatgpt.probabilities.home * 100)}% 平{Math.round(dualPredictions.chatgpt.probabilities.draw * 100)}% 客{Math.round(dualPredictions.chatgpt.probabilities.away * 100)}%
+                      </span>
+                    </div>
+                    <div className="rounded bg-pitch-950/70 p-2.5 border border-slate-800/60">
+                      <span className="font-semibold text-purple-400 block mb-0.5">DeepSeek V3</span>
+                      <span className="font-mono text-slate-200 text-xs">
+                        {outcomeText(dualPredictions.deepseek.predicted_outcome ?? dualPredictions.deepseek.forecast?.predicted_outcome)} · 主{Math.round(dualPredictions.deepseek.probabilities.home * 100)}% 平{Math.round(dualPredictions.deepseek.probabilities.draw * 100)}% 客{Math.round(dualPredictions.deepseek.probabilities.away * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="rounded-lg bg-pitch-950/60 border border-slate-800/60 p-3 text-center text-xs text-slate-400">
+                <p>当前比赛尚未生成详细 AI 推演</p>
+                <Link
+                  href={`/matches/${encodeURIComponent(fixture.id)}`}
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-400 hover:text-blue-300"
+                >
+                  进入比赛详情一键推演
+                  <ChevronRight size={14} aria-hidden="true" />
+                </Link>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-3 gap-3 rounded-xl border border-slate-800 bg-pitch-950 p-3.5">
             <div className="min-w-0 text-center">
-              <small className="block text-[11px] text-slate-500">模型共识</small>
+              <small className="block text-xs text-slate-400">模型共识</small>
               <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
                 {report.consensusOutcome === "home"
                   ? "主胜"
@@ -767,7 +918,7 @@ function QuickResearchPanel({
                       ? "客胜"
                       : "待生成"}
               </strong>
-              <span className="mt-0.5 block text-[11px] text-slate-400">
+              <span className="mt-0.5 block text-xs text-slate-400">
                 {report.models.length > 1
                   ? report.consensus.includes("一致")
                     ? "双模型同向"
@@ -778,70 +929,41 @@ function QuickResearchPanel({
               </span>
             </div>
             <div className="min-w-0 text-center">
-              <small className="block text-[11px] text-slate-500">一致度</small>
+              <small className="block text-xs text-slate-400">一致度</small>
               <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
                 {report.agreement === null ? "-" : percent(report.agreement)}
               </strong>
-              <span className="mt-0.5 block text-[11px] text-slate-400">模型概率差</span>
+              <span className="mt-0.5 block text-xs text-slate-400">模型概率差</span>
             </div>
             <div className="min-w-0 text-center">
-              <small className="block text-[11px] text-slate-500">证据质量</small>
+              <small className="block text-xs text-slate-400">证据质量</small>
               <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
                 {evidenceReady}/{evidenceTotal}
               </strong>
-              <span className="mt-0.5 block text-[11px] text-slate-400">
+              <span className="mt-0.5 block text-xs text-slate-400">
                 {percent(report.evidenceQuality)} 已就绪
               </span>
             </div>
           </div>
-          {probability && (
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
-                <span className="text-slate-400">胜平负概率</span>
-                <b className="font-mono font-bold tabular-nums text-slate-200">
-                  主胜 {Math.round(probability.home * 100)} · 平{" "}
-                  {Math.round(probability.draw * 100)} · 客胜{" "}
-                  {Math.round(probability.away * 100)}
-                </b>
-              </div>
-              <div
-                className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800"
-                aria-hidden="true"
-              >
-                <i
-                  className={`h-full ${probability.home === maxProbability ? "bg-rose-500" : "bg-slate-600"}`}
-                  style={{ width: `${probability.home * 100}%` }}
-                />
-                <i
-                  className={`h-full ${probability.draw === maxProbability ? "bg-rose-500" : "bg-slate-700"}`}
-                  style={{ width: `${probability.draw * 100}%` }}
-                />
-                <i
-                  className={`h-full ${probability.away === maxProbability ? "bg-rose-500" : "bg-slate-600"}`}
-                  style={{ width: `${probability.away * 100}%` }}
-                />
-              </div>
-            </div>
-          )}
           <div className="grid gap-3 sm:grid-cols-2">
             {report.factors.slice(0, 3).map((factor) => (
               <div key={factor.label} className="min-w-0">
-                <small className="block text-[11px] text-slate-500">{factor.label}</small>
+                <small className="block text-xs text-slate-400">{factor.label}</small>
                 <strong className="mt-0.5 block truncate text-sm font-semibold text-white">
                   {factor.value}
                 </strong>
-                <span className={`mt-0.5 block text-[11px] ${factorToneClass[factor.tone]}`}>
+                <span className={`mt-0.5 block text-xs ${factorToneClass[factor.tone]}`}>
                   {factor.conclusion}
                 </span>
               </div>
             ))}
             <div className="min-w-0">
-              <small className="block text-[11px] text-slate-500">市场观察</small>
+              <small className="block text-xs text-slate-400">市场观察</small>
               <strong className="mt-0.5 block text-sm font-semibold text-white">
                 {report.marketWatch}
               </strong>
               <span
-                className={`mt-0.5 block text-[11px] ${readyDetail?.context.odds ? "text-slate-400" : "text-amber-400"}`}
+                className={`mt-0.5 block text-xs ${readyDetail?.context.odds ? "text-slate-300" : "text-amber-400"}`}
               >
                 {readyDetail?.context.odds ? "已纳入判断" : "不使用估算"}
               </span>
@@ -870,7 +992,7 @@ function QuickResearchPanel({
         </div>
       )}
       <footer className="mt-auto space-y-3 border-t border-slate-800 pt-4">
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+        <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
           <Database size={13} aria-hidden="true" />
           TheSportsDB · 懂球帝
         </span>
@@ -937,7 +1059,7 @@ function ScoreCenterHome({
     null;
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
-      <section className="flex flex-col gap-4 lg:col-span-7" aria-live="polite">
+      <section className="flex flex-col gap-4 lg:col-span-7 xl:col-span-8" aria-live="polite">
         <SectionHeader
           eyebrow="FIXTURE QUEUE"
           title="比赛列表"
@@ -980,7 +1102,7 @@ function ScoreCenterHome({
           </EmptyState>
         )}
       </section>
-      <div className="lg:col-span-5">
+      <div className="lg:col-span-5 xl:col-span-4 sticky top-6">
         <QuickResearchPanel fixture={selectedFixture} detail={detail} />
       </div>
     </div>
@@ -1411,26 +1533,26 @@ function SquadTable({
     }))
     .filter((group) => group.rows.length > 0);
   return (
-    <details className="overflow-hidden rounded-xl border border-slate-800 bg-pitch-950">
+    <details open className="overflow-hidden rounded-xl border border-slate-800 bg-pitch-950">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-slate-800/30">
         <span className="min-w-0">
           <strong className="block truncate text-sm font-semibold text-slate-100">
             {teamName}
           </strong>
-          <small className="block text-[11px] text-slate-500">
+          <small className="block text-xs text-slate-400">
             完整注册名单 · {players.length} 人
           </small>
         </span>
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-pitch-800 px-2 py-1 text-[11px] text-slate-300">
-          <b className="font-semibold">查看</b>
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-pitch-800 px-2 py-1 text-xs text-slate-300">
+          <b className="font-semibold">收起 / 展开</b>
           <ChevronDown size={15} aria-hidden="true" />
         </span>
       </summary>
-      <div className="max-h-72 space-y-3 overflow-y-auto border-t border-slate-800/70 px-3 py-3">
+      <div className="max-h-80 space-y-3 overflow-y-auto border-t border-slate-800/70 px-3 py-3">
         {groups.length > 0 ? (
           groups.map((group) => (
             <div className="space-y-1.5" key={group.position}>
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
                 {positionLabels[group.position] ?? group.position}
                 <span className="font-mono tabular-nums">{group.rows.length}</span>
               </div>
@@ -1451,24 +1573,24 @@ function SquadTable({
                     }
                   >
                     <PlayerAvatar photo={player.photo} name={to_chinese_player_name(player.name)} size={24} />
-                    <span className="font-mono tabular-nums text-slate-500">
+                    <span className="font-mono tabular-nums text-slate-400">
                       {player.number ?? "-"}
                     </span>
                     <span className="min-w-0">
                       <b className="block truncate font-medium text-slate-200">
                         {to_chinese_player_name(player.name)}
                       </b>
-                      <small className="block truncate text-[11px] text-slate-500">
+                      <small className="block truncate text-xs text-slate-400">
                         {[player.nationality, playerNameStatus(player)]
                           .filter(Boolean)
                           .join(" · ")}
                       </small>
                     </span>
-                    <span className="text-right font-mono tabular-nums text-slate-400">
+                    <span className="text-right font-mono tabular-nums text-slate-300">
                       {player.age ? `${player.age}岁` : "-"}
                     </span>
                     <span
-                      className="truncate text-right font-mono tabular-nums text-slate-400"
+                      className="truncate text-right font-mono tabular-nums text-slate-300"
                       title={
                         player.market_value_source
                           ? `${player.market_value_source} · ${player.market_value_as_of ? formatTimestamp(player.market_value_as_of) : "时间待确认"}`
@@ -3397,13 +3519,13 @@ export function DualProbabilityPanels({
   );
 }
 
-function outcomeText(value?: string) {
+function outcomeText(value?: string | null) {
   return value
     ? ({ home: "主胜", draw: "平局", away: "客胜" }[value] ?? value)
     : "-";
 }
 
-function marketText(value?: string) {
+function marketText(value?: string | null) {
   return value
     ? ({
         "1x2": "胜平负",
@@ -3414,7 +3536,7 @@ function marketText(value?: string) {
     : "-";
 }
 
-function selectionText(value?: string) {
+function selectionText(value?: string | null) {
   return value
     ? ({
         home: "主胜",
