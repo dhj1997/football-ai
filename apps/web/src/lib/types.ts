@@ -603,6 +603,9 @@ export interface SimulatedBet {
   return_amount: number | null;
   net_profit: number | null;
   balance_after_settlement: number | null;
+  clv?: number | null;
+  closing_odds?: number | null;
+  closing_odds_captured_at?: string | null;
 }
 
 export interface DecisionAudit {

@@ -23,6 +23,7 @@ import type { FormEvent } from "react";
 import {
   Card,
   DataFreshness,
+  StatCard,
   EmptyState,
   ErrorState,
   LeagueIcon,
@@ -359,6 +360,7 @@ export function PerformanceDashboard() {
             }
           />
           <DecisionAuditTable decisions={visibleDecisions} />
+          <ClvTracker bets={visibleBets} />
           <BetHistory bets={visibleBets} />
           <SettlementHistory metrics={metrics} />
         </>
@@ -440,6 +442,7 @@ function CoreMetricsCard({
           </strong>
           <small className="block font-mono text-xs tabular-nums text-slate-500">
             {bankroll.settled_count} 笔已结算 · {bankroll.open_count} 笔未结算
+            {bankroll.settled_count < 30 ? " · 样本小，仅供参考" : ""}
           </small>
         </div>
         <div className="text-center">
@@ -1187,6 +1190,7 @@ function ModelComparisonStrip({
               <small className="mt-0.5 block text-xs text-slate-500">
                 已实现净盈亏 ·{" "}
                 {account ? `${account.bet_count} 笔下注` : "尚未开始"}
+                {account && (account.settled_count ?? 0) < 30 ? " · 样本小" : ""}
               </small>
               <dl className="mt-3 grid grid-cols-3 gap-3 border-t border-slate-800/70 pt-3">
                 <div>
@@ -1476,6 +1480,13 @@ function BetDetail({ bet }: { bet: SimulatedBet }) {
     ["返还金额", bet.return_amount === null ? "—" : bet.return_amount.toFixed(2)],
     ["净盈亏", bet.net_profit === null ? "—" : signedMoney(bet.net_profit)],
     ["结算后余额", bet.balance_after_settlement === null ? "—" : bet.balance_after_settlement.toFixed(2)],
+    [
+      "CLV（对收盘价）",
+      bet.clv === null || bet.clv === undefined
+        ? "无收盘价（仅英超/西甲收录）"
+        : signedMoney(bet.clv),
+    ],
+    ["收盘赔率", bet.closing_odds === null || bet.closing_odds === undefined ? "—" : bet.closing_odds.toFixed(2)],
     ["预测版本", bet.model_version],
   ];
   return (
@@ -1509,6 +1520,96 @@ function BetDetail({ bet }: { bet: SimulatedBet }) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+function ClvTracker({ bets }: { bets: SimulatedBet[] }) {
+  const clvBets = bets
+    .filter((bet) => bet.clv !== null && bet.clv !== undefined)
+    .sort((left, right) => left.placed_at.localeCompare(right.placed_at));
+  const samples = clvBets.length;
+  const average = samples
+    ? clvBets.reduce((sum, bet) => sum + (bet.clv ?? 0), 0) / samples
+    : null;
+  const positiveShare = samples
+    ? clvBets.filter((bet) => (bet.clv ?? 0) > 0).length / samples
+    : null;
+  const byMonth = new Map<string, { sum: number; count: number }>();
+  for (const bet of clvBets) {
+    const month = bet.placed_at.slice(0, 7);
+    const bucket = byMonth.get(month) ?? { sum: 0, count: 0 };
+    bucket.sum += bet.clv ?? 0;
+    bucket.count += 1;
+    byMonth.set(month, bucket);
+  }
+  const months = [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-6);
+  const maxAbs = Math.max(0.05, ...months.map(([, bucket]) => Math.abs(bucket.sum / bucket.count)));
+
+  return (
+    <section className={tableSectionClasses} aria-label="CLV 追踪">
+      <SectionHeader
+        eyebrow="CLOSING LINE VALUE"
+        title="CLV 追踪"
+        meta={samples ? `${samples} 个样本` : "无样本"}
+      />
+      <Card className="space-y-4 p-4">
+        {samples === 0 ? (
+          <p className="text-xs leading-relaxed text-slate-500">
+            暂无 CLV 样本：目前仅英超/西甲的已结算注单有收盘价数据（Football-Data 收盘线），
+            中超/足协杯与未结算注单不计入。
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-3 md:grid-cols-3">
+              <StatCard
+                label="平均 CLV"
+                value={percent(average ?? 0)}
+                hint="下注赔率相对收盘价的平均偏移（北极星指标）"
+                valueClassName={moneyClass(average ?? 0)}
+              />
+              <StatCard
+                label="正 CLV 占比"
+                value={percent(positiveShare ?? 0)}
+                hint="下注后市场朝有利方向移动的注单占比"
+              />
+              <StatCard
+                label="有效样本"
+                value={`${samples} 笔`}
+                hint="收盘价仅覆盖英超/西甲已结算注单"
+              />
+            </div>
+            {months.length ? (
+              <div>
+                <span className={insetLabelClasses}>月度平均 CLV（最近 6 个月）</span>
+                <div className="mt-2 flex items-end gap-4">
+                  {months.map(([month, bucket]) => {
+                    const value = bucket.sum / bucket.count;
+                    const height = Math.max(8, Math.round((Math.abs(value) / maxAbs) * 48));
+                    return (
+                      <div key={month} className="flex flex-col items-center gap-1">
+                        <span className={`font-mono text-[10px] tabular-nums ${moneyClass(value)}`}>
+                          {percent(value)}
+                        </span>
+                        <span
+                          aria-hidden="true"
+                          className={`w-8 rounded-t ${value >= 0 ? "bg-emerald-500/60" : "bg-rose-500/60"}`}
+                          style={{ height }}
+                        />
+                        <span className="text-[10px] text-slate-500">{month}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              CLV = 下注赔率相对收盘价的偏移；正值说明下注后市场向你的方向移动，
+              是小样本下比盈亏更可靠的模型水平信号。
+            </p>
+          </>
+        )}
+      </Card>
+    </section>
   );
 }
 

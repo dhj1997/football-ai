@@ -258,6 +258,7 @@ class PredictionService:
             "prompt_version": response["prompt_version"],
             "evidence_version": response.get("evidence_version"),
             "request_id": response["request_id"],
+            "served_by": response.get("served_by"),
             "usage": response["usage"],
             "error": None,
             "provider_failures": response.get("provider_failures") or [],
