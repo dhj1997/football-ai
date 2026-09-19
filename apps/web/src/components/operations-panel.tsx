@@ -1,18 +1,38 @@
 "use client";
 
-import { LoaderCircle, Play } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  BrainCircuit,
+  CalendarDays,
+  CheckCircle2,
+  Flame,
+  LoaderCircle,
+  Play,
+  Radio,
+  Receipt,
+  Trophy,
+  Zap,
+} from "lucide-react";
+import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ErrorState, SectionHeader, StatCard, StatusBadge } from "@/components/ui";
 import type { JobRun } from "@/lib/types";
 
-const jobs: Array<{ key: JobRun["job_name"]; label: string }> = [
-  { key: "fixtures", label: "赛程" },
-  { key: "standings", label: "积分榜" },
-  { key: "analysis", label: "证据与预测" },
-  { key: "settlement", label: "赛后结算" },
-  { key: "dongqiudi_schedule", label: "懂球帝赛程" },
-  { key: "dongqiudi_scores", label: "懂球帝比分" },
-  { key: "dongqiudi_prematch", label: "懂球帝临场数据" },
+interface JobConfig {
+  key: JobRun["job_name"];
+  label: string;
+  icon: ComponentType<{ size?: number; className?: string }>;
+}
+
+const jobs: JobConfig[] = [
+  { key: "fixtures", label: "赛程", icon: CalendarDays },
+  { key: "standings", label: "积分榜", icon: Trophy },
+  { key: "analysis", label: "证据与预测", icon: BrainCircuit },
+  { key: "settlement", label: "赛后结算", icon: Receipt },
+  { key: "dongqiudi_schedule", label: "懂球帝赛程", icon: Radio },
+  { key: "dongqiudi_scores", label: "懂球帝比分", icon: Flame },
+  { key: "dongqiudi_prematch", label: "懂球帝临场数据", icon: Zap },
 ];
 
 export function OperationsPanel() {
@@ -75,18 +95,37 @@ export function OperationsPanel() {
         </div>
       )}
       <div className="grid grid-cols-3 gap-3" aria-label="自动化健康摘要">
-        <StatCard label="系统状态" value={enabled ? (analysisEnabled ? "运行中" : "预测手动") : "已关闭"} />
-        <StatCard label="最近成功" value={`${successCount} / ${jobs.length}`} />
-        <StatCard label="需关注" value={attentionCount} valueClassName={attentionCount > 0 ? "text-rose-400" : undefined} />
+        <StatCard
+          label="系统状态"
+          value={enabled ? (analysisEnabled ? "运行中" : "预测手动") : "已关闭"}
+          icon={<Activity size={14} className={enabled ? "text-emerald-400" : "text-slate-500"} aria-hidden="true" />}
+        />
+        <StatCard
+          label="最近成功"
+          value={`${successCount} / ${jobs.length}`}
+          icon={<CheckCircle2 size={14} className="text-blue-400" aria-hidden="true" />}
+        />
+        <StatCard
+          label="需关注"
+          value={attentionCount}
+          valueClassName={attentionCount > 0 ? "text-rose-400" : undefined}
+          icon={<AlertTriangle size={14} className={attentionCount > 0 ? "text-rose-400" : "text-slate-500"} aria-hidden="true" />}
+        />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {jobs.map((job) => {
           const item = latest.get(job.key);
           const label = job.key === "analysis" && !analysisEnabled ? "证据与预测（手动）" : job.label;
+          const Icon = job.icon;
           return (
             <article key={job.key} className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-pitch-900 p-4 shadow-xl">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-white">{label}</span>
+                <div className="flex items-center gap-2">
+                  <span className="grid h-6 w-6 place-items-center rounded-lg bg-slate-800/80 border border-slate-700/60 text-slate-300">
+                    <Icon size={13} aria-hidden="true" />
+                  </span>
+                  <span className="text-xs font-bold text-white">{label}</span>
+                </div>
                 <StatusBadge variant={statusVariant(item?.status)}>{statusText(item?.status)}</StatusBadge>
               </div>
               <dl className="space-y-1.5 text-[11px] font-mono">

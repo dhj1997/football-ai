@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteClock } from "@/components/site-clock";
 import { SiteNav } from "@/components/site-nav";
+import { PitchCompassLogo } from "@/components/ui";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -25,12 +26,7 @@ export default function RootLayout({
         <header className="sticky top-0 z-50 flex items-center justify-between gap-3 border-b border-slate-800 bg-pitch-900/90 px-4 py-2.5 sm:px-6 sm:py-3 backdrop-blur-md">
           <div className="flex items-center gap-3 sm:gap-5">
             <Link className="flex items-center gap-2.5 sm:gap-3" href="/" aria-label="返回赛程首页">
-              <span
-                className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-tr from-emerald-500 to-teal-600 text-base font-bold text-white shadow-lg shadow-emerald-500/20 shrink-0"
-                aria-hidden="true"
-              >
-                罗
-              </span>
+              <PitchCompassLogo size={32} className="shrink-0 rounded-lg shadow-lg shadow-emerald-500/20" />
               <span>
                 <h1 className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm font-bold tracking-wide text-white">
                   绿茵罗盘

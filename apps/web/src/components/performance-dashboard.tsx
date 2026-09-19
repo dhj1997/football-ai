@@ -1,7 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown, ChevronRight, Cpu, Filter, RefreshCw } from "lucide-react";
+import {
+  Banknote,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  Cpu,
+  Filter,
+  Gauge,
+  Percent,
+  RefreshCw,
+  Scale,
+  ShieldAlert,
+  Target,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import type { ComponentType } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { FormEvent } from "react";
 import {
@@ -9,6 +25,7 @@ import {
   DataFreshness,
   EmptyState,
   ErrorState,
+  LeagueIcon,
   LoadingState,
   SectionHeader,
   StatusBadge,
@@ -214,7 +231,12 @@ export function PerformanceDashboard() {
             }
             items={leagues.map((item) => ({
               value: item.key,
-              label: item.label,
+              label: (
+                <span className="inline-flex items-center gap-1.5">
+                  <LeagueIcon league={item.key} size={15} />
+                  <span>{item.label}</span>
+                </span>
+              ),
             }))}
           />
         </div>
@@ -354,21 +376,22 @@ function CoreMetricsCard({
   metrics: PredictionMetrics;
   modelKey: ModelKey;
 }) {
-  const facts = [
-    ["账户权益", bankroll.equity.toFixed(2)],
-    ["可用现金", bankroll.balance.toFixed(2)],
-    ["已实现利润", signedMoney(bankroll.net_profit)],
-    ["未结敞口", bankroll.open_exposure.toFixed(2)],
-    ["ROI", percent(bankroll.roi)],
-    ["命中率", percent(metrics.accuracy)],
-    ["Brier", metrics.average_brier_score?.toFixed(3) ?? "-"],
+  const facts: Array<[string, string, ComponentType<{ size?: number; className?: string }>]> = [
+    ["账户权益", bankroll.equity.toFixed(2), Wallet],
+    ["可用现金", bankroll.balance.toFixed(2), Banknote],
+    ["已实现利润", signedMoney(bankroll.net_profit), TrendingUp],
+    ["未结敞口", bankroll.open_exposure.toFixed(2), Scale],
+    ["ROI", percent(bankroll.roi), Percent],
+    ["命中率", percent(metrics.accuracy), Target],
+    ["Brier", metrics.average_brier_score?.toFixed(3) ?? "-", Gauge],
     [
       "数据完整度",
       metrics.average_data_completeness === null
         ? "-"
         : percent(metrics.average_data_completeness),
+      CheckCheck,
     ],
-    ["最大回撤", percent(bankroll.max_drawdown)],
+    ["最大回撤", percent(bankroll.max_drawdown), ShieldAlert],
   ];
   const pnl = bankroll.net_profit;
   const state =
@@ -383,12 +406,18 @@ function CoreMetricsCard({
     pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-rose-400" : "text-white";
   return (
     <Card className="p-5" aria-label="绩效摘要与盈利状态">
-      <div className="grid grid-cols-2 gap-4 text-center font-mono sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
-        {facts.map(([label, value]) => (
-          <div key={label}>
-            <span className={`mb-1 ${insetLabelClasses}`}>{label}</span>
+      <div className="grid grid-cols-2 gap-3 text-center font-mono sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+        {facts.map(([label, value, Icon]) => (
+          <div
+            key={label}
+            className="flex flex-col items-center justify-between rounded-xl border border-slate-800/80 bg-pitch-950/60 p-2.5 transition-colors hover:border-slate-700"
+          >
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+              <Icon size={13} className="text-slate-400 shrink-0" aria-hidden="true" />
+              <span className="truncate">{label}</span>
+            </div>
             <strong
-              className={`block text-xl font-black tabular-nums ${
+              className={`mt-1.5 block text-lg font-black tabular-nums ${
                 label === "已实现利润"
                   ? bankroll.net_profit >= 0
                     ? "text-emerald-400"

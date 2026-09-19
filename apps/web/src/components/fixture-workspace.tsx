@@ -18,6 +18,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Shirt,
+  Star,
   HeartPulse,
   Users,
 } from "lucide-react";
@@ -46,17 +47,20 @@ import {
   Card,
   DataFreshness,
   EmptyState,
+  LeagueIcon,
   LoadingState,
   PageHeader,
   SectionHeader,
   StatusBadge,
   Tabs,
+  TeamShieldPlaceholder,
   type StatusVariant,
 } from "@/components/ui";
 import type {
   DateFilter,
   Fixture,
   FixtureDetail,
+  LeagueFilter,
   LineupPlayer,
   ModelKey,
   Prediction,
@@ -75,6 +79,16 @@ const dateTabs: Array<{ key: DateFilter; label: string }> = [
   { key: "tomorrow", label: "明日" },
   { key: "upcoming", label: "未来 7 天" },
   { key: "history", label: "历史" },
+];
+
+const leagueTabs: Array<{ key: LeagueFilter; label: string }> = [
+  { key: "all", label: "全部" },
+  { key: "epl", label: "英超" },
+  { key: "laliga", label: "西甲" },
+  { key: "csl", label: "中超" },
+  { key: "ucl", label: "欧冠" },
+  { key: "acl", label: "亚冠" },
+  { key: "cfa_cup", label: "足协杯" },
 ];
 
 const FAVORITES_KEY = "greencompass:favorite-fixtures";
@@ -342,18 +356,7 @@ function TeamMark({
       />
     );
   }
-  return (
-    <span
-      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-700 text-[11px] font-bold ${
-        tone === "home"
-          ? "bg-blue-500/10 text-blue-300"
-          : "bg-slate-500/10 text-slate-300"
-      }`}
-      aria-hidden="true"
-    >
-      {team.code.slice(0, 3)}
-    </span>
-  );
+  return <TeamShieldPlaceholder name={team.name} code={team.code} tone={tone} size={28} />;
 }
 
 function formatOdds(value: number | null | undefined) {
@@ -452,14 +455,11 @@ function FixtureRow({
           {formatKickoff(fixture.kickoff)}
         </strong>
         <span
-          className="inline-flex max-w-full items-center gap-1 rounded border border-slate-700/80 bg-pitch-900 px-1.5 py-0.5 text-xs font-medium text-slate-300"
+          className="inline-flex max-w-full items-center gap-1.5 rounded border border-slate-700/80 bg-pitch-900 px-1.5 py-0.5 text-xs font-medium text-slate-300"
           title={fixture.league.name || fixture.league_key.toUpperCase()}
           aria-label={`联赛 ${fixture.league.name || fixture.league_key.toUpperCase()}`}
         >
-          <i
-            aria-hidden="true"
-            className={`h-1.5 w-1.5 shrink-0 rounded-full ${leagueDot(fixture.league_key)}`}
-          />
+          <LeagueIcon league={fixture.league_key} size={13} className="shrink-0" />
           <span className="truncate">
             {fixture.league.name || fixture.league_key.toUpperCase()}
           </span>
@@ -659,10 +659,7 @@ function FixtureGroupCard({
     <Card className="overflow-hidden">
       <header className="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-800/40 px-4 py-3">
         <span className="flex min-w-0 items-center gap-2.5">
-          <i
-            aria-hidden="true"
-            className={`h-2 w-2 shrink-0 rounded-full ${leagueDot(group.leagueKey)}`}
-          />
+          <LeagueIcon league={group.leagueKey} size={18} className="shrink-0" />
           <strong className="truncate text-xs font-bold text-white">
             {group.league.name}
           </strong>
@@ -3594,7 +3591,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
   const [specificDate, setSpecificDate] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<string[]>(() => readFavorites());
   const [onlyFavorites, setOnlyFavorites] = useState(false);
-  const leagueFilter = "all" as const;
+  const [leagueFilter, setLeagueFilter] = useState<LeagueFilter>("all");
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FixtureDetail | null>(null);
@@ -3620,7 +3617,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
 
   useEffect(() => {
     let active = true;
-    const cached = specificDate ? null : readCachedFixtures(dateFilter, leagueFilter);
+    const cached = specificDate ? null : readCachedFixtures(dateFilter, "all");
     if (cached) {
       queueMicrotask(() => {
         if (!active) return;
@@ -3639,7 +3636,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         setLoading(false);
       });
     }
-    void fetchFixtures(dateFilter, leagueFilter, specificDate ?? undefined)
+    void fetchFixtures(dateFilter, "all", specificDate ?? undefined)
       .then((response) => {
         if (!active) return;
         setFixtures(response.items);
@@ -4006,11 +4003,44 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
             titleId="fixture-list-title"
             meta="数据状态"
           />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Tabs
+              variant="solid"
+              ariaLabel="赛事筛选"
+              value={leagueFilter}
+              onChange={(val) => setLeagueFilter(val as LeagueFilter)}
+              items={leagueTabs.map((tab) => ({
+                value: tab.key,
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <LeagueIcon league={tab.key} size={14} />
+                    <span>{tab.label}</span>
+                  </span>
+                ),
+              }))}
+            />
+            <button
+              type="button"
+              onClick={() => setOnlyFavorites((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                onlyFavorites
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                  : "border-slate-800 bg-pitch-900 text-slate-400 hover:text-slate-200"
+              }`}
+              aria-pressed={onlyFavorites}
+              title="只看收藏比赛"
+            >
+              <Star size={13} className={onlyFavorites ? "fill-amber-400 text-amber-400" : ""} />
+              <span>收藏 {favorites.length > 0 ? `(${favorites.length})` : ""}</span>
+            </button>
+          </div>
           {loading ? (
             <LoadingState>正在读取赛程</LoadingState>
           ) : fixtures.length ? (
             groupFixturesByLeague(
-              onlyFavorites ? fixtures.filter((item) => favorites.includes(item.id)) : fixtures,
+              (onlyFavorites ? fixtures.filter((item) => favorites.includes(item.id)) : fixtures).filter(
+                (item) => leagueFilter === "all" || item.league_key === leagueFilter,
+              ),
             ).map((group) => (
               <FixtureGroupCard
                 key={group.league.id}

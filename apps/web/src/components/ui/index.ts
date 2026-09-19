@@ -14,3 +14,5 @@ export { StatusBadge } from "./status-badge";
 export type { StatusBadgeProps, StatusVariant } from "./status-badge";
 export { Tabs } from "./tabs";
 export type { TabItem, TabsProps } from "./tabs";
+export { PitchCompassLogo, LeagueIcon, TeamShieldPlaceholder } from "./icons";
+export type { IconProps } from "./icons";

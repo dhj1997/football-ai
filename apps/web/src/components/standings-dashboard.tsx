@@ -2,9 +2,17 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { RefreshCw } from "lucide-react";
+import { ArrowDown, RefreshCw, Trophy } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DataFreshness, EmptyState, ErrorState, LoadingState, Tabs } from "@/components/ui";
+import {
+  DataFreshness,
+  EmptyState,
+  ErrorState,
+  LeagueIcon,
+  LoadingState,
+  Tabs,
+  TeamShieldPlaceholder,
+} from "@/components/ui";
 import { fetchStandings } from "@/lib/api";
 import type { LeagueSnapshot, StandingsResponse } from "@/lib/types";
 
@@ -107,7 +115,17 @@ export function StandingsDashboard() {
           onChange={setSelectedLeague}
           items={leagueOrder.map((leagueKey) => {
             const snapshot = snapshots.get(leagueKey);
-            return { value: leagueKey, label: snapshot?.league_name ?? { epl: "英超", laliga: "西甲", csl: "中超" }[leagueKey], badge: snapshot?.team_count ?? 0 };
+            const name = snapshot?.league_name ?? { epl: "英超", laliga: "西甲", csl: "中超" }[leagueKey];
+            return {
+              value: leagueKey,
+              label: (
+                <span className="inline-flex items-center gap-1.5">
+                  <LeagueIcon league={leagueKey} size={16} />
+                  <span>{name}</span>
+                </span>
+              ),
+              badge: snapshot?.team_count ?? 0,
+            };
           })}
         />
         <span className="font-mono text-xs tabular-nums text-slate-400">
@@ -139,8 +157,11 @@ function zoneRowClass(zone: Zone) {
 function rankBadge(rank: number, zone: Zone) {
   if (rank === 1) {
     return (
-      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-400/20 text-amber-300 font-mono font-bold text-xs border border-amber-400/40 shadow-[0_0_8px_rgba(251,191,36,0.3)]">
-        1
+      <span
+        className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-400/20 text-amber-300 font-mono font-bold text-xs border border-amber-400/40 shadow-[0_0_8px_rgba(251,191,36,0.3)]"
+        title="榜首领跑"
+      >
+        <Trophy size={12} className="text-amber-300" aria-hidden="true" />
       </span>
     );
   }
@@ -159,7 +180,10 @@ function rankBadge(rank: number, zone: Zone) {
     );
   }
   return (
-    <span className={`font-mono font-bold tabular-nums text-xs ${rankClass(zone)}`}>
+    <span className={`inline-flex items-center gap-0.5 font-mono font-bold tabular-nums text-xs ${rankClass(zone)}`}>
+      {zone === "relegation" ? (
+        <ArrowDown size={10} className="text-rose-400 -mr-0.5" aria-hidden="true" />
+      ) : null}
       {String(rank).padStart(2, "0")}
     </span>
   );
@@ -184,16 +208,18 @@ function countClass(value: number, tone: "win" | "draw" | "loss") {
 
 function TeamBadge({ logo, code, name }: { logo?: string | null; code?: string | null; name: string }) {
   if (logo) {
-    return <Image src={logo} alt="" width={26} height={26} unoptimized className="h-6.5 w-6.5 shrink-0 rounded-full border border-slate-700/80 bg-slate-800 object-contain p-0.5" />;
+    return (
+      <Image
+        src={logo}
+        alt=""
+        width={26}
+        height={26}
+        unoptimized
+        className="h-6.5 w-6.5 shrink-0 rounded-full border border-slate-700/80 bg-slate-800 object-contain p-0.5"
+      />
+    );
   }
-  return (
-    <span
-      aria-hidden="true"
-      className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-full border border-slate-700/80 bg-slate-800 text-[10px] font-bold text-slate-300"
-    >
-      {(code ?? name).charAt(0).toUpperCase()}
-    </span>
-  );
+  return <TeamShieldPlaceholder name={name} code={code} size={26} tone="home" />;
 }
 
 function StandingsTable({ snapshot }: { snapshot: LeagueSnapshot }) {
