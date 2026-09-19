@@ -96,6 +96,34 @@ async def test_disabled_chain_uses_primary_directly() -> None:
     assert chain._candidates()[0][1].max_retries == 0  # 链内重试关闭，避免挂起候选双倍等待
 
 
+def test_health_demotion_moves_failing_link_to_tail() -> None:
+    import time as _time
+
+    chain = _chain()
+    chain._link_failures["amd-v41"] = _time.monotonic()
+    assert [label for label, _ in chain._candidates()] == ["primary", "quya", "amd-v41"]
+    # 冷却期外恢复原序
+    chain._link_failures["amd-v41"] = _time.monotonic() - 3600
+    assert [label for label, _ in chain._candidates()] == ["amd-v41", "primary", "quya"]
+
+
+@pytest.mark.asyncio
+async def test_assess_records_failures_for_demotion() -> None:
+    chain = _chain()
+    original_candidates = chain._candidates
+    stubs = [StubProvider("amd-v41", fail=True), StubProvider("primary")]
+    chain._candidates = lambda: [("amd-v41", stubs[0]), ("primary", stubs[1])]
+
+    result = await chain.assess({})
+
+    assert result["served_by"] == "primary"
+    assert "amd-v41" in chain._link_failures
+    # 第二次调用：amd-v41 已进冷却期，真实候选构建会把它排到队尾
+    chain._candidates = original_candidates
+    labels = [label for label, _ in chain._candidates()]
+    assert labels == ["primary", "quya", "amd-v41"]
+
+
 @pytest.mark.asyncio
 async def test_probe_chain_reports_each_link() -> None:
     def handler(request: httpx.Request) -> httpx.Response:

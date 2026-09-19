@@ -39,6 +39,10 @@ class FreeLlmChainProvider:
         self.candidate_timeout_seconds = candidate_timeout_seconds
         self.enabled = enabled
         self.transport = transport
+        # 健康记忆：label -> 最近一次失败的单调时钟；冷却期内该链路自动降到队尾，
+        # 避免挂起的免费源拖慢每一次预测，恢复后自动回到原位。
+        self._cooldown_seconds = 600.0
+        self._link_failures: dict[str, float] = {}
 
     # 运行时模型配置面板仍以主 provider 为编辑目标；以下属性全部委托主 provider。
     @property
@@ -62,7 +66,10 @@ class FreeLlmChainProvider:
         return self.primary.configured
 
     def _candidates(self) -> list[tuple[str, DeepSeekProvider]]:
-        """Ordered (label, provider) links, rebuilt per call so runtime edits apply."""
+        """Ordered (label, provider) links, rebuilt per call so runtime edits apply.
+
+        冷却期内的链路（最近失败过）自动排到队尾，健康链路保持用户指定顺序。
+        """
 
         specs: list[tuple[str, str, str, str]] = []
         if self.primary.api_key and self.primary.base_url:
@@ -70,6 +77,10 @@ class FreeLlmChainProvider:
             specs.append(("primary", self.primary.base_url, self.primary.model, self.primary.api_key))
         if self.quya_api_key and self.quya_base_url:
             specs.append(("quya", self.quya_base_url, self.quya_model, self.quya_api_key))
+        now = time.monotonic()
+        specs.sort(
+            key=lambda item: 1 if now - self._link_failures.get(item[0], -1e9) < self._cooldown_seconds else 0
+        )
         return [
             (
                 label,
@@ -94,7 +105,17 @@ class FreeLlmChainProvider:
         candidates = self._candidates()
         if not candidates:
             raise RuntimeError("free-llm 链没有可用端点：API_DEEPSEEK_KEY 与 QUYA_LLM_KEY 均未配置")
-        return await assess_through(candidates, model_input)
+        errors: list[str] = []
+        for label, provider in candidates:
+            try:
+                result = await provider.assess(model_input)
+                self._link_failures.pop(label, None)
+                result["served_by"] = label
+                return result
+            except Exception as error:  # noqa: BLE001 — 链式容错必须吞掉一切单点错误
+                self._link_failures[label] = time.monotonic()
+                errors.append(f"{label}: {_bounded_error(error)}")
+        raise RuntimeError("free-llm 链全部失败: " + " | ".join(errors))
 
 
 async def assess_through(
