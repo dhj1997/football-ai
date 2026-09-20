@@ -1,12 +1,16 @@
 """Idempotent final-score settlement and prediction performance metrics."""
 
-import uuid
+import logging
 import math
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from .prediction import settle_asian_handicap
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
+
+
+logger = logging.getLogger(__name__)
 
 
 QUALITY_POLICY = {
@@ -163,12 +167,32 @@ class SettlementService:
         league_snapshots = self.repository.league_snapshots(fixture["league_key"])
         season_data = (league_snapshots[0].get("season") or {}) if league_snapshots else {}
         season = str(season_data.get("name") or season_data.get("year") or "unknown")
-        results = []
-        for prediction in self.repository.current_predictions_for_fixture(
+        predictions = self.repository.current_predictions_for_fixture(
             fixture["id"],
             DEFAULT_PROMPT_CONTRACT.version,
             self.competition_id,
-        ):
+        )
+        predictions_by_id = {str(item["id"]): item for item in predictions}
+        open_bet_reader = getattr(self.repository, "open_bets_for_fixture", None)
+        prediction_reader = getattr(self.repository, "prediction", None)
+        if callable(open_bet_reader) and callable(prediction_reader):
+            for open_bet in open_bet_reader(fixture["id"], self.competition_id):
+                prediction_id = str(open_bet.get("prediction_id") or "")
+                if not prediction_id or prediction_id in predictions_by_id:
+                    continue
+                linked_prediction = prediction_reader(prediction_id)
+                if linked_prediction is not None:
+                    predictions_by_id[prediction_id] = linked_prediction
+                else:
+                    logger.warning(
+                        "open simulated bet %s references missing prediction %s for fixture %s",
+                        open_bet.get("id"),
+                        prediction_id,
+                        fixture["id"],
+                    )
+
+        results = []
+        for prediction in predictions_by_id.values():
             settlement = self.repository.settlement_for_prediction(prediction["id"])
             bet = self.repository.bet_for_prediction(prediction["id"])
             clv_data = _bet_clv_data(self.repository, fixture, prediction, bet)

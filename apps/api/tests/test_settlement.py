@@ -82,6 +82,55 @@ def test_prediction_and_bet_settlement_are_idempotent(tmp_path) -> None:
     assert bankroll.summary()["equity_curve"][-1]["balance"] == 1011.0
 
 
+def test_open_bet_on_superseded_prediction_is_settled(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "superseded-bet.db"))
+    repository.initialize()
+    old_prediction = prediction()
+    old_prediction["id"] = "prediction-with-bet"
+    repository.save(old_prediction)
+    bankroll = BankrollService(repository)
+    placed = bankroll.place_for_prediction(old_prediction, fixture(), context={
+        "odds": {
+            "home": 2.1,
+            "draw": 3.2,
+            "away": 3.6,
+            "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        }
+    })
+    current_prediction = prediction()
+    current_prediction.update(
+        {
+            "id": "current-no-bet",
+            "created_at": "2026-08-26T01:00:00+00:00",
+            "decision": {
+                **current_prediction["decision"],
+                "status": "no_bet",
+                "market": "no_bet",
+                "selection": "none",
+                "reason_codes": ["negative_edge"],
+            },
+        }
+    )
+    repository.save(current_prediction)
+    service = SettlementService(repository)
+    finished = {**fixture("finished"), "score": {"home": 0, "away": 1}}
+
+    first = service.settle_fixture(finished)
+    second = service.settle_fixture(finished)
+
+    assert placed is not None
+    settled = repository.bet_for_prediction(old_prediction["id"])
+    assert settled["status"] == "settled"
+    assert settled["settlement_result"] == "full_loss"
+    assert settled["net_profit"] == -10.0
+    assert repository.settlement_for_prediction(old_prediction["id"]) is not None
+    assert repository.settlement_for_prediction(current_prediction["id"]) is not None
+    assert first["settled_count"] == 2
+    assert second["settled_count"] == 1
+    assert repository.current_balance() == 990.0
+    assert len(repository.bankroll_transactions()) == 3
+
+
 def test_asian_half_win_and_half_loss_returns() -> None:
     home_bet = {"market": "asian_handicap", "selection": "home_handicap", "handicap_line": -0.75, "stake": 20, "odds": 2.0}
     away_bet = {"market": "asian_handicap", "selection": "away_handicap", "handicap_line": -0.75, "stake": 20, "odds": 2.0}

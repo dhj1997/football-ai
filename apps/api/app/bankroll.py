@@ -23,6 +23,18 @@ from .portfolio import (
 
 
 INITIAL_BANKROLL = 1000.0
+FROZEN_EXECUTION_BLOCKERS = frozenset(
+    {
+        "stale_odds",
+        "odds_pending",
+        "no_matching_market",
+        "missing_player_data",
+        "ai_unavailable",
+        "low_confidence",
+        "implausible_market",
+        "risk_limit",
+    }
+)
 
 
 def _candidate_value(candidate: Any, key: str) -> Any:
@@ -85,6 +97,16 @@ def _fixed_stake(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return round(amount, 2) if amount > 0 else None
+
+
+def _prediction_allows_execution(prediction: Mapping[str, Any]) -> bool:
+    """Fail closed when the immutable prediction did not pass its data gates."""
+
+    decision = prediction.get("decision")
+    if not isinstance(decision, Mapping) or decision.get("status") != "bet":
+        return False
+    reason_codes = {str(code) for code in decision.get("reason_codes") or []}
+    return not bool(reason_codes & FROZEN_EXECUTION_BLOCKERS)
 
 
 class BankrollService:
@@ -173,6 +195,8 @@ class BankrollService:
     ) -> Any | None:
         """Build one derived Portfolio candidate without persisting or mutating prediction."""
 
+        if not _prediction_allows_execution(prediction):
+            return None
         working_prediction = deepcopy(prediction)
         _complete_candidate_decision(working_prediction, context, self.repository)
         candidates = build_candidates(
@@ -191,6 +215,8 @@ class BankrollService:
     ) -> Any | None:
         """Build the existing Poisson baseline as a candidate-only input."""
 
+        if not _prediction_allows_execution(prediction):
+            return None
         baseline = prediction.get("baseline") or {}
         probabilities = baseline.get("probabilities") or {}
         if not probabilities:
@@ -229,7 +255,11 @@ class BankrollService:
     ) -> dict[str, Any] | None:
         """Execute one globally selected candidate without re-ranking its model peers."""
 
-        if fixture.get("status") != "scheduled" or _fixture_started(fixture):
+        if (
+            fixture.get("status") != "scheduled"
+            or _fixture_started(fixture)
+            or not _prediction_allows_execution(prediction)
+        ):
             return None
         payload = candidate.to_dict() if hasattr(candidate, "to_dict") else dict(candidate)
         working_prediction = deepcopy(prediction)
@@ -323,7 +353,7 @@ class BankrollService:
                 )
                 current = deepcopy(current)
                 _complete_candidate_decision(current, candidate_context, self.repository)
-            if not current:
+            if not current or not _prediction_allows_execution(current):
                 continue
             candidates = build_candidates(
                 current,
@@ -409,6 +439,8 @@ class BankrollService:
         prediction: dict[str, Any],
         fixture: dict[str, Any],
     ) -> dict[str, Any] | None:
+        if not _prediction_allows_execution(prediction):
+            return None
         candidate = prediction.get("portfolio_candidate")
         if not isinstance(candidate, dict):
             candidates = build_candidates(

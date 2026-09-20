@@ -5564,6 +5564,28 @@ class PredictionRepository:
             for row in rows
         }
 
+    def open_bets_for_fixture(
+        self,
+        fixture_id: str,
+        competition_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return open simulated bets that still require final-score settlement."""
+
+        clauses = ["fixture_id = :fixture_id", "status = 'placed'"]
+        parameters: dict[str, str] = {"fixture_id": fixture_id}
+        if competition_id:
+            clauses.append("competition_id = :competition_id")
+            parameters["competition_id"] = competition_id
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT payload FROM bets "
+                    f"WHERE {' AND '.join(clauses)} ORDER BY placed_at ASC, id ASC"
+                ),
+                parameters,
+            ).mappings().all()
+        return [json.loads(row["payload"]) for row in rows]
+
     def bets(
         self,
         status: str | None = None,

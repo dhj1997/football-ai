@@ -176,6 +176,50 @@ def test_incomplete_evidence_or_no_price_edge_never_places_a_bet(tmp_path) -> No
     assert repository.bets() == []
 
 
+@pytest.mark.parametrize(
+    ("status", "reason_codes"),
+    [
+        ("no_bet", []),
+        ("bet", ["stale_odds"]),
+        ("bet", ["odds_pending"]),
+        ("bet", ["no_matching_market"]),
+        ("bet", ["missing_player_data"]),
+        ("bet", ["ai_unavailable"]),
+        ("bet", ["low_confidence"]),
+        ("bet", ["implausible_market"]),
+        ("bet", ["risk_limit"]),
+    ],
+)
+def test_frozen_execution_blockers_cannot_be_reopened_by_candidate_refresh(
+    tmp_path,
+    status: str,
+    reason_codes: list[str],
+) -> None:
+    repository = PredictionRepository(str(tmp_path / "frozen-decision.db"))
+    repository.initialize()
+    service = BankrollService(repository)
+    item = prediction()
+    item["decision"].update(
+        {
+            "status": status,
+            "market": "no_bet" if status != "bet" else "1x2",
+            "selection": "none" if status != "bet" else "home",
+            "reason_codes": reason_codes,
+        }
+    )
+    executable_candidate = service.candidate_for_prediction(prediction("valid-candidate"), fixture(), context())
+
+    candidate = service.candidate_for_prediction(item, fixture(), context())
+    directly_placed = service.place_for_candidate(item, fixture(), executable_candidate)
+    placed = service.place_for_prediction(item, fixture(), context())
+
+    assert executable_candidate is not None
+    assert candidate is None
+    assert directly_placed is None
+    assert placed is None
+    assert repository.bets() == []
+
+
 def test_daily_unsettled_exposure_is_capped(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "bankroll.db"))
     repository.initialize()
