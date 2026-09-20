@@ -242,6 +242,48 @@ def test_elo_ratings_prefers_clubeelo_over_local(tmp_path) -> None:
     # ClubElo 快照覆盖本地窗口估算；未覆盖的球队没有本地样本时不在表里。
     assert ratings["Arsenal"] == 2041.0
     assert ratings["Barcelona"] == 2016.0
+    assert ratings["sources"]["Arsenal"] == "clubeelo"
+    assert ratings["source"] == "clubeelo"
+
+
+def test_elo_ratings_labels_local_completed_match_fallback(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "elo-local.db"), "dual-model-v1")
+    repository.initialize()
+    repository.upsert_fixture(
+        {
+            "id": "dongqiudi-finished-1",
+            "source": "dongqiudi",
+            "league_key": "epl",
+            "status": "finished",
+            "fixture_date": "2026-09-01",
+            "kickoff": "2026-09-01T12:00:00+00:00",
+            "home_team": {"name": "阿森纳"},
+            "away_team": {"name": "切尔西"},
+            "score": {"home": 2, "away": 0},
+        }
+    )
+    repository.upsert_fixture(
+        {
+            "id": "future-finished-result",
+            "source": "dongqiudi",
+            "league_key": "epl",
+            "status": "finished",
+            "fixture_date": "2026-09-30",
+            "kickoff": "2026-09-30T12:00:00+00:00",
+            "home_team": {"name": "利物浦"},
+            "away_team": {"name": "曼联"},
+            "score": {"home": 1, "away": 0},
+        }
+    )
+
+    ratings = PredictionService(None, repository, "deepseek", "dual-model-v1")._elo_ratings(
+        "2026-09-20T12:00:00+00:00"
+    )
+
+    assert isinstance(ratings["阿森纳"], float)
+    assert ratings["sources"]["阿森纳"] == "completed-match-results/local-elo"
+    assert ratings["source"] == "completed-match-results/local-elo"
+    assert ratings["source_record_ids"] == ["dongqiudi-finished-1"]
 
 
 def test_football_data_backfill_job_ingests_pending_season(tmp_path) -> None:

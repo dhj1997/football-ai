@@ -158,7 +158,12 @@ def test_prediction_rejects_fitted_params_trained_after_cutoff() -> None:
         set_fitted_params_provider(None)
 
 
-def _seed_two_model_settlements(repository: PredictionRepository, count: int = 180) -> None:
+def _seed_two_model_settlements(
+    repository: PredictionRepository,
+    count: int = 180,
+    *,
+    data_source: str | None = None,
+) -> None:
     rng = random.Random(5)
     start = datetime(2026, 1, 1, tzinfo=UTC)
     for index in range(count):
@@ -170,25 +175,26 @@ def _seed_two_model_settlements(repository: PredictionRepository, count: int = 1
                 if sharp
                 else {"home": 0.34, "draw": 0.33, "away": 0.33}
             )
-            repository.save_fixture_settlement(
-                {
-                    "id": f"mq-{model_key}-{index}",
-                    "prediction_id": f"mq-pred-{model_key}-{index}",
-                    "fixture_id": f"mq-fixture-{index}",
-                    "fixture_date": created.date().isoformat(),
-                    "league_key": "epl",
-                    "season": "2026",
-                    "model_version": f"{model_key}:v1",
-                    "model_key": model_key,
-                    "settled_at": (created + timedelta(hours=30)).isoformat(),
-                    "prediction_created_at": created.isoformat(),
-                    "actual_outcome": actual,
-                    "model_probabilities": probs,
-                    "baseline": {
-                        "probabilities": {"home": 0.40, "draw": 0.30, "away": 0.30}
-                    },
-                }
-            )
+            payload = {
+                "id": f"mq-{model_key}-{index}",
+                "prediction_id": f"mq-pred-{model_key}-{index}",
+                "fixture_id": f"mq-fixture-{index}",
+                "fixture_date": created.date().isoformat(),
+                "league_key": "epl",
+                "season": "2026",
+                "model_version": f"{model_key}:v1",
+                "model_key": model_key,
+                "settled_at": (created + timedelta(hours=30)).isoformat(),
+                "prediction_created_at": created.isoformat(),
+                "actual_outcome": actual,
+                "model_probabilities": probs,
+                "baseline": {
+                    "probabilities": {"home": 0.40, "draw": 0.30, "away": 0.30}
+                },
+            }
+            if data_source:
+                payload["data_source"] = data_source
+            repository.save_fixture_settlement(payload)
 
 
 def _quality_runner(repository: PredictionRepository) -> AutomationRunner:
@@ -284,3 +290,37 @@ def test_ensemble_learning_without_models_reports_insufficient(tmp_path) -> None
     result = asyncio.run(automation._learn_ensemble_weights())
 
     assert result["status"] == "insufficient_sample"
+
+
+def test_exploratory_research_job_archives_20_pairs_with_distinct_identity(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "mq-exploratory.db"), "dual-model-v1")
+    repository.initialize()
+    _seed_two_model_settlements(repository, count=20)
+    automation = _quality_runner(repository)
+
+    result = asyncio.run(automation._run_exploratory_research())
+
+    assert "exploratory_research" in automation._jobs
+    assert "fd_confirmatory_research" in automation._jobs
+    assert result["status"] == "completed"
+    assert result["required_samples"] == 20
+    stored = repository.research_runs()
+    assert len(stored) == 1
+    assert stored[0]["job_id"] == "production-exploratory-llm-vs-poisson"
+    assert stored[0]["hypothesis"]["kind"] == "exploratory"
+
+
+def test_confirmatory_research_job_keeps_30_pair_fd_gate(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "mq-confirmatory.db"), "dual-model-v1")
+    repository.initialize()
+    _seed_two_model_settlements(repository, count=30, data_source="football-data")
+    automation = _quality_runner(repository)
+
+    result = asyncio.run(automation._run_fd_confirmatory_research())
+
+    assert result["status"] == "completed"
+    assert result["required_samples"] == 30
+    stored = repository.research_runs()
+    assert len(stored) == 1
+    assert stored[0]["job_id"] == "fd-confirmatory-llm-vs-poisson"
+    assert stored[0]["hypothesis"]["kind"] == "confirmatory"

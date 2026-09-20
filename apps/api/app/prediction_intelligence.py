@@ -271,6 +271,7 @@ def build_feature_snapshot(
 
     elo = evidence.get("elo") if isinstance(evidence.get("elo"), Mapping) else {}
     elo_available = _feature_available_at(elo, evidence_available)
+    elo_sources = elo.get("sources") if isinstance(elo.get("sources"), Mapping) else {}
     for side in ("home", "away"):
         team = fixture.get(f"{side}_team") or {}
         team_name = str(team.get("name") or team.get("original_name") or "") if isinstance(team, Mapping) else str(team or "")
@@ -278,7 +279,7 @@ def build_feature_snapshot(
             features,
             feature_name=f"model_input.elo.{side}_rating",
             feature_value=elo.get(team_name) if team_name else None,
-            source=str(elo.get("source") or "elo"),
+            source=str(elo_sources.get(team_name) or elo.get("source") or "elo"),
             source_record_ids=elo.get("source_record_ids") or [source_record_id],
             available_at=elo_available,
             cutoff=as_of,

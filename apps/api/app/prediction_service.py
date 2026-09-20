@@ -27,7 +27,7 @@ from .prediction_intelligence import (
     parse_timestamp,
 )
 from .historical_validation import build_raw_data_record
-from .recent_form import RecentFormService
+from .recent_form import RecentFormService, result_available_at
 
 
 STRATEGY_ID = "baseline"
@@ -55,22 +55,56 @@ class PredictionService:
         self.player_stats_service = player_stats_service
         self.initial_bankroll = max(0.0, float(initial_bankroll))
 
-    def _elo_ratings(self, prediction_timestamp: Any | None = None) -> dict[str, float]:
+    def _elo_ratings(self, prediction_timestamp: Any | None = None) -> dict[str, Any]:
         """Elo ratings: ClubElo snapshot (professional, cross-season) overrides
         the locally computed window estimate as a fallback."""
 
-        merged: dict[str, float] = {}
+        local: dict[str, float] = {}
+        external: dict[str, float] = {}
+        source_record_ids: list[str] = []
         try:
             fixtures = self.repository.list_fixtures()  # type: ignore[attr-defined]
-            merged.update(compute_elo(fixtures, as_of=prediction_timestamp))
+            local.update(compute_elo(fixtures, as_of=prediction_timestamp))
+            cutoff = parse_timestamp(prediction_timestamp)
+            source_record_ids.extend(
+                str(item.get("id"))
+                for item in fixtures
+                if item.get("id")
+                and str(item.get("status") or "").casefold() == "finished"
+                and (item.get("score") or {}).get("home") is not None
+                and (
+                    cutoff is None
+                    or (
+                        (available_at := result_available_at(item)) is not None
+                        and available_at <= cutoff
+                    )
+                )
+            )
         except Exception:
             pass
         try:
             from .clubeelo_provider import stored_ratings
 
-            merged.update(stored_ratings(self.repository, as_of=prediction_timestamp))
+            external.update(stored_ratings(self.repository, as_of=prediction_timestamp))
         except Exception:
             pass
+        merged: dict[str, Any] = {**local, **external}
+        sources = {
+            team: "clubeelo" if team in external else "completed-match-results/local-elo"
+            for team in merged
+        }
+        merged["source"] = (
+            "clubeelo+completed-match-results/local-elo"
+            if external and local
+            else "clubeelo"
+            if external
+            else "completed-match-results/local-elo"
+        )
+        merged["sources"] = sources
+        merged["source_record_ids"] = [
+            *(source_record_ids[:200]),
+            *(["clubeelo/ratings"] if external else []),
+        ]
         return merged
 
     async def create(

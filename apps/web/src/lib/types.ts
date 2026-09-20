@@ -840,6 +840,7 @@ export interface JobRun {
     | "player_stats_backfill"
     | "player_impact_rules"
     | "ensemble_learning"
+    | "exploratory_research"
     | "fd_confirmatory_research";
   started_at: string;
   finished_at: string | null;
@@ -879,7 +880,12 @@ export interface ActivationStatus {
   evaluation: {
     status: string;
     backtests: { passing_count: number; recent: Array<Record<string, unknown>> };
-    research: { passing_count: number; recent: Array<Record<string, unknown>> };
+    research: {
+      passing_count: number;
+      exploratory_count: number;
+      confirmatory_count: number;
+      recent: Array<Record<string, unknown>>;
+    };
   };
 }
 

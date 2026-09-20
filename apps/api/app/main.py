@@ -2224,6 +2224,7 @@ def create_research_run(payload: dict) -> dict:
         test_days=int(payload.get("test_days") or 30),
         step_days=int(payload.get("step_days") or 30),
         seed=int(payload.get("seed") or 20260913),
+        minimum_samples=int(payload.get("minimum_samples") or 30),
         job_id=payload.get("job_id"),
         created_by=str(payload.get("created_by") or "admin"),
         repository=repository,
@@ -2298,11 +2299,16 @@ async def sync_discipline_endpoint(limit: int = 25) -> dict:
 
 @app.post("/api/admin/transfers/sync", dependencies=[Depends(require_admin)])
 async def sync_transfers_endpoint(limit: int = 6) -> dict:
-    """Refresh transfer records for the next stale teams via API-Football."""
+    """Refresh transfer records with Dongqiudi first and API-Football fallback."""
 
     from .transfers_sync import sync_transfers
 
-    return await sync_transfers(repository, provider, limit=limit)
+    return await sync_transfers(
+        repository,
+        provider,
+        dongqiudi_provider=dongqiudi_provider,
+        limit=limit,
+    )
 
 
 @app.post("/api/admin/weather/sync", dependencies=[Depends(require_admin)])
@@ -2453,9 +2459,20 @@ def activation_status() -> dict:
     ]
     ensemble = ensemble_summary(limit=20)
     backtests = repository.backtest_runs(limit=5)
-    research = repository.research_runs(limit=5)
+    all_research = repository.research_runs(limit=500)
+    research = all_research[:5]
     passing_backtests = [item for item in backtests if item.get("status") in {"ok", "completed", "passed"}]
-    passing_research = [item for item in research if item.get("status") == "completed"]
+    passing_research = [item for item in all_research if item.get("status") == "completed"]
+    exploratory_research = [
+        item
+        for item in passing_research
+        if item.get("exploratory") is True or (item.get("hypothesis") or {}).get("kind") == "exploratory"
+    ]
+    confirmatory_research = [
+        item
+        for item in passing_research
+        if item.get("exploratory") is False or (item.get("hypothesis") or {}).get("kind") == "confirmatory"
+    ]
 
     blockers = list(readiness.get("config_violations") or [])
     if readiness.get("status") != "ready" and not blockers:
@@ -2503,7 +2520,12 @@ def activation_status() -> dict:
             "evaluation": {
                 "status": "ready" if passing_backtests and passing_research else "pending",
                 "backtests": {"passing_count": len(passing_backtests), "recent": backtests},
-                "research": {"passing_count": len(passing_research), "recent": research},
+                "research": {
+                    "passing_count": len(passing_research),
+                    "exploratory_count": len(exploratory_research),
+                    "confirmatory_count": len(confirmatory_research),
+                    "recent": research,
+                },
             },
         }
     )

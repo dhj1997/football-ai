@@ -18,6 +18,7 @@ from .team_names import to_chinese_player_name, to_chinese_team_name
 class DongqiudiProvider:
     """Fetch the small public dataset needed by the match workspace."""
 
+    source_name = "dongqiudi"
     DEFAULT_BASE_URL = "https://www.dongqiudi.com"
     SPORT_DATA_BASE_URL = "https://beta-sport-data.dongdianqiu.com"
     API_BASE_URL = "https://beta-api.dongdianqiu.com"
@@ -46,11 +47,15 @@ class DongqiudiProvider:
         sport_data_base_url: str = SPORT_DATA_BASE_URL,
         api_base_url: str = API_BASE_URL,
         timeout_seconds: float = 20,
+        player_request_interval_seconds: float = 0.2,
+        transfer_player_limit: int = 40,
     ) -> None:
         self.base_url = (self.DEFAULT_BASE_URL if base_url is None else base_url).rstrip("/")
         self.sport_data_base_url = (self.SPORT_DATA_BASE_URL if sport_data_base_url is None else sport_data_base_url).rstrip("/")
         self.api_base_url = (self.API_BASE_URL if api_base_url is None else api_base_url).rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.player_request_interval_seconds = max(0.0, float(player_request_interval_seconds))
+        self.transfer_player_limit = max(1, int(transfer_player_limit))
 
     @property
     def configured(self) -> bool:
@@ -294,6 +299,7 @@ class DongqiudiProvider:
                 target.append(mapped)
         return {
             "team_id": team_id,
+            "canonical_team_id": canonical_id or team_id,
             "team": {
                 "name": to_chinese_team_name(base.get("team_name") or "未知球队"),
                 "original_name": base.get("team_en_name") or base.get("team_name") or "未知球队",
@@ -314,6 +320,109 @@ class DongqiudiProvider:
             "roster_endpoint": f"{self.sport_data_base_url}/soccer/biz/dqd/v1/team/member_v2/{roster_id_used}",
             "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
             "raw_profile": profile,
+        }
+
+    async def player_detail(self, player_id: str | int) -> dict[str, Any]:
+        """Read the public player-detail payload used by ``/player/{id}``."""
+
+        return await self._get_json(
+            f"{self.base_url}/api/data/v1/detail/person/{player_id}",
+            params={"app": "dqd", "lang": "zh-cn"},
+        )
+
+    async def team_transfers(self, team_id: str | int) -> list[dict[str, Any]]:
+        """Build current-squad transfer history from public player pages.
+
+        This covers transfers involving players on the current roster. It does
+        not claim complete departed-player coverage, so the caller may merge a
+        second provider when one is available.
+        """
+
+        result = await self.team_transfers_with_diagnostics(team_id)
+        if result["status"] == "failed":
+            raise RuntimeError("; ".join(result["errors"][:3]) or "Dongqiudi player details unavailable")
+        return result["transfers"]
+
+    async def team_transfers_with_diagnostics(self, team_id: str | int) -> dict[str, Any]:
+        """Return validated transfer rows plus bounded player-fetch diagnostics."""
+
+        snapshot = await self.team(team_id)
+        canonical_team_id = str(snapshot.get("canonical_team_id") or team_id)
+        target_ids = {
+            str(team_id),
+            canonical_team_id,
+            str(team_id).removeprefix("500"),
+            canonical_team_id.removeprefix("500"),
+        }
+        captured_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        transfers: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str, str]] = set()
+        players = [item for item in snapshot.get("roster") or [] if item.get("provider_player_id")]
+        attempted = fetched = failed = 0
+        errors: list[str] = []
+        for index, player in enumerate(players[: self.transfer_player_limit]):
+            player_id = str(player["provider_player_id"])
+            attempted += 1
+            try:
+                detail = await self.player_detail(player_id)
+            except Exception as error:
+                failed += 1
+                errors.append(f"player {player_id}: {type(error).__name__}: {str(error)[:160]}")
+                if _stop_transfer_requests(error):
+                    break
+                if index + 1 < min(len(players), self.transfer_player_limit) and self.player_request_interval_seconds:
+                    await asyncio.sleep(self.player_request_interval_seconds)
+                continue
+            fetched += 1
+            base_info = detail.get("base_info") or {}
+            original_name = str(base_info.get("person_name") or player.get("original_name") or player.get("name") or "未知球员")
+            player_name = to_chinese_player_name(original_name)
+            for raw in detail.get("transfer_info") or []:
+                if not isinstance(raw, dict):
+                    continue
+                date = str(raw.get("announced_date") or "")[:10]
+                from_team_id = str(raw.get("from_team_id") or "")
+                to_team_id = str(raw.get("to_team_id") or "")
+                if not date or not (
+                    _provider_team_id_matches(from_team_id, target_ids)
+                    or _provider_team_id_matches(to_team_id, target_ids)
+                ):
+                    continue
+                record = {
+                    "player_id": str(base_info.get("person_id") or player["provider_player_id"]),
+                    "player": player_name,
+                    "date": date,
+                    "type": str(raw.get("type") or "") or None,
+                    "fee": str(raw.get("money") or "") or None,
+                    "out_team_id": from_team_id or None,
+                    "out_team": to_chinese_team_name(raw.get("from_club_name") or "未知球队"),
+                    "in_team_id": to_team_id or None,
+                    "in_team": to_chinese_team_name(raw.get("to_club_name") or "未知球队"),
+                    "source": self.source_name,
+                    "captured_at": captured_at,
+                }
+                key = (
+                    record["player_id"],
+                    record["date"],
+                    str(record["out_team_id"] or ""),
+                    str(record["in_team_id"] or ""),
+                    str(record["type"] or ""),
+                )
+                if key not in seen:
+                    transfers.append(record)
+                    seen.add(key)
+            if index + 1 < min(len(players), self.transfer_player_limit) and self.player_request_interval_seconds:
+                await asyncio.sleep(self.player_request_interval_seconds)
+        status = "failed" if not players or not fetched else "partial" if failed else "completed"
+        if not players:
+            errors.append("team roster has no provider player ids")
+        return {
+            "status": status,
+            "transfers": transfers,
+            "players_attempted": attempted,
+            "players_fetched": fetched,
+            "players_failed": failed,
+            "errors": errors[:20],
         }
 
     @classmethod
@@ -404,6 +513,18 @@ def _integer(value: Any) -> int | None:
         return int(value) if value not in (None, "") else None
     except (TypeError, ValueError):
         return None
+
+
+def _provider_team_id_matches(value: str, target_ids: set[str]) -> bool:
+    return bool(value and (value in target_ids or value.removeprefix("500") in target_ids))
+
+
+def _stop_transfer_requests(error: Exception) -> bool:
+    if isinstance(error, httpx.RequestError):
+        return True
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code == 429 or error.response.status_code >= 500
+    return False
 
 
 def _team_member_sections(payload: dict[str, Any]) -> list[dict[str, Any]]:

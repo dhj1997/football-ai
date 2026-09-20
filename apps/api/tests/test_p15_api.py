@@ -11,7 +11,7 @@ if "app.main" not in sys.modules:
 
 from fastapi.testclient import TestClient
 
-from app.main import app, settings
+from app.main import app, repository, settings
 
 
 client = TestClient(app)
@@ -73,6 +73,26 @@ def test_activation_status_composes_real_read_only_components() -> None:
         ("player_values", "provider_required"),
         ("prematch_news", "provider_required"),
     }
+
+
+def test_activation_status_separates_exploratory_and_confirmatory_research(monkeypatch) -> None:
+    monkeypatch.setattr(
+        repository,
+        "research_runs",
+        lambda status=None, limit=100: [
+            {"status": "completed", "exploratory": True, "hypothesis": {"kind": "exploratory"}},
+            {"status": "completed", "exploratory": False, "hypothesis": {"kind": "confirmatory"}},
+            {"status": "partial", "exploratory": True, "hypothesis": {"kind": "exploratory"}},
+        ][:limit],
+    )
+
+    response = client.get("/api/admin/activation-status", headers=_ADMIN)
+
+    assert response.status_code == 200
+    research = response.json()["evaluation"]["research"]
+    assert research["passing_count"] == 2
+    assert research["exploratory_count"] == 1
+    assert research["confirmatory_count"] == 1
 
 
 def test_backup_endpoint_reports_mysql_restore_marker(tmp_path, monkeypatch) -> None:

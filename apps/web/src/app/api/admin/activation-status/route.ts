@@ -33,7 +33,7 @@ export async function GET() {
     evaluation: {
       status: "pending",
       backtests: { passing_count: 0, recent: [] },
-      research: { passing_count: 0, recent: [] },
+      research: { passing_count: 0, exploratory_count: 0, confirmatory_count: 0, recent: [] },
     },
   });
 }

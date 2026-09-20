@@ -22,6 +22,10 @@ class StubRepository:
     def upsert_fixture(self, fixture, synced_at=None):
         self.rows[fixture["id"]] = fixture
 
+    def fixture(self, fixture_id):
+        row = self.rows.get(fixture_id)
+        return dict(row) if row else None
+
 
 class StubEventsProvider:
     def __init__(self, results=None, fail_ids=None) -> None:
@@ -378,6 +382,122 @@ async def test_transfers_sync_reports_zero_targets_without_calling_provider() ->
     assert result["status"] == "zero_targets"
     assert result["teams_targeted"] == 0
     assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_transfers_sync_prefers_dongqiudi_team_ids() -> None:
+    rows = [
+        {
+            "id": "canonical-1",
+            "source": "football-data",
+            "external_ids": {"dongqiudi": "9001"},
+            "league_key": "epl",
+            "status": "scheduled",
+            "kickoff": "2026-09-21T12:00:00+00:00",
+            "home_team": {"name": "曼城"},
+            "away_team": {"name": "桑德兰"},
+        },
+        {
+            "id": "dongqiudi-9001",
+            "source": "dongqiudi",
+            "external_ids": {"dongqiudi": "9001"},
+            "league_key": "epl",
+            "status": "scheduled",
+            "kickoff": "2026-09-21T12:00:00+00:00",
+            "home_team": {"provider_id": 529, "name": "曼城"},
+            "away_team": {"provider_id": 536, "name": "桑德兰"},
+        },
+    ]
+    repository = StubRepository(rows)
+    repository.team_identities = lambda limit=1000: []
+    repository.team_transfers_row = lambda team_id, season, source="api-football": None
+    saved = []
+    repository.save_team_transfers = lambda team_id, season, transfers, synced_at=None, source="api-football": saved.append(
+        (str(team_id), source, transfers)
+    )
+
+    class DongqiudiTransfers:
+        configured = True
+
+        def __init__(self):
+            self.calls = []
+
+        async def team_transfers(self, team_id):
+            self.calls.append(str(team_id))
+            return [
+                {
+                    "player": "New Guy",
+                    "date": "2026-09-01",
+                    "in_team_id": f"50000{team_id}",
+                    "out_team": "Old FC",
+                }
+            ]
+
+    primary = DongqiudiTransfers()
+    fallback = StubTransfersProvider(results={"50": []})
+    result = await sync_transfers(
+        repository,
+        fallback,
+        dongqiudi_provider=primary,
+        leagues=("epl",),
+        limit=5,
+        now=_dt("2026-09-20T12:00:00+00:00"),
+    )
+
+    assert result["status"] == "completed"
+    assert result["dongqiudi_identity_resolved"] == 2
+    assert result["fallback_used"] == 0
+    assert primary.calls == ["529", "536"]
+    assert fallback.calls == []
+    assert {item[1] for item in saved} == {"dongqiudi"}
+    assert saved[0][2][0]["player"] == to_chinese_player_name("New Guy")
+
+
+def test_attach_transfers_prefers_dongqiudi_and_matches_canonical_id() -> None:
+    class Repository:
+        def team_identities(self, limit=1000):
+            return []
+
+        def fixture(self, fixture_id):
+            assert fixture_id == "dongqiudi-9001"
+            return {
+                "home_team": {"provider_id": 529},
+                "away_team": {"provider_id": 536},
+            }
+
+        def team_transfers_row(self, team_id, season, source="api-football"):
+            if source == "dongqiudi" and str(team_id) == "529":
+                return {
+                    "source": source,
+                    "transfers": [
+                        {
+                            "player": "New Guy",
+                            "date": "2026-09-01",
+                            "in_team_id": "50000529",
+                            "out_team": "Old FC",
+                        }
+                    ],
+                }
+            return None
+
+    context = {}
+    attach_transfers(
+        Repository(),
+        {
+            "league_key": "epl",
+            "external_ids": {"dongqiudi": "9001"},
+            "home_team": {"name": "曼城"},
+            "away_team": {"name": "桑德兰"},
+            "evidence": {},
+        },
+        context,
+        now=_dt("2026-09-20T12:00:00+00:00"),
+    )
+
+    assert context["transfers"]["source"] == "dongqiudi"
+    assert context["transfers"]["home"]["transfers_in"] == [
+        f"{to_chinese_player_name('New Guy')}（2026-09-01，自 Old FC）"
+    ]
 
 
 def test_attach_match_context_marks_cups_and_round() -> None:

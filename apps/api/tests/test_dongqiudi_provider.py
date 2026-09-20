@@ -5,6 +5,7 @@ import pytest
 from app.dongqiudi_provider import DongqiudiProvider
 from app.data import CHINA_TZ
 from app.dongqiudi_sync import DongqiudiSyncService, _dongqiudi_recent_matches, odds_fingerprint
+from app.team_names import to_chinese_player_name
 
 
 @pytest.mark.asyncio
@@ -39,6 +40,91 @@ async def test_dongqiudi_team_rejects_empty_page_roster() -> None:
 
     with pytest.raises(RuntimeError, match="阵容为空"):
         await Provider().team("77677")
+
+
+@pytest.mark.asyncio
+async def test_dongqiudi_team_transfers_maps_current_team_records() -> None:
+    class Provider(DongqiudiProvider):
+        async def team(self, team_id):
+            return {
+                "canonical_team_id": "50076899",
+                "roster": [
+                    {
+                        "provider_player_id": "50222265",
+                        "name": "韦世豪",
+                        "original_name": "Wei Shihao",
+                    }
+                ],
+            }
+
+        async def player_detail(self, player_id):
+            assert player_id == "50222265"
+            return {
+                "base_info": {"person_id": player_id, "person_name": "Wei Shihao"},
+                "transfer_info": [
+                    {
+                        "announced_date": "2024-02-23",
+                        "type": "转会",
+                        "money": "64万欧",
+                        "from_team_id": "50077677",
+                        "from_club_name": "武汉三镇",
+                        "to_team_id": "50076899",
+                        "to_club_name": "成都蓉城",
+                    },
+                    {
+                        "announced_date": "2018-01-07",
+                        "type": "免签",
+                        "from_team_id": "50001475",
+                        "from_club_name": "莱雄伊什",
+                        "to_team_id": "50000330",
+                        "to_club_name": "北京国安",
+                    },
+                ],
+            }
+
+    transfers = await Provider(player_request_interval_seconds=0).team_transfers("76899")
+
+    assert len(transfers) == 1
+    assert transfers[0]["player"] == to_chinese_player_name("Wei Shihao")
+    assert transfers[0]["in_team_id"] == "50076899"
+    assert transfers[0]["source"] == "dongqiudi"
+
+
+@pytest.mark.asyncio
+async def test_dongqiudi_team_transfers_keeps_partial_results_and_reports_failures() -> None:
+    class Provider(DongqiudiProvider):
+        async def team(self, team_id):
+            return {
+                "canonical_team_id": "50076899",
+                "roster": [
+                    {"provider_player_id": "bad", "name": "失败球员"},
+                    {"provider_player_id": "good", "name": "Wei Shihao"},
+                ],
+            }
+
+        async def player_detail(self, player_id):
+            if player_id == "bad":
+                raise ValueError("bad payload")
+            return {
+                "base_info": {"person_id": player_id, "person_name": "Wei Shihao"},
+                "transfer_info": [
+                    {
+                        "announced_date": "2024-02-23",
+                        "from_team_id": "50077677",
+                        "from_club_name": "武汉三镇",
+                        "to_team_id": "50076899",
+                        "to_club_name": "成都蓉城",
+                    }
+                ],
+            }
+
+    result = await Provider(player_request_interval_seconds=0).team_transfers_with_diagnostics("76899")
+
+    assert result["status"] == "partial"
+    assert result["players_attempted"] == 2
+    assert result["players_fetched"] == 1
+    assert result["players_failed"] == 1
+    assert result["transfers"][0]["player"] == to_chinese_player_name("Wei Shihao")
 
 
 def test_dongqiudi_does_not_map_malaysia_fa_cup_to_china_fa_cup() -> None:

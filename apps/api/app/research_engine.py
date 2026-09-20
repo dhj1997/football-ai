@@ -33,7 +33,7 @@ from .prediction_intelligence import (
     parse_timestamp,
 )
 
-RESEARCH_ENGINE_VERSION = "p14-research-v1"
+RESEARCH_ENGINE_VERSION = "p14-research-v2"
 RESEARCH_RUN_STATUSES: tuple[str, ...] = ("running", "completed", "failed", "partial")
 HYPOTHESIS_KINDS: tuple[str, ...] = ("exploratory", "confirmatory")
 PIPELINE_STAGES: tuple[str, ...] = (
@@ -120,7 +120,11 @@ def _execution_rows(
     return rows
 
 
-def _llm_vs_poisson_comparison(settlement_rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def _llm_vs_poisson_comparison(
+    settlement_rows: Iterable[Mapping[str, Any]],
+    *,
+    minimum_samples: int = 30,
+) -> dict[str, Any]:
     """Return paired frozen-probability and execution metrics for LLM models."""
 
     raw_rows = [dict(row) for row in settlement_rows]
@@ -182,9 +186,9 @@ def _llm_vs_poisson_comparison(settlement_rows: Iterable[Mapping[str, Any]]) -> 
     )
     sample_size = min(int(poisson.get("samples") or 0), llm_sample_size)
     return {
-        "status": "ok" if sample_size >= 30 and models else "insufficient_sample",
+        "status": "ok" if sample_size >= minimum_samples and models else "insufficient_sample",
         "sample_size": sample_size,
-        "required_samples": 30,
+        "required_samples": minimum_samples,
         "poisson": poisson,
         "models": models,
     }
@@ -194,10 +198,10 @@ def _stable(value: Mapping[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
-def sample_size_status(sample_size: int) -> str:
+def sample_size_status(sample_size: int, minimum_samples: int = 30) -> str:
     """P6/MODEL_EVALUATION_POLICY confidence gates."""
 
-    if sample_size < 30:
+    if sample_size < minimum_samples:
         return "insufficient_sample"
     if sample_size < 100:
         return "low_confidence"
@@ -258,7 +262,11 @@ def leakage_audit(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _statistical_summary(result: Mapping[str, Any]) -> dict[str, Any]:
+def _statistical_summary(
+    result: Mapping[str, Any],
+    *,
+    minimum_samples: int = 30,
+) -> dict[str, Any]:
     ensemble = result.get("ensemble_brier") or {}
     comparison = result.get("llm_vs_poisson") or {}
     sample_size = int(
@@ -269,7 +277,8 @@ def _statistical_summary(result: Mapping[str, Any]) -> dict[str, Any]:
     )
     return {
         "sample_size": sample_size,
-        "sample_status": sample_size_status(sample_size),
+        "sample_status": sample_size_status(sample_size, minimum_samples),
+        "required_samples": minimum_samples,
         "brier_point": round(
             (ensemble.get("low") + ensemble.get("high")) / 2, 6
         )
@@ -293,6 +302,9 @@ def build_research_report(
 
     limitations: list[str] = []
     unanswerable: list[str] = []
+    comparison = result.get("llm_vs_poisson") or {}
+    comparison_requested = _requires_llm_poisson_comparison(hypothesis)
+    direct_comparison = manifest.get("mode") == "model_comparison" and comparison_requested
     if statistics["sample_status"] != "adequate_sample":
         limitations.append(f"样本量 {statistics['sample_size']}（{statistics['sample_status']}），结论置信度受限")
     market = result.get("market_baseline_brier") or {}
@@ -300,22 +312,19 @@ def build_research_report(
         unanswerable.append("市场基准对比不可用（缺少完整历史赔率）")
     if result.get("strategy", {}).get("status") == "unavailable":
         unanswerable.append("策略模拟不可用（执行链不完整）")
-    if result.get("window_count", 0) == 0:
+    if result.get("window_count", 0) == 0 and not direct_comparison:
         limitations.append("没有可评估的时间窗口")
-    comparison = result.get("llm_vs_poisson") or {}
-    if hypothesis.get("kind") == "confirmatory" and _requires_llm_poisson_comparison(hypothesis) and comparison.get("status") != "ok":
-        limitations.append(f"LLM 与 Poisson 配对样本 {comparison.get('sample_size', 0)}，未达到 30 注门槛")
+    if comparison_requested and comparison.get("status") != "ok":
+        limitations.append(
+            f"LLM 与 Poisson 配对样本 {comparison.get('sample_size', 0)}，"
+            f"未达到 {comparison.get('required_samples', statistics.get('required_samples', 30))} 场门槛"
+        )
     conclusion = None
-    if (
-        result.get("status") == "ok"
-        and audit["passed"]
-        and result.get("window_count")
-        and _requires_llm_poisson_comparison(hypothesis)
-        and comparison.get("status") == "ok"
-    ):
+    if direct_comparison and audit["passed"] and comparison.get("status") == "ok":
+        conclusion_scope = "探索性低置信度复盘，不构成确认结论" if hypothesis.get("kind") == "exploratory" else "预注册确认性复盘"
         conclusion = (
-            f"在数据集 {manifest.get('dataset_fingerprint')} 上完成预注册的 LLM 与 Poisson 配对比较；"
-            "结果仅用于确认性复盘，不自动晋升模型"
+            f"在数据集 {manifest.get('dataset_fingerprint')} 上完成 LLM 与 Poisson 配对比较；"
+            f"结果仅用于{conclusion_scope}，不自动晋升模型"
         )
     elif result.get("status") == "ok" and audit["passed"] and result.get("window_count"):
         improvement = ((result.get("improvement") or {}).get("naive_baseline") or {}).get("brier_improvement")
@@ -340,7 +349,8 @@ def build_research_report(
         "method": {
             "mode": manifest.get("mode"),
             "windows": result.get("window_count"),
-            "weights_learned_per_window_from_train_only": True,
+            "weights_learned_per_window_from_train_only": not direct_comparison,
+            "required_samples": statistics.get("required_samples"),
         },
         "metrics": {
             "ensemble_brier": result.get("ensemble_brier"),
@@ -367,6 +377,7 @@ def run_research(
     step_days: int = 30,
     seed: int = 20260913,
     competition_scope: str = "all",
+    minimum_samples: int = 30,
     job_id: str | None = None,
     created_by: str = "admin",
     repository: Any | None = None,
@@ -387,6 +398,20 @@ def run_research(
             "run_id": None,
             "status": "failed",
             "error": str(error),
+            "stages": stages,
+            "report": None,
+        }
+
+    required_floor = 30 if hypothesis["kind"] == "confirmatory" else 20
+    try:
+        minimum_samples = int(minimum_samples)
+    except (TypeError, ValueError):
+        minimum_samples = 0
+    if minimum_samples < required_floor:
+        return {
+            "run_id": None,
+            "status": "failed",
+            "error": f"minimum_samples must be at least {required_floor} for {hypothesis['kind']} research",
             "stages": stages,
             "report": None,
         }
@@ -423,12 +448,28 @@ def run_research(
             "report": None,
         }
     result.pop("_test_probabilities", None)
-    result["llm_vs_poisson"] = _llm_vs_poisson_comparison(settlement_rows)
+    result["llm_vs_poisson"] = _llm_vs_poisson_comparison(
+        settlement_rows,
+        minimum_samples=minimum_samples,
+    )
     manifest = result.get("manifest") or {}
-    stages["experiment"] = {"status": "ok" if result.get("status") == "ok" else "failed", "window_count": result.get("window_count")}
-    stages["backtest"] = {"status": "ok" if result.get("status") == "ok" else "failed", "mode": mode}
-    statistics = _statistical_summary(result)
-    minimum_sample_passed = int(statistics.get("sample_size") or 0) >= 30
+    direct_comparison = mode == "model_comparison" and _requires_llm_poisson_comparison(hypothesis)
+    experiment_ok = (
+        result["llm_vs_poisson"].get("status") == "ok"
+        if direct_comparison
+        else result.get("status") == "ok"
+    )
+    stages["experiment"] = {
+        "status": "ok" if experiment_ok else "failed",
+        "window_count": result.get("window_count"),
+        "method": "paired_llm_vs_poisson" if direct_comparison else "rolling_backtest",
+    }
+    stages["backtest"] = {
+        "status": "not_required" if direct_comparison else "ok" if result.get("status") == "ok" else "failed",
+        "mode": mode,
+    }
+    statistics = _statistical_summary(result, minimum_samples=minimum_samples)
+    minimum_sample_passed = int(statistics.get("sample_size") or 0) >= minimum_samples
     stages["statistical_check"] = {
         "status": "ok" if minimum_sample_passed else "insufficient_sample",
         **statistics,
@@ -443,6 +484,7 @@ def run_research(
         "calibration_version": manifest.get("calibration_version") or CALIBRATION_VERSION,
         "strategy_version": manifest.get("strategy_version") or STRATEGY_VERSION,
         "hypothesis_id": hypothesis["hypothesis_id"],
+        "minimum_samples": minimum_samples,
         "dataset_fingerprint": fingerprint,
         "as_of_range": {"start": times[0] if times else None, "end": times[-1] if times else None},
     }
@@ -455,10 +497,10 @@ def run_research(
     )
     stages["report"] = {"status": "ok"}
 
-    experiment_failed = result.get("status") != "ok"
-    if audit["violation_count"]:
-        status = "failed"
-    elif experiment_failed or not result.get("window_count") or not minimum_sample_passed:
+    experiment_failed = not experiment_ok
+    if not audit["passed"]:
+        status = "failed" if audit["violation_count"] else "partial"
+    elif experiment_failed or (not direct_comparison and not result.get("window_count")) or not minimum_sample_passed:
         status = "partial"
     elif (
         hypothesis["kind"] == "confirmatory"
@@ -482,6 +524,7 @@ def run_research(
             "window_count": result.get("window_count"),
             "sample_size": statistics["sample_size"],
             "sample_status": statistics["sample_status"],
+            "required_samples": minimum_samples,
             "ensemble_brier": result.get("ensemble_brier"),
             "improvement": result.get("improvement"),
             "llm_vs_poisson": result.get("llm_vs_poisson"),

@@ -5075,10 +5075,19 @@ class PredictionRepository:
             ).mappings().first()
         return json.loads(row["payload"]).get("teams") if row else None
 
-    def save_team_transfers(self, team_id: str, season: str, transfers: list[dict[str, Any]], synced_at: str | None = None) -> None:
+    def save_team_transfers(
+        self,
+        team_id: str,
+        season: str,
+        transfers: list[dict[str, Any]],
+        synced_at: str | None = None,
+        *,
+        source: str = "api-football",
+    ) -> None:
         """Store one team's transfer records (one row per team-season)."""
 
-        identifier = f"transfers:api-football:{team_id}:{season}"
+        provider = str(source or "api-football").strip().casefold()
+        identifier = f"transfers:{provider}:{team_id}:{season}"
         self.save_player_stats(
             [
                 {
@@ -5088,21 +5097,29 @@ class PredictionRepository:
                     "team_id": str(team_id),
                     "player_id": "__transfers__",
                     "synced_at": synced_at or datetime.now(UTC).replace(microsecond=0).isoformat(),
+                    "source": provider,
                     "transfers": transfers,
                 }
             ]
         )
 
-    def team_transfers_row(self, team_id: str, season: str) -> dict[str, Any] | None:
+    def team_transfers_row(
+        self,
+        team_id: str,
+        season: str,
+        *,
+        source: str = "api-football",
+    ) -> dict[str, Any] | None:
         """Return one team's stored transfer records, or None when never synced."""
 
+        provider = str(source or "api-football").strip().casefold()
         with self.engine.connect() as connection:
             row = connection.execute(
                 text(
                     "SELECT payload FROM player_stats_snapshots "
                     "WHERE id = :id AND player_id = '__transfers__'"
                 ),
-                {"id": f"transfers:api-football:{team_id}:{season}"},
+                {"id": f"transfers:{provider}:{team_id}:{season}"},
             ).mappings().first()
         return json.loads(row["payload"]) if row else None
 

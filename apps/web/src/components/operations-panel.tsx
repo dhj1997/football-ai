@@ -45,6 +45,7 @@ const jobs: JobConfig[] = [
   { key: "player_stats_backfill", label: "球员统计", icon: Users },
   { key: "player_impact_rules", label: "球员影响规则", icon: ShieldAlert },
   { key: "ensemble_learning", label: "集成权重", icon: Layers3 },
+  { key: "exploratory_research", label: "探索性研究", icon: FlaskConical },
   { key: "fd_confirmatory_research", label: "确认性研究", icon: FlaskConical },
 ];
 
@@ -140,7 +141,7 @@ export function OperationsPanel() {
             <ActivationMetric label="球员影响" value={`${activation.player_impact.covered_fixture_count} / ${activation.player_impact.upcoming_fixture_count}`} status={activation.player_impact.status} icon={<ShieldAlert size={14} />} />
             <ActivationMetric label="可用集成" value={String(activation.ensemble.count)} status={activation.ensemble.status} icon={<Layers3 size={14} />} />
             <ActivationMetric label="有效回测" value={String(activation.evaluation.backtests.passing_count)} status={activation.evaluation.backtests.passing_count > 0 ? "ready" : "pending"} icon={<Activity size={14} />} />
-            <ActivationMetric label="有效研究" value={String(activation.evaluation.research.passing_count)} status={activation.evaluation.research.passing_count > 0 ? "ready" : "pending"} icon={<FlaskConical size={14} />} />
+            <ActivationMetric label="探索 / 确认" value={`${activation.evaluation.research.exploratory_count} / ${activation.evaluation.research.confirmatory_count}`} status={activation.evaluation.research.passing_count > 0 ? "ready" : "pending"} icon={<FlaskConical size={14} />} />
           </div>
           <div className="grid gap-x-6 gap-y-2 border-y border-slate-800 py-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="数据源状态">
             {activation.providers.sources.map((source) => (

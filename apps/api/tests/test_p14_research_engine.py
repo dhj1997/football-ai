@@ -46,6 +46,29 @@ def settlement_rows(count: int = 300, *, seed: int = 11, predict_after_settle: b
 HYPOTHESIS = {"statement": "ensemble 在 epl 测试窗的 Brier 优于 naive baseline", "kind": "confirmatory", "selection_rule": "ensemble_brier 低者胜"}
 
 
+def paired_llm_poisson_rows(count: int) -> list[dict]:
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    rows = []
+    for index in range(count):
+        actual = "home" if index % 2 == 0 else "away"
+        created = start + timedelta(hours=index * 6)
+        rows.append(
+            {
+                "fixture_id": f"paired-{index}",
+                "prediction_id": f"paired-p-{index}",
+                "prediction_created_at": created.isoformat(),
+                "settled_at": (created + timedelta(hours=30)).isoformat(),
+                "model_key": "deepseek",
+                "actual_outcome": actual,
+                "model_probabilities": {"home": 0.6, "draw": 0.1, "away": 0.3},
+                "baseline": {"probabilities": {"home": 0.4, "draw": 0.2, "away": 0.4}},
+            }
+        )
+    return rows
+
+
 def test_hypothesis_validation_requires_selection_rule_for_confirmatory() -> None:
     validated = validate_hypothesis(statement="测试一个假设陈述", kind="exploratory")
     assert validated["kind"] == "exploratory"
@@ -85,28 +108,84 @@ def test_fd_source_filter_uses_explicit_source_or_fixture_fallback() -> None:
 
 
 def test_llm_poisson_comparison_requires_paired_samples_and_keeps_strategy_honest() -> None:
-    rows = []
-    for index in range(30):
-        actual = "home" if index % 2 == 0 else "away"
-        rows.append(
-            {
-                "fixture_id": f"fd-{index}",
-                "prediction_id": f"p-{index}",
-                "prediction_created_at": f"2026-01-{(index // 2) + 1:02d}T00:00:00+00:00",
-                "settled_at": f"2026-02-{(index // 2) + 1:02d}T00:00:00+00:00",
-                "model_key": "deepseek",
-                "actual_outcome": actual,
-                "model_probabilities": {"home": 0.6, "draw": 0.1, "away": 0.3},
-                "baseline": {"probabilities": {"home": 0.4, "draw": 0.2, "away": 0.4}},
-            }
-        )
-
-    comparison = _llm_vs_poisson_comparison(rows)
+    comparison = _llm_vs_poisson_comparison(paired_llm_poisson_rows(30))
 
     assert comparison["status"] == "ok"
     assert comparison["sample_size"] == 30
     assert comparison["models"]["deepseek"]["paired_samples"] == 30
     assert comparison["models"]["deepseek"]["strategy"]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("sample_size", "minimum_samples", "expected_status"),
+    (
+        (19, 20, "insufficient_sample"),
+        (20, 20, "ok"),
+        (29, 30, "insufficient_sample"),
+        (30, 30, "ok"),
+    ),
+)
+def test_llm_poisson_threshold_transitions(
+    sample_size: int,
+    minimum_samples: int,
+    expected_status: str,
+) -> None:
+    comparison = _llm_vs_poisson_comparison(
+        paired_llm_poisson_rows(sample_size),
+        minimum_samples=minimum_samples,
+    )
+
+    assert comparison["status"] == expected_status
+    assert comparison["sample_size"] == sample_size
+    assert comparison["required_samples"] == minimum_samples
+
+
+def test_exploratory_direct_comparison_archives_at_20_without_rolling_window(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "p14-exploratory.db"))
+    repository.initialize()
+
+    run = run_research(
+        paired_llm_poisson_rows(20),
+        hypothesis={
+            "statement": "生产样本中 LLM 与 Poisson 的探索性配对比较",
+            "kind": "exploratory",
+        },
+        mode="model_comparison",
+        minimum_samples=20,
+        repository=repository,
+    )
+
+    assert run["status"] == "completed"
+    assert run["run_id"].startswith("research:")
+    assert run["manifest"]["minimum_samples"] == 20
+    assert run["stages"]["backtest"]["status"] == "not_required"
+    assert run["result_summary"]["required_samples"] == 20
+    assert "探索性低置信度" in run["report"]["conclusion"]
+    assert len(repository.research_runs()) == 1
+
+
+def test_research_kind_enforces_minimum_threshold_floor() -> None:
+    exploratory = run_research(
+        paired_llm_poisson_rows(19),
+        hypothesis={"statement": "不足二十场的探索性 LLM 与 Poisson 比较", "kind": "exploratory"},
+        mode="model_comparison",
+        minimum_samples=20,
+    )
+    lowered_confirmatory = run_research(
+        paired_llm_poisson_rows(20),
+        hypothesis={
+            "statement": "确认性 LLM 与 Poisson 比较不得降低门槛",
+            "kind": "confirmatory",
+            "selection_rule": "固定使用结算前冻结概率的配对 Brier",
+        },
+        mode="model_comparison",
+        minimum_samples=20,
+    )
+
+    assert exploratory["status"] == "partial"
+    assert exploratory["run_id"] is None
+    assert lowered_confirmatory["status"] == "failed"
+    assert "at least 30" in lowered_confirmatory["error"]
 
 
 def test_leakage_audit_flags_label_after_prediction() -> None:

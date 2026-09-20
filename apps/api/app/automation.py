@@ -99,6 +99,10 @@ class AutomationRunner:
                 max(60, int(getattr(settings, "automation_ensemble_learning_interval_minutes", 10080))),
                 self._learn_ensemble_weights,
             )
+            self._jobs["exploratory_research"] = (
+                max(60, int(getattr(settings, "automation_fd_confirmatory_research_interval_minutes", 20160))),
+                self._run_exploratory_research,
+            )
             self._jobs["fd_confirmatory_research"] = (
                 max(60, int(getattr(settings, "automation_fd_confirmatory_research_interval_minutes", 20160))),
                 self._run_fd_confirmatory_research,
@@ -122,6 +126,13 @@ class AutomationRunner:
                 max(30, int(getattr(settings, "automation_discipline_interval_minutes", 60))),
                 self._backfill_discipline,
             )
+        if (
+            dongqiudi_team_service is not None
+            and getattr(dongqiudi_team_service, "configured", True)
+        ) or (
+            api_football_service is not None
+            and getattr(api_football_service, "configured", True)
+        ):
             self._jobs["transfers_backfill"] = (
                 max(60, int(getattr(settings, "automation_transfers_interval_minutes", 1440))),
                 self._backfill_transfers,
@@ -515,12 +526,17 @@ class AutomationRunner:
         )
 
     async def _backfill_transfers(self) -> dict[str, Any]:
-        """Refresh transfer records for the next stale teams (API-Football)."""
+        """Refresh upcoming-team transfers with Dongqiudi first."""
 
         from .transfers_sync import sync_transfers
 
         limit = max(1, int(getattr(self.settings, "transfers_backfill_limit", 6)))
-        return await sync_transfers(self.repository, self.api_football_service, limit=limit)
+        return await sync_transfers(
+            self.repository,
+            self.api_football_service,
+            dongqiudi_provider=self.dongqiudi_team_service,
+            limit=limit,
+        )
 
     async def _sync_clubeelo(self) -> dict[str, Any]:
         from .clubeelo_provider import refresh_ratings
@@ -777,11 +793,65 @@ class AutomationRunner:
             "item_count": 1,
         }
 
+    async def _run_exploratory_research(self) -> dict[str, Any]:
+        """Archive an all-source exploratory comparison at 20-29 pairs."""
+
+        from .research_engine import _llm_vs_poisson_comparison, run_research, validate_hypothesis
+
+        settlements = self.repository.fixture_settlements(
+            competition_id=getattr(self.settings, "simulation_competition_id", None)
+        )
+        sample_size = int(
+            _llm_vs_poisson_comparison(settlements, minimum_samples=20).get("sample_size") or 0
+        )
+        if sample_size < 20:
+            return {
+                "status": "insufficient_sample",
+                "source": "all-production-settlements",
+                "sample_size": sample_size,
+                "required_samples": 20,
+                "item_count": 0,
+            }
+        if sample_size >= 30:
+            return {
+                "status": "confirmatory_threshold_reached",
+                "source": "all-production-settlements",
+                "sample_size": sample_size,
+                "required_samples": 30,
+                "item_count": 0,
+            }
+        hypothesis = validate_hypothesis(
+            statement="生产结算样本中，LLM 1X2 预测与 Poisson 基线进行探索性配对比较",
+            kind="exploratory",
+        )
+        run = run_research(
+            settlements,
+            hypothesis=hypothesis,
+            mode="model_comparison",
+            minimum_samples=20,
+            job_id="production-exploratory-llm-vs-poisson",
+            created_by="automation",
+            competition_scope="all-production-settlements",
+            repository=self.repository,
+        )
+        return {
+            "status": run.get("status"),
+            "run_id": run.get("run_id"),
+            "source": "all-production-settlements",
+            "sample_size": sample_size,
+            "required_samples": 20,
+            "item_count": 1 if run.get("run_id") else 0,
+        }
+
     async def _run_fd_confirmatory_research(self) -> dict[str, Any]:
         """Archive the pre-registered FD LLM-vs-Poisson report after 30 pairs."""
 
-        from .research_engine import filter_settlement_rows_by_source, run_research, validate_hypothesis
-        from .prediction_intelligence import build_backtest_rows
+        from .research_engine import (
+            _llm_vs_poisson_comparison,
+            filter_settlement_rows_by_source,
+            run_research,
+            validate_hypothesis,
+        )
 
         settlements = self.repository.fixture_settlements(
             competition_id=getattr(self.settings, "simulation_competition_id", None)
@@ -791,7 +861,9 @@ class AutomationRunner:
             source="football-data",
             fixture_reader=getattr(self.repository, "fixture", None),
         )
-        sample_size = len(build_backtest_rows(filtered))
+        sample_size = int(
+            _llm_vs_poisson_comparison(filtered, minimum_samples=30).get("sample_size") or 0
+        )
         if sample_size < 30:
             return {
                 "status": "insufficient_sample",
@@ -809,6 +881,7 @@ class AutomationRunner:
             filtered,
             hypothesis=hypothesis,
             mode="model_comparison",
+            minimum_samples=30,
             job_id="fd-confirmatory-llm-vs-poisson",
             created_by="automation",
             competition_scope="football-data",
