@@ -11,8 +11,8 @@ weakening the project's strict no-ML and point-in-time rules. It covers:
 - a deterministic local Elo fallback fed by stored match results;
 - a 20-pair exploratory research archive while retaining the 30-pair
   confirmatory threshold;
-- explicit deferral of player-value activation until redisplay authorization
-  is documented.
+- Dongqiudi-backed historical player market values, activated by the project
+  owner's instruction to ingest and use the public data directly.
 
 It does not change prediction formulas, promote a model, infer current injury
 status from injury history, or treat standings, rankings, squad value, or
@@ -53,12 +53,39 @@ responses remain distinct outcomes.
 
 ### Player Values and Injuries
 
-Dongqiudi player detail responses contain numeric historical market values with
-`record_date`, but the public web endpoints do not document redisplay rights,
-rate limits, or a stability contract. The production player-value provider
-therefore remains unavailable until redisplay authorization is supplied. The
-implementation must not mark Dongqiudi as licensed or set
-`redisplay_authorized=true` without that evidence.
+Dongqiudi becomes the active player-value source. The provider reads
+`/api/data/v1/detail/person/{player_id}?app=dqd&lang=zh-cn`, flattens the
+year-keyed `history_market_values` arrays, and accepts only entries containing
+a numeric non-negative `market_value` and a valid `record_date`. Values are
+normalized to EUR because the public player response labels them as euro
+market values. Transfer fees are never substituted for market values.
+
+Each stored player payload retains the canonical player ID, Dongqiudi player
+ID, normalized Chinese player name, numeric EUR value, record date, source,
+source URL, and capture time. The existing MySQL `player_value_snapshots` row
+for a player contains a merged, de-duplicated history rather than only the
+latest value. Repeated syncs preserve valid older entries and update capture
+metadata without creating duplicate date/value records.
+
+Prediction enrichment receives the effective prediction cutoff and selects the
+newest record whose `record_date` is at or before that cutoff. If no such value
+exists, the value remains missing; a later record must never leak into a
+historical prediction or replay. Current predictions use the newest published
+record available at prediction time. The record date is displayed as the value
+date, while capture time determines whether the local cache needs refreshing.
+
+Player values remain contextual evidence in the existing player and prediction
+payloads. This activation does not introduce a new deterministic coefficient,
+change probability formulas, or promote a model. The UI shows the value,
+Dongqiudi provenance, value date, and freshness without claiming Dongqiudi is a
+licensed source.
+
+A bounded background sync refreshes stale players belonging to supported
+upcoming teams. It reuses the existing Dongqiudi roster identity chain and
+player-detail client, serializes and paces requests, and writes only validated
+records. Prediction requests read MySQL cache and do not wait for a full squad
+scrape. Provider job telemetry reports requested, saved, missing, and failed
+player counts plus the last run and error category.
 
 Historical injury records are audit context only. They must not be converted
 into current availability. Current match availability continues to come from
@@ -101,6 +128,11 @@ empty feature.
   fallback; never guess an identifier.
 - Partial player-detail fetch: store only validated records and report the
   failed player/team counts.
+- Missing or malformed market-value history: keep the last valid MySQL history,
+  record the player as missing or invalid, and continue the bounded run.
+- No market-value record at or before a prediction cutoff: expose a missing
+  value with an explicit cutoff-safe reason; never fall forward to a newer
+  record.
 - Rate limiting or transport failure: stop the bounded run, preserve last good
   data, and expose the upstream error category.
 - Missing transfer date or direction: reject that record rather than attaching
@@ -120,9 +152,11 @@ Focused tests cover:
 - local Elo provenance without relabeling it as ClubElo;
 - 19/20/29/30-sample research transitions and separate exploratory versus
   confirmatory job identities;
-- preservation of the player-value authorization gate and historical-injury
-  non-inference.
+- player-value parsing, EUR normalization, history de-duplication, cutoff-safe
+  selection, paced partial-failure handling, and Chinese-name normalization;
+- preservation of historical-injury non-inference.
 
 Production verification requires the deployed Git SHA, active API/Web systemd
 services, public proxy routes, successful MySQL reads/writes, provider job
-telemetry, stored transfer coverage, and the expected research archive status.
+telemetry, stored transfer and player-value coverage, cutoff-safe value samples,
+Chinese player names, and the expected research archive status.
