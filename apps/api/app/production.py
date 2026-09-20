@@ -9,9 +9,11 @@ historical predictions, odds or evaluation runs.
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 import tempfile
+from threading import Lock
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -20,6 +22,7 @@ from sqlalchemy import text
 
 ENVIRONMENTS: tuple[str, ...] = ("local", "test", "staging", "production")
 MIGRATION_VERSION = "round6.5-production-evidence-v1"
+_MIGRATION_LOCK = Lock()
 
 
 class EnvironmentContract:
@@ -38,17 +41,38 @@ class EnvironmentContract:
         """Return configuration violations; empty means deployable."""
 
         violations: list[str] = []
+        database_url = str(settings.get("database_url") or "").strip()
+        if self.environment != "test" and not _is_mysql_url(database_url):
+            violations.append(
+                f"{self.environment} requires a MySQL DATABASE_URL; SQLite is test-only"
+            )
         if self.is_production:
             admin_key = str(settings.get("admin_api_key") or "")
             if not admin_key or admin_key == "dev-admin-key":
                 violations.append("production must override the default admin key")
             if bool(settings.get("use_demo_data")):
                 violations.append("production must not serve demo data")
-            if not str(settings.get("database_url") or "").strip():
-                violations.append("production requires an explicit DATABASE_URL")
+            if bool(settings.get("web_demo_mode")):
+                violations.append("production must not enable WEB_DEMO_MODE")
             if not str(settings.get("cors_origins") or "").strip():
                 violations.append("production requires an explicit CORS origin list")
         return violations
+
+
+def require_mysql_runtime(settings: Any) -> None:
+    """Fail before repository initialization when a non-test app is not on MySQL."""
+
+    environment = str(getattr(settings, "environment", "local") or "local")
+    database_url = str(getattr(settings, "database_url", "") or "").strip()
+    if environment != "test" and not _is_mysql_url(database_url):
+        raise RuntimeError(
+            f"ENVIRONMENT={environment} requires a MySQL DATABASE_URL; SQLite is test-only"
+        )
+
+
+def _is_mysql_url(value: str) -> bool:
+    normalized = value.strip().casefold()
+    return normalized.startswith(("mysql://", "mysql+pymysql://"))
 
 
 def _settings_view(settings: Any) -> dict[str, Any]:
@@ -57,6 +81,7 @@ def _settings_view(settings: Any) -> dict[str, Any]:
     return {
         "admin_api_key": getattr(settings, "admin_api_key", None),
         "use_demo_data": getattr(settings, "use_demo_data", None),
+        "web_demo_mode": getattr(settings, "web_demo_mode", None),
         "database_url": getattr(settings, "database_url", None),
         "cors_origins": getattr(settings, "cors_origins", None),
     }
@@ -152,6 +177,13 @@ def _applied_migrations(connection: Any) -> set[str]:
 
 
 def run_migrations(repository: Any, *, dry_run: bool = True) -> dict[str, Any]:
+    """Serialize migration validation and application inside this process."""
+
+    with _MIGRATION_LOCK:
+        return _run_migrations_unlocked(repository, dry_run=dry_run)
+
+
+def _run_migrations_unlocked(repository: Any, *, dry_run: bool = True) -> dict[str, Any]:
     """Apply (or dry-run) the versioned additive migrations.
 
     A dry-run validates the statements against the real database inside a
@@ -292,6 +324,33 @@ def sqlite_backup_and_verify(
         "restore_fingerprint": restore_fingerprint,
         "verified_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
+
+
+def mysql_backup_verification_status(marker_path: str) -> dict[str, Any]:
+    """Read the non-secret marker written after a verified MySQL restore."""
+
+    path = Path(marker_path)
+    if not path.is_file():
+        return {
+            "status": "unavailable",
+            "reason": "no verified MySQL backup marker was found",
+            "marker_path": str(path),
+        }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {
+            "status": "invalid",
+            "reason": f"verified MySQL backup marker is unreadable: {type(error).__name__}",
+            "marker_path": str(path),
+        }
+    if not isinstance(payload, dict) or payload.get("status") != "verified":
+        return {
+            "status": "invalid",
+            "reason": "verified MySQL backup marker has an invalid status",
+            "marker_path": str(path),
+        }
+    return {**payload, "marker_path": str(path)}
 
 
 def _sqlite_fingerprint(connection: Any, tables: Iterable[str]) -> dict[str, Any]:

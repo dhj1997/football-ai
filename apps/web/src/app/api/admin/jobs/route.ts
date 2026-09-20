@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 export async function GET() {
   const apiBase = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -9,18 +10,16 @@ export async function GET() {
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
-    if (response.ok) {
-      return NextResponse.json(await response.json(), { status: response.status });
-    }
-  } catch {
-    // Fallback
+    return forwardUpstream(response);
+  } catch (error) {
+    if (!webDemoModeEnabled()) return gatewayError(error, "/api/admin/jobs");
   }
   return NextResponse.json({
-    items: [
-      { name: "sync-fixtures", status: "completed", last_run: new Date().toISOString() },
-      { name: "refresh-evidence", status: "completed", last_run: new Date().toISOString() },
-    ],
-    count: 2,
+    items: [],
+    count: 0,
+    enabled: false,
+    analysis_enabled: false,
+    mode: "demo",
   });
 }
 

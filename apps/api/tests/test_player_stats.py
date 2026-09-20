@@ -141,6 +141,8 @@ async def test_enrich_attaches_statistics_by_provider_id() -> None:
     assert home["statistics"]["appearances"] == 4
     assert home["statistics_source"] == "espn"
     assert home["statistics_season"] == "2026"
+    assert home["statistics_snapshot_id"] == "pstats:espn:111:2026"
+    assert home["statistics_synced_at"] == "2026-09-19T00:00:00+00:00"
     # 2025 赛季快照不得串赛季；未匹配的行保持原样
     assert "statistics" not in context["squads"]["away"][0]
     assert "statistics" not in context["squads"]["home"][1]

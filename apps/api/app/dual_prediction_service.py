@@ -31,6 +31,31 @@ class DualPredictionService:
     def configured(self) -> bool:
         return any(bool(getattr(service.model_provider, "configured", False)) for service in self.services.values())
 
+    async def prepare_context(
+        self,
+        fixture: dict[str, Any],
+        context: dict[str, Any],
+        *,
+        prediction_timestamp: Any | None = None,
+    ) -> Any:
+        """Prepare shared evidence once through the primary prediction service."""
+
+        if not self.services:
+            return None
+        if self.player_name_service is not None:
+            await self.player_name_service.enrich(context, resolve_missing=True)
+        primary = next(iter(self.services.values()))
+        prepare_context = getattr(primary, "prepare_context", None)
+        if not callable(prepare_context):
+            return None
+        parameters = inspect.signature(prepare_context).parameters
+        kwargs = (
+            {"prediction_timestamp": prediction_timestamp}
+            if "prediction_timestamp" in parameters
+            else {}
+        )
+        return await prepare_context(fixture, context, **kwargs)
+
     async def create(
         self,
         fixture: dict[str, Any],

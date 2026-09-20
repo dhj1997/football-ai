@@ -109,6 +109,40 @@ def test_prediction_services_run_for_both_models() -> None:
     assert set(started) == {"deepseek", "chatgpt"}
 
 
+def test_dual_service_delegates_shared_context_preparation_to_primary() -> None:
+    started: list[str] = []
+
+    class PreparingService(FakePredictionService):
+        async def prepare_context(self, current_fixture: dict, context: dict, *, prediction_timestamp=None) -> dict:
+            started.append(f"prepare:{self.model_key}")
+            context["prepared_fixture"] = current_fixture["id"]
+            context["prediction_timestamp"] = prediction_timestamp
+            return context
+
+    service = DualPredictionService(
+        {
+            "deepseek": PreparingService("deepseek", started),
+            "chatgpt": PreparingService("chatgpt", started),
+        },
+        "dual",
+        player_name_service=FakePlayerNameService(started),
+    )
+    context: dict = {}
+
+    result = asyncio.run(
+        service.prepare_context(
+            fixture(),
+            context,
+            prediction_timestamp="2099-08-27T10:00:00+00:00",
+        )
+    )
+
+    assert result is context
+    assert context["prepared_fixture"] == "dual-fixture"
+    assert context["prediction_timestamp"] == "2099-08-27T10:00:00+00:00"
+    assert started == ["player-names", "prepare:deepseek"]
+
+
 def test_dual_models_assign_one_production_evidence_owner() -> None:
     ownership: dict[str, bool] = {}
 

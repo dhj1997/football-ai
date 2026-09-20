@@ -1,6 +1,8 @@
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 
-from app.player_impact import apply_player_impact
+from app.database import PredictionRepository
+from app.player_impact import apply_player_impact, persist_player_impact_rules
 
 
 def player(
@@ -115,3 +117,72 @@ def test_missing_market_value_stays_null_and_does_not_block_impact() -> None:
     assert star["market_value_eur"] is None
     assert star["attack_contribution"] > 0
     assert evidence["player_impact"]["home"]["data_status"] in {"partial", "complete"}
+
+
+def test_absence_rule_is_source_timestamped_localized_and_idempotent(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "impact.db"))
+    repository.initialize()
+    evidence = context(["star"])
+    evidence["availability"]["updated_at"] = "2026-09-20T09:00:00+00:00"
+    evidence["availability"]["checked_at"] = "2026-09-20T09:00:00+00:00"
+    absent = evidence["availability"]["players"][0]
+    absent["name"] = "Hugo Duro"
+    absent["original_name"] = "Hugo Duro"
+    star = evidence["squads"]["home"][0]
+    star["name"] = "Hugo Duro"
+    star["original_name"] = "Hugo Duro"
+    star["statistics_snapshot_id"] = "pstats:espn:star:2026"
+    star["statistics_synced_at"] = "2026-09-20T08:00:00+00:00"
+    fixture = {
+        "id": "fixture-impact",
+        "home_team": {"id": "home-team"},
+        "away_team": {"id": "away-team"},
+    }
+    created_at = datetime(2026, 9, 20, 9, 30, tzinfo=UTC)
+
+    first = persist_player_impact_rules(
+        repository,
+        fixture,
+        evidence,
+        cutoff_at=created_at,
+        created_at=created_at,
+    )
+    second = persist_player_impact_rules(
+        repository,
+        fixture,
+        evidence,
+        cutoff_at=created_at,
+        created_at=created_at + timedelta(minutes=1),
+    )
+
+    rules = repository.player_impact_rules(status="active")
+    assert first["generated_count"] == 1
+    assert second["reused_count"] == 1
+    assert len(rules) == 1
+    assert rules[0]["fixture_id"] == "fixture-impact"
+    assert rules[0]["impact_value"] < 0
+    assert rules[0]["source_record_ids"][0] == "pstats:espn:star:2026"
+    assert rules[0]["available_at"] == "2026-09-20T09:00:00+00:00"
+    assert "Hugo Duro" not in rules[0]["display_name"]
+
+
+def test_rule_generation_does_not_backfill_an_old_cutoff(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "impact-old.db"))
+    repository.initialize()
+    evidence = context(["star"])
+    evidence["availability"]["updated_at"] = "2026-09-20T09:00:00+00:00"
+    star = evidence["squads"]["home"][0]
+    star["statistics_snapshot_id"] = "pstats:espn:star:2026"
+    star["statistics_synced_at"] = "2026-09-20T08:00:00+00:00"
+
+    result = persist_player_impact_rules(
+        repository,
+        {"id": "fixture-old", "home_team": {"id": "home"}, "away_team": {"id": "away"}},
+        evidence,
+        cutoff_at="2026-09-20T09:01:00+00:00",
+        created_at=datetime(2026, 9, 20, 10, 0, tzinfo=UTC),
+    )
+
+    assert result["status"] == "insufficient_data"
+    assert result["reason_counts"] == {"historical_generation_blocked": 1}
+    assert repository.player_impact_rules(status="active") == []

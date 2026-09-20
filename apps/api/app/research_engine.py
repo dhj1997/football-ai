@@ -428,7 +428,11 @@ def run_research(
     stages["experiment"] = {"status": "ok" if result.get("status") == "ok" else "failed", "window_count": result.get("window_count")}
     stages["backtest"] = {"status": "ok" if result.get("status") == "ok" else "failed", "mode": mode}
     statistics = _statistical_summary(result)
-    stages["statistical_check"] = {"status": "ok", **statistics}
+    minimum_sample_passed = int(statistics.get("sample_size") or 0) >= 30
+    stages["statistical_check"] = {
+        "status": "ok" if minimum_sample_passed else "insufficient_sample",
+        **statistics,
+    }
     audit = leakage_audit(rows)
     stages["leakage_audit"] = {"status": audit["status"], "violation_count": audit["violation_count"]}
 
@@ -454,7 +458,7 @@ def run_research(
     experiment_failed = result.get("status") != "ok"
     if audit["violation_count"]:
         status = "failed"
-    elif experiment_failed or not result.get("window_count"):
+    elif experiment_failed or not result.get("window_count") or not minimum_sample_passed:
         status = "partial"
     elif (
         hypothesis["kind"] == "confirmatory"
@@ -488,8 +492,15 @@ def run_research(
         "created_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "engine_version": RESEARCH_ENGINE_VERSION,
     }
-    # Content-addressed identity: retries and duplicates converge to the
-    # same stored run instead of creating a second report.
+    if status != "completed" or not audit.get("passed"):
+        stages["archive"] = {
+            "status": "skipped",
+            "reason": "research eligibility gates did not pass",
+        }
+        return run
+
+    # Content-addressed identity: eligible retries and duplicates converge to
+    # the same stored run instead of creating a second report.
     content = {key: value for key, value in run.items() if key not in {"run_id", "created_at"}}
     run_id = f"research:{hashlib.sha256(_stable(content).encode()).hexdigest()[:32]}"
     run["run_id"] = run_id

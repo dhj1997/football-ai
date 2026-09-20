@@ -11,7 +11,7 @@ from typing import Any
 from .prediction import predict
 from .elo import compute_elo
 from .evidence_chain import localize_evidence_players
-from .player_impact import apply_player_impact
+from .player_impact import apply_player_impact, persist_player_impact_rules
 from .player_identity import public_payload
 from .market_decision import apply_market_decision
 from .leakage_audit import FutureDataLeakageError, LeakageAuditService
@@ -363,6 +363,20 @@ class PredictionService:
             except Exception:
                 pass
         apply_player_impact(context)
+        try:
+            generation = persist_player_impact_rules(
+                self.repository,
+                fixture,
+                context,
+                cutoff_at=prediction_timestamp,
+            )
+        except Exception as error:
+            generation = {
+                "status": "failed",
+                "reason": type(error).__name__,
+                "item_count": 0,
+            }
+        context.setdefault("player_impact", {})["rule_generation"] = generation
         context.setdefault("elo", self._elo_ratings(prediction_timestamp))
         try:
             from .team_stats import attach_team_stats

@@ -14,6 +14,7 @@ import {
   getMockTeamDetail,
 } from "@/lib/mock-data";
 import type { DateFilter, FixtureLeagueFilter } from "@/lib/types";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 const apiBase = (process.env.API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
 
@@ -110,17 +111,13 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       signal: AbortSignal.timeout(4000),
     });
 
-    if (response.ok) {
-      return new NextResponse(response.body, {
-        status: response.status,
-        headers: response.headers,
-      });
+    return forwardUpstream(response);
+  } catch (error) {
+    if (webDemoModeEnabled()) {
+      return handleMockFallback(path, request.nextUrl.searchParams);
     }
-  } catch {
-    // If backend is down or connection refused, fallback gracefully
+    return gatewayError(error, `/${path.join("/")}`);
   }
-
-  return handleMockFallback(path, request.nextUrl.searchParams);
 }
 
 export const GET = forward;

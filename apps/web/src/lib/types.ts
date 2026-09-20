@@ -834,13 +834,53 @@ export interface JobRun {
     | "settlement"
     | "dongqiudi_schedule"
     | "dongqiudi_scores"
-    | "dongqiudi_prematch";
+    | "dongqiudi_prematch"
+    | "clubeelo"
+    | "transfers_backfill"
+    | "player_stats_backfill"
+    | "player_impact_rules"
+    | "ensemble_learning"
+    | "fd_confirmatory_research";
   started_at: string;
   finished_at: string | null;
   status: "running" | "success" | "partial" | "failed";
   item_count: number;
   error_summary: string | null;
   result: Record<string, unknown> | null;
+}
+
+export interface ActivationSourceStatus {
+  key: string;
+  label: string;
+  status: "ready" | "running" | "partial" | "failed" | "not_run" | "unavailable";
+  reason?: "provider_required" | string;
+  last_run_at?: string | null;
+  error?: string | null;
+}
+
+export interface ActivationStatus {
+  status: "ready" | "attention" | "blocked";
+  mode?: "demo";
+  blocking_reasons: string[];
+  attention_reasons: string[];
+  database: {
+    backend: string;
+    status: "ready" | "test_only";
+    backup: { status: string; verified_at?: string | null };
+  };
+  player_impact: {
+    status: string;
+    active_rule_count: number;
+    upcoming_fixture_count: number;
+    covered_fixture_count: number;
+  };
+  providers: { sources: ActivationSourceStatus[]; telemetry: Array<Record<string, unknown>> };
+  ensemble: { status: string; count: number; empty_reason?: string | null };
+  evaluation: {
+    status: string;
+    backtests: { passing_count: number; recent: Array<Record<string, unknown>> };
+    research: { passing_count: number; recent: Array<Record<string, unknown>> };
+  };
 }
 
 export interface StandingsResponse {

@@ -26,8 +26,9 @@ def test_production_endpoints_require_admin() -> None:
         "/api/admin/production/migrations/apply",
         "/api/admin/production/backup",
         "/api/admin/production/smoke",
+        "/api/admin/activation-status",
     ):
-        if path == "/api/production/readiness":
+        if path in {"/api/production/readiness", "/api/admin/activation-status"}:
             assert client.get(path).status_code == 401
         else:
             assert client.post(path).status_code == 401
@@ -54,13 +55,37 @@ def test_migration_dry_run_and_smoke_endpoints() -> None:
     assert smoke.json()["status"] in {"pass", "fail"}
 
 
-def test_backup_endpoint_verifies_sqlite_restore() -> None:
-    if not settings.database_url.startswith("sqlite:///"):
-        return
+def test_activation_status_composes_real_read_only_components() -> None:
+    response = client.get("/api/admin/activation-status", headers=_ADMIN)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["database"]["backend"] == "sqlite"
+    assert payload["database"]["status"] == "test_only"
+    assert payload["player_impact"]["active_rule_count"] >= 0
+    assert payload["ensemble"]["status"] in {"ready", "pending"}
+    assert "backtests" in payload["evaluation"]
+    assert {
+        (item["key"], item.get("reason"))
+        for item in payload["providers"]["sources"]
+        if item["status"] == "unavailable"
+    } == {
+        ("player_values", "provider_required"),
+        ("prematch_news", "provider_required"),
+    }
+
+
+def test_backup_endpoint_reports_mysql_restore_marker(tmp_path, monkeypatch) -> None:
+    marker = tmp_path / "last-verified.json"
+    marker.write_text(
+        '{"status":"verified","database":"football_ai","backup_file":"db.sql.gz","verified_at":"2026-09-20T00:00:00Z"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "mysql_backup_verification_file", str(marker))
     response = client.post("/api/admin/production/backup", headers=_ADMIN)
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] in {"verified", "unavailable", "not_supported"}
-    if payload["status"] == "verified":
-        assert payload["source_fingerprint"] == payload["restore_fingerprint"]
+    assert payload["status"] == "verified"
+    assert payload["database"] == "football_ai"
+    assert payload["backup_file"] == "db.sql.gz"

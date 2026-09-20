@@ -1,8 +1,15 @@
 """Deterministic player contribution and absence-impact model."""
 
-from typing import Any
+import hashlib
+import json
+from datetime import UTC, datetime, timedelta
+from typing import Any, Mapping
 
 from .player_identity import link_evidence_players
+from .team_names import to_chinese_player_name
+
+
+RULE_VERSION = "player-impact-rule-v1"
 
 
 def apply_player_impact(context: dict[str, Any]) -> dict[str, Any]:
@@ -19,6 +26,215 @@ def apply_player_impact(context: dict[str, Any]) -> dict[str, Any]:
         "method_version": "player-impact-v1",
     }
     return context
+
+
+def persist_player_impact_rules(
+    repository: Any,
+    fixture: Mapping[str, Any],
+    context: dict[str, Any],
+    *,
+    cutoff_at: Any | None = None,
+    created_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist cutoff-safe absence rules from already sourced player evidence."""
+
+    apply_player_impact(context)
+    generated_at = (created_at or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    cutoff = _as_utc(cutoff_at) or generated_at
+    reasons: dict[str, int] = {}
+    if generated_at - cutoff > timedelta(minutes=5):
+        return _rule_report(0, 0, 0, {"historical_generation_blocked": 1})
+
+    availability = context.get("availability") if isinstance(context.get("availability"), Mapping) else {}
+    availability_at = _latest_timestamp(
+        availability.get("updated_at"),
+        availability.get("checked_at"),
+    )
+    availability_rows = [
+        row for row in availability.get("players") or [] if isinstance(row, Mapping)
+    ]
+    availability_by_id: dict[str, Mapping[str, Any]] = {}
+    for row in availability_rows:
+        for value in _player_identifiers(row):
+            availability_by_id.setdefault(value, row)
+
+    candidates: list[tuple[str, str, Mapping[str, Any], Mapping[str, Any]]] = []
+    squads = context.get("squads") if isinstance(context.get("squads"), Mapping) else {}
+    for side in ("home", "away"):
+        team_id = _fixture_team_id(fixture, side)
+        for player in squads.get(side) or []:
+            if not isinstance(player, Mapping) or player.get("is_available") is not False:
+                continue
+            player_id = next(iter(_player_identifiers(player)), "")
+            availability_row = next(
+                (availability_by_id[value] for value in _player_identifiers(player) if value in availability_by_id),
+                None,
+            )
+            if not player_id or availability_row is None:
+                _increment(reasons, "unresolved_absence_identity")
+                continue
+            candidates.append((side, team_id, player, availability_row))
+
+    existing_reader = getattr(repository, "player_impact_rules", None)
+    existing_rules = (
+        existing_reader(
+            player_ids=[next(iter(_player_identifiers(player)), "") for _, _, player, _ in candidates],
+            status=None,
+        )
+        if callable(existing_reader) and candidates
+        else []
+    )
+    existing_by_id = {str(item.get("id") or ""): item for item in existing_rules}
+    saver = getattr(repository, "save_player_impact_rule", None)
+    if not callable(saver):
+        raise RuntimeError("repository does not support player impact rules")
+
+    generated = 0
+    reused = 0
+    skipped = 0
+    fixture_id = str(fixture.get("id") or "")
+    for side, team_id, player, availability_row in candidates:
+        player_id = next(iter(_player_identifiers(player)), "")
+        statistics = player.get("statistics") if isinstance(player.get("statistics"), Mapping) else {}
+        statistics_at = _as_utc(player.get("statistics_synced_at"))
+        statistics_id = str(player.get("statistics_snapshot_id") or "")
+        if not statistics or statistics_at is None or not statistics_id:
+            skipped += 1
+            _increment(reasons, "player_statistics_unavailable")
+            continue
+        if availability_at is None:
+            skipped += 1
+            _increment(reasons, "availability_timestamp_unavailable")
+            continue
+        source_available_at = max(statistics_at, availability_at)
+        if source_available_at > cutoff:
+            skipped += 1
+            _increment(reasons, "source_after_cutoff")
+            continue
+        impact = float(player.get("absence_impact") or 0)
+        if impact <= 0:
+            skipped += 1
+            _increment(reasons, "absence_impact_unavailable")
+            continue
+
+        display_name = to_chinese_player_name(str(player.get("name") or availability_row.get("name") or "未知球员"))
+        availability_record_id = "availability:" + hashlib.sha256(
+            _stable(
+                {
+                    "fixture_id": fixture_id,
+                    "player_id": player_id,
+                    "available_at": availability_at.isoformat(),
+                    "row": dict(availability_row),
+                }
+            ).encode()
+        ).hexdigest()[:24]
+        identity = {
+            "fixture_id": fixture_id,
+            "team_id": team_id,
+            "side": side,
+            "player_id": player_id,
+            "impact_type": "absence",
+            "impact_value": round(-impact, 6),
+            "statistics_snapshot_id": statistics_id,
+            "availability_record_id": availability_record_id,
+            "source_available_at": source_available_at.isoformat(),
+            "rule_version": RULE_VERSION,
+        }
+        rule_id = "impact:" + hashlib.sha256(_stable(identity).encode()).hexdigest()[:32]
+        if rule_id in existing_by_id:
+            reused += 1
+            continue
+        rule = {
+            "id": rule_id,
+            "player_id": player_id,
+            "display_name": display_name,
+            "team_id": team_id,
+            "fixture_id": fixture_id,
+            "side": side,
+            "role": str(player.get("player_role") or player.get("position_group") or "unknown"),
+            "impact_type": "absence",
+            "impact_value": identity["impact_value"],
+            "confidence": 0.9,
+            "source": "player-stats+availability",
+            "source_record_ids": [statistics_id, availability_record_id],
+            "source_timestamps": {
+                "player_statistics": statistics_at.isoformat(),
+                "availability": availability_at.isoformat(),
+            },
+            "available_at": source_available_at.isoformat(),
+            "rule_version": RULE_VERSION,
+            "status": "active",
+            "created_at": generated_at.isoformat(),
+            "deprecated_at": None,
+            "inputs": {
+                "position_group": player.get("position_group"),
+                "expected_minutes": player.get("expected_minutes"),
+                "attack_contribution": player.get("attack_contribution"),
+                "defense_contribution": player.get("defense_contribution"),
+                "replacement_contribution": player.get("replacement_contribution"),
+                "absence_reason": availability_row.get("reason"),
+            },
+        }
+        saver(rule)
+        existing_by_id[rule_id] = rule
+        generated += 1
+
+    return _rule_report(generated, reused, skipped, reasons)
+
+
+def _rule_report(generated: int, reused: int, skipped: int, reasons: dict[str, int]) -> dict[str, Any]:
+    return {
+        "status": "ok" if generated or reused else "insufficient_data",
+        "generated_count": generated,
+        "reused_count": reused,
+        "skipped_count": skipped,
+        "reason_counts": dict(sorted(reasons.items())),
+        "item_count": generated,
+        "rule_version": RULE_VERSION,
+    }
+
+
+def _increment(values: dict[str, int], key: str) -> None:
+    values[key] = values.get(key, 0) + 1
+
+
+def _stable(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _as_utc(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _latest_timestamp(*values: Any) -> datetime | None:
+    parsed = [item for value in values if (item := _as_utc(value)) is not None]
+    return max(parsed) if parsed else None
+
+
+def _player_identifiers(player: Mapping[str, Any]) -> list[str]:
+    return [
+        str(value)
+        for key in ("canonical_player_id", "provider_player_id", "player_id", "id")
+        if (value := player.get(key)) not in (None, "")
+    ]
+
+
+def _fixture_team_id(fixture: Mapping[str, Any], side: str) -> str:
+    team = fixture.get(f"{side}_team")
+    if not isinstance(team, Mapping):
+        return ""
+    for key in ("canonical_team_id", "provider_id", "id", "team_id", "code"):
+        if team.get(key) not in (None, ""):
+            return str(team[key])
+    return ""
 
 
 def _team_impact(context: dict[str, Any], side: str) -> dict[str, Any]:

@@ -174,6 +174,25 @@ def test_insufficient_dataset_fails_without_success_conclusion() -> None:
     assert not (run.get("report") or {}).get("conclusion")
 
 
+def test_insufficient_research_is_not_archived(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "p14-insufficient.db"))
+    repository.initialize()
+
+    run = run_research(
+        settlement_rows(10),
+        hypothesis={**HYPOTHESIS, "statement": "样本不足不得归档的确认性研究"},
+        mode="rolling",
+        train_days=45,
+        test_days=15,
+        step_days=15,
+        repository=repository,
+    )
+
+    assert run["run_id"] is None
+    assert run["stages"]["archive"]["status"] == "skipped"
+    assert repository.research_runs() == []
+
+
 def test_scheduler_submit_is_locked_and_idempotent(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "p14.db"))
     repository.initialize()

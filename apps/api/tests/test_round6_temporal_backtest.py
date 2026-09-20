@@ -669,8 +669,16 @@ def test_fingerprint_covers_deterministic_report_configuration() -> None:
 
 def test_round6_admin_get_is_read_only_and_post_is_append_only(monkeypatch: pytest.MonkeyPatch) -> None:
     repository = Round6Repository()
-    repository.fixtures = [fixture("api", "2026-09-17T12:00:00+00:00")]
-    add_round5_audit(repository, "api", "2026-09-17T11:00:00+00:00")
+    kickoff = datetime.fromisoformat("2026-09-17T12:00:00+00:00")
+    for index in range(30):
+        fixture_id = f"api-{index}"
+        fixture_kickoff = kickoff + timedelta(days=index)
+        repository.fixtures.append(fixture(fixture_id, fixture_kickoff.isoformat()))
+        add_round5_audit(
+            repository,
+            fixture_id,
+            (fixture_kickoff - timedelta(hours=1)).isoformat(),
+        )
     monkeypatch.setattr(main_module, "repository", repository)
     client = TestClient(main_module.app)
 
@@ -681,7 +689,7 @@ def test_round6_admin_get_is_read_only_and_post_is_append_only(monkeypatch: pyte
         params={"limit": 30},
     )
     assert response.status_code == 200
-    assert response.json()["observation_count"] == 1
+    assert response.json()["observation_count"] == 30
     assert repository.saved_runs == []
 
     rejected = client.post(

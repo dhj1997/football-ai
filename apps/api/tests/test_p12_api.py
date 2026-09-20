@@ -72,3 +72,18 @@ def test_advanced_backtest_rejects_unknown_mode() -> None:
     response = client.post("/api/admin/backtest/runs", headers=_ADMIN, json={"mode": "bogus"})
 
     assert response.status_code == 400
+
+
+def test_advanced_backtest_does_not_persist_insufficient_data() -> None:
+    before = len(repository.backtest_runs())
+
+    response = client.post(
+        "/api/admin/backtest/runs",
+        headers=_ADMIN,
+        json={"mode": "rolling", "source": "missing-source"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] is None
+    assert response.json()["status"] == "insufficient_data"
+    assert len(repository.backtest_runs()) == before

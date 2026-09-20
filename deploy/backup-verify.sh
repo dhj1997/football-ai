@@ -7,16 +7,17 @@
 #                   验证后自动删除临时库
 #   backup <file> ：复用已有 dump 文件做恢复验证
 # 密钥仅在本脚本进程内使用，不回显。
-set -uo pipefail
+set -euo pipefail
 
 APP_DIR=/opt/football-ai/app
 BACKUP_DIR=/opt/football-ai/backups
+VERIFICATION_MARKER="$BACKUP_DIR/last-verified.json"
 cd "$APP_DIR"
 
 KEY=$(grep -E '^ADMIN_API_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"')
 URL=$(grep -E '^DATABASE_URL=' .env | head -1 | cut -d= -f2- | tr -d '"')
-CREDS=$(echo "$URL" | sed -E 's|^mysql(://)?||; s|@.*||')
-HOSTPORT=$(echo "$URL" | sed -E 's|^mysql(://)?[^@]+@||; s|/.*||')
+CREDS=$(echo "$URL" | sed -E 's|^mysql(\+pymysql)?://||; s|@.*||')
+HOSTPORT=$(echo "$URL" | sed -E 's|^mysql(\+pymysql)?://[^@]+@||; s|/.*||')
 DB=$(echo "$URL" | sed -E 's|.*/||; s|\?.*||')
 DBUSER=$(echo "$CREDS" | cut -d: -f1)
 export MYSQL_PWD=$(echo "$CREDS" | cut -d: -f2-)
@@ -86,10 +87,22 @@ fi
 # 热表在 dump 后仍被自动化写入（job 心跳/赔率同步），其行数漂移不构成
 # 恢复失败；严格指纹只比较冷数据表。
 HOT_TABLES="job_runs|odds_snapshots|sync_metadata|data_sync_runs"
-TABLE_LIST=$(M -N -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$DB' AND table_type='BASE TABLE';" | grep -Ev "^($HOT_TABLES)$")
+ALL_TABLE_LIST=$(M -N -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$DB' AND table_type='BASE TABLE';")
+TABLE_LIST=$(printf '%s\n' "$ALL_TABLE_LIST" | grep -Ev "^($HOT_TABLES)$")
 MATCH=0; MISMATCH=0; MISSING=0; QUERY_ERROR=0
 FINGERPRINT_PROD=/tmp/fp-prod.txt; FINGERPRINT_CHECK=/tmp/fp-check.txt
 : > "$FINGERPRINT_PROD"; : > "$FINGERPRINT_CHECK"
+for T in $ALL_TABLE_LIST; do
+  PRESENT=$(M -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$CHECKDB' AND table_name='$T';" 2>/dev/null)
+  if [ "$PRESENT" != "1" ]; then
+    MISSING=$((MISSING+1))
+  fi
+done
+if [ $MISSING -ne 0 ]; then
+  M -e "DROP DATABASE IF EXISTS $CHECKDB;"
+  echo "RESTORE_MISMATCH missing_tables=$MISSING"
+  exit 1
+fi
 for T in $TABLE_LIST; do
   PC=$(M -N -D "$DB" -e "SELECT COUNT(*) FROM \`$T\`;" 2>/dev/null)
   CC=$(M -N -e "SELECT COUNT(*) FROM \`$CHECKDB\`.\`$T\`;" 2>/dev/null)
@@ -111,8 +124,36 @@ if [ $QUERY_ERROR -eq 0 ] && [ $MISSING -eq 0 ] && [ $MISMATCH -eq 0 ]; then
 else
   echo "RESTORE_MISMATCH match=$MATCH mismatch=$MISMATCH missing=$MISSING query_error=$QUERY_ERROR"
   diff "$FINGERPRINT_PROD" "$FINGERPRINT_CHECK" | head -10
+  exit 1
 fi
 echo "backup_file=$DUMP"
+
+DUMP_SHA256=$(sha256sum "$DUMP" | awk '{print $1}')
+VERIFIED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+mkdir -p "$BACKUP_DIR"
+python3 - "$VERIFICATION_MARKER" "$DB" "$(basename "$DUMP")" "$DUMP_SHA256" "$VERIFIED_AT" "$MATCH" <<'PYEOF'
+import json
+import os
+import sys
+
+path, database, backup_file, sha256, verified_at, tables = sys.argv[1:]
+temporary = f"{path}.tmp"
+with open(temporary, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "status": "verified",
+            "database": database,
+            "backup_file": backup_file,
+            "backup_sha256": sha256,
+            "verified_at": verified_at,
+            "verified_tables": int(tables),
+        },
+        handle,
+        ensure_ascii=True,
+    )
+    handle.write("\n")
+os.replace(temporary, path)
+PYEOF
 
 echo "== retention (keep 14 days) =="
 RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}

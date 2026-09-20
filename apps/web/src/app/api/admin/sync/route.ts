@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 export async function POST() {
   const apiBase = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -10,15 +11,13 @@ export async function POST() {
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
-    if (response.ok) {
-      const payload = await response.json();
-      return NextResponse.json(payload, { status: response.status });
-    }
-  } catch {
-    // Fallback gracefully in demo mode
+    return forwardUpstream(response);
+  } catch (error) {
+    if (!webDemoModeEnabled()) return gatewayError(error, "/api/admin/sync");
   }
   return NextResponse.json({
     status: "ok",
+    mode: "demo",
     message: "数据同步成功（演练模式）",
     synced_at: new Date().toISOString(),
   });

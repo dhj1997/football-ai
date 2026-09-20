@@ -269,7 +269,15 @@ class FeatureEngine:
             results.extend(self._home_away(team_id, side, history, cutoff))
             results.extend(self._strength(team_id, side, history, competition_history, elo_state, cutoff))
             results.extend(self._fatigue(team_id, side, fatigue_histories[team_id], cutoff))
-            results.append(self._player_impact(team_id, side, evidence, cutoff))
+            results.append(
+                self._player_impact(
+                    str(fixture.get("id") or ""),
+                    team_id,
+                    side,
+                    evidence,
+                    cutoff,
+                )
+            )
         return results
 
     def _elo(self, team_id: str, side: str, state: Mapping[str, Any], cutoff: datetime) -> list[FeatureResult]:
@@ -423,12 +431,28 @@ class FeatureEngine:
             self._result("fatigue_score", round(sum(penalties) / len(penalties), 6), common, cutoff, source_ids=ids, available_at=available),
         ]
 
-    def _player_impact(self, team_id: str, side: str, evidence: Mapping[str, Any], cutoff: datetime) -> FeatureResult:
+    def _player_impact(self, fixture_id: str, team_id: str, side: str, evidence: Mapping[str, Any], cutoff: datetime) -> FeatureResult:
         player_ids = _player_ids(evidence, side)
         rules = []
         reader = getattr(self.repository, "player_impact_rules", None)
         if callable(reader) and player_ids:
             rules = reader(player_ids=player_ids, available_at_lte=cutoff.isoformat(), status="active")
+        scoped = [
+            rule
+            for rule in rules
+            if not rule.get("fixture_id") or str(rule.get("fixture_id")) == fixture_id
+        ]
+        latest: dict[tuple[str, str], Mapping[str, Any]] = {}
+        for rule in scoped:
+            key = (str(rule.get("player_id") or ""), str(rule.get("impact_type") or ""))
+            previous = latest.get(key)
+            if previous is None or (
+                str(rule.get("available_at") or ""), str(rule.get("id") or "")
+            ) > (
+                str(previous.get("available_at") or ""), str(previous.get("id") or "")
+            ):
+                latest[key] = rule
+        rules = list(latest.values())
         if rules:
             value = sum(float(rule.get("impact_value") or 0) for rule in rules)
             return self._result("player_impact", value, {"entity_id": team_id, "side": side, "source": "player_impact_rules", "calculation_version": "player-impact-rule-v1", "feature_group": "player"}, cutoff, source_ids=[str(rule.get("id")) for rule in rules], available_at=_max_time(*(rule.get("available_at") for rule in rules)))

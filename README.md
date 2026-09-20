@@ -48,7 +48,8 @@ pnpm install
 cd apps\api
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-$env:DATABASE_URL="sqlite:///D:/work/football-ai/apps/api/football_ai.db"
+$env:ENVIRONMENT="local"
+$env:DATABASE_URL="mysql+pymysql://football_ai:change-this-password@127.0.0.1:3306/football_ai?charset=utf8mb4"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -67,7 +68,7 @@ pnpm dev --hostname 127.0.0.1 --port 3000
 - 管理与作业状态：`http://127.0.0.1:3000/admin`
 - API 文档：`http://127.0.0.1:8000/docs`
 
-本地启动命令显式使用 `apps/api/football_ai.db`。如果根目录 `.env` 中配置了共享或远程 MySQL，`DATABASE_URL` 环境变量优先，确保本地开发不会读写远程数据库。
+本地、staging 和 production 都必须显式配置 MySQL `DATABASE_URL`。SQLite 只允许在 `ENVIRONMENT=test` 的自动化测试中使用；其他环境会在建表前拒绝启动。建议本地使用独立 MySQL 库，避免读写生产数据。
 
 只要 FastAPI 进程保持运行，数据库驱动的自动任务就会持续工作。生产环境应使用 Windows 服务、systemd、Docker 或其他进程守护方式保持 API 进程常驻；浏览器和 Codex 任务不承担生产调度。
 
@@ -117,7 +118,9 @@ Copy-Item .env.example .env
 - `PREDICTION_LEAD_HOURS`：兼容旧配置的预测上限；实际自动窗口由 `PREDICTION_REFRESH_OFFSETS_HOURS` 控制。
 - `USE_DEMO_DATA`：是否在没有真实缓存时显示演示数据，默认 `false`。
 - `ADMIN_API_KEY`：保护刷新与预测接口。
-- `DATABASE_URL`：默认使用 `sqlite:///./football_ai.db`；生产或共享环境可使用 `mysql+pymysql://用户名:密码@主机:3306/football_ai?charset=utf8mb4`。应用启动时会创建赛程、联赛/球队/授权身价快照、不可变证据/预测、模拟下注/流水/结算和作业记录表。
+- `ENVIRONMENT`：`local`、`staging`、`production` 或 `test`；只有 `test` 允许 SQLite。
+- `DATABASE_URL`：非测试环境必须显式使用 `mysql://` 或 `mysql+pymysql://`。应用启动时会创建赛程、联赛/球队/授权身价快照、不可变证据/预测、模拟下注/流水/结算和作业记录表。
+- `MYSQL_BACKUP_VERIFICATION_FILE`：MySQL 恢复验证标记路径，默认 `/opt/football-ai/backups/last-verified.json`。
 - `NEXT_PUBLIC_API_BASE_URL`：浏览器读取公开 API 的地址。
 - `API_BASE_URL`：Next.js 服务端调用 FastAPI 的地址。
 
@@ -138,7 +141,7 @@ FLUSH PRIVILEGES;
 DATABASE_URL=mysql+pymysql://football_ai:change-this-password@127.0.0.1:3306/football_ai?charset=utf8mb4
 ```
 
-重启 API 服务即可。当前代码已保留 SQLite 兼容；本地没有 MySQL 服务时继续使用 SQLite。
+重启 API 服务即可。SQLite 兼容仅保留给 `ENVIRONMENT=test` 下的隔离测试；本地没有 MySQL 服务时，应用会明确拒绝启动。
 
 ## 验证
 

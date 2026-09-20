@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app.automation import AutomationRunner
-from app.clubeelo_provider import parse_elo_csv, stored_ratings, sync_ratings
+from app.clubeelo_provider import parse_elo_csv, refresh_ratings, stored_ratings, sync_ratings
 from app.config import get_settings
 from app.database import PredictionRepository
 from app.football_data_provider import parse_season_csv, sync_season
@@ -210,6 +210,25 @@ def test_clubeelo_parse_and_store_ratings(tmp_path) -> None:
     ratings = stored_ratings(repository)
     assert ratings["Arsenal中文名"] == 2041.0
     assert ratings["Barcelona中文名"] == 2016.0
+
+
+@pytest.mark.asyncio
+async def test_clubeelo_refresh_records_failure_and_preserves_last_good(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "elo-health.db"))
+    repository.initialize()
+    sync_ratings(repository, SAMPLE_ELO_CSV, localize=lambda name: name)
+
+    class FailingProvider:
+        async def fetch_on(self) -> str:
+            raise TimeoutError("ClubElo timed out")
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        await refresh_ratings(repository, FailingProvider(), localize=lambda name: name)
+
+    assert stored_ratings(repository)["Arsenal"] == 2041.0
+    run = repository.data_sync_runs(provider="clubeelo", limit=1)[0]
+    assert run["status"] == "failed"
+    assert run["error_category"] == "TimeoutError"
 
 
 def test_elo_ratings_prefers_clubeelo_over_local(tmp_path) -> None:

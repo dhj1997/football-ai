@@ -16,7 +16,7 @@ export function PageHeader({ eyebrow, title, description, aside, className, ...p
         <h1 className="mt-0.5 text-lg font-bold text-white">{title}</h1>
         {description ? <p className="mt-0.5 text-xs text-slate-400">{description}</p> : null}
       </div>
-      {aside ? <div className="shrink-0">{aside}</div> : null}
+      {aside ? <div className="w-full min-w-0 sm:w-auto sm:shrink-0">{aside}</div> : null}
     </section>
   );
 }

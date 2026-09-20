@@ -6,6 +6,8 @@ from app.database import PredictionRepository
 from app.production import (
     MIGRATIONS,
     EnvironmentContract,
+    mysql_backup_verification_status,
+    require_mysql_runtime,
     run_migrations,
     run_smoke_checks,
     sqlite_backup_and_verify,
@@ -27,6 +29,7 @@ def test_production_rejects_defaults_and_demo_data() -> None:
         {
             "admin_api_key": "dev-admin-key",
             "use_demo_data": True,
+            "web_demo_mode": True,
             "database_url": "",
             "cors_origins": "",
         }
@@ -34,15 +37,35 @@ def test_production_rejects_defaults_and_demo_data() -> None:
 
     assert any("admin key" in item for item in violations)
     assert any("demo data" in item for item in violations)
+    assert any("WEB_DEMO_MODE" in item for item in violations)
     assert any("DATABASE_URL" in item for item in violations)
 
     production_ok = contract.validate(
-        {"admin_api_key": "real-secret", "use_demo_data": False, "database_url": "mysql://...", "cors_origins": "https://x"}
+        {"admin_api_key": "real-secret", "use_demo_data": False, "web_demo_mode": False, "database_url": "mysql://...", "cors_origins": "https://x"}
     )
     assert production_ok == []
 
-    # Non-production environments stay permissive.
-    assert EnvironmentContract("local").validate({"admin_api_key": "dev-admin-key", "use_demo_data": True}) == []
+    assert any(
+        "MySQL DATABASE_URL" in item
+        for item in EnvironmentContract("local").validate(
+            {"database_url": "sqlite:///local.db"}
+        )
+    )
+    assert EnvironmentContract("test").validate(
+        {"database_url": "sqlite:///test.db"}
+    ) == []
+
+
+def test_non_test_runtime_requires_mysql() -> None:
+    class RuntimeSettings:
+        environment = "staging"
+        database_url = "sqlite:///staging.db"
+
+    with pytest.raises(RuntimeError, match="SQLite is test-only"):
+        require_mysql_runtime(RuntimeSettings())
+
+    RuntimeSettings.database_url = "mysql+pymysql://user:secret@db/football_ai"
+    require_mysql_runtime(RuntimeSettings())
 
 
 def test_migrations_dry_run_validates_without_committing(tmp_path) -> None:
@@ -208,6 +231,22 @@ def test_sqlite_backup_is_verified_by_restoring(tmp_path) -> None:
     assert missing["status"] == "unavailable"
 
 
+def test_mysql_backup_verification_status_reads_only_verified_marker(tmp_path) -> None:
+    marker = tmp_path / "last-verified.json"
+    assert mysql_backup_verification_status(str(marker))["status"] == "unavailable"
+
+    marker.write_text('{"status":"failed"}', encoding="utf-8")
+    assert mysql_backup_verification_status(str(marker))["status"] == "invalid"
+
+    marker.write_text(
+        '{"status":"verified","database":"football_ai","verified_at":"2026-09-20T00:00:00Z"}',
+        encoding="utf-8",
+    )
+    result = mysql_backup_verification_status(str(marker))
+    assert result["status"] == "verified"
+    assert result["database"] == "football_ai"
+
+
 def test_smoke_checks_report_failures_without_crashing(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "p15.db"))
     repository.initialize()
@@ -219,7 +258,7 @@ def test_smoke_checks_report_failures_without_crashing(tmp_path) -> None:
     )
 
     class Settings:
-        environment = "local"
+        environment = "test"
         admin_api_key = "dev-admin-key"
         use_demo_data = False
         database_url = "sqlite://"

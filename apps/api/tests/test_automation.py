@@ -54,6 +54,17 @@ class PredictionService:
         return {"id": "prediction-1"}
 
 
+class ImpactPredictionService(PredictionService):
+    async def prepare_context(self, fixture: dict, context: dict, **_kwargs) -> None:
+        context["player_impact"] = {
+            "rule_generation": {
+                "status": "ok",
+                "generated_count": 2,
+                "reused_count": 1,
+            }
+        }
+
+
 class BankrollService:
     def __init__(self) -> None:
         self.calls = 0
@@ -392,6 +403,38 @@ async def test_lineup_job_is_registered(tmp_path) -> None:
 
     assert result["status"] == "success"
     assert result["result"]["item_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_player_impact_job_processes_upcoming_fixtures(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "impact-job.db"))
+    repository.initialize()
+    kickoff = datetime.now(UTC) + timedelta(hours=4)
+    fixture = {
+        "id": "fixture-impact-job",
+        "provider_id": 77,
+        "fixture_date": kickoff.date().isoformat(),
+        "kickoff": kickoff.isoformat(),
+        "status": "scheduled",
+        "league_key": "epl",
+        "home_team": {"id": "home", "name": "主队"},
+        "away_team": {"id": "away", "name": "客队"},
+        "evidence": {"lineup": {"confirmed": False}},
+    }
+    repository.replace_fixtures(
+        fixture["fixture_date"],
+        fixture["fixture_date"],
+        [fixture],
+        datetime.now(UTC).isoformat(),
+    )
+    automation = runner(repository, prediction=ImpactPredictionService())
+
+    result = await automation.run_job("player_impact_rules")
+
+    assert result["status"] == "success"
+    assert result["item_count"] == 2
+    assert result["result"]["candidate_count"] == 1
+    assert result["result"]["reused_count"] == 1
 
 
 def squad_fixture_pair(kickoff: datetime, home_squad: list[dict]) -> tuple[dict, dict]:

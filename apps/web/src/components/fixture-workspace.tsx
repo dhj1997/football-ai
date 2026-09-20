@@ -131,7 +131,7 @@ function DateStrip({
     });
   }
   return (
-    <div className="flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="按日期查看赛程">
+    <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto" role="tablist" aria-label="按日期查看赛程">
       {days.map((day) => {
         const activeDay = selected === day.iso;
         return (
@@ -3788,7 +3788,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
             title="比赛研究台"
             description="筛选值得研究的比赛，再核对证据、模型共识与风险。"
             aside={
-              <div className="flex flex-col items-end gap-2">
+              <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-auto sm:items-end">
                 <DateStrip
                   selected={specificDate}
                   onSelect={(iso) => {
@@ -3799,6 +3799,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
                 <Tabs
                   ariaLabel="日期范围"
                   value={dateFilter}
+                  className="w-full justify-start sm:w-auto sm:justify-end"
                   onChange={(value) => {
                     setLoading(true);
                     setSpecificDate(null);
@@ -3953,7 +3954,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
               : "浏览四项赛事的赛程，并查看管理员已发布的赛前概率。"
           }
           aside={
-            <div className="flex flex-col items-end gap-2">
+            <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-auto sm:items-end">
               <DateStrip
                 selected={specificDate}
                 onSelect={(iso) => {
@@ -3965,6 +3966,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
               <Tabs
                 ariaLabel="日期范围"
                 value={dateFilter}
+                className="w-full justify-start sm:w-auto sm:justify-end"
                 onChange={(value) => {
                   setLoading(true);
                   setSuccess(null);

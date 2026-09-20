@@ -121,6 +121,8 @@ class PlayerStatsService:
                 player["statistics"] = dict(row["statistics"])
                 player["statistics_source"] = str(row.get("source") or "espn")
                 player["statistics_season"] = str(season)
+                player["statistics_snapshot_id"] = str(row.get("id") or "") or None
+                player["statistics_synced_at"] = row.get("synced_at")
                 attached += 1
         return {
             "source": "espn",

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .automation import AutomationRunner
-from .backtest_engine import run_backtest_engine
+from .backtest_engine import build_backtest_rows, run_backtest_engine
 from .config import Settings, get_settings
 from .bankroll import BankrollService, DualBankrollService
 from .chatgpt_provider import ChatGptProvider
@@ -68,7 +68,7 @@ from .model_platform import (
 )
 from .model_fitting import fit_from_repository, fitted_record, load_fitted_params
 from .prediction import set_fitted_params_provider
-from .clubeelo_provider import ClubEloProvider, sync_ratings as sync_clubeelo_ratings
+from .clubeelo_provider import ClubEloProvider, refresh_ratings as refresh_clubeelo_ratings
 from .football_data_provider import fetch_season_csv, sync_season
 from .free_llm_provider import FreeLlmChainProvider, probe_chain
 from .match_stats_sync import sync_match_stats
@@ -81,7 +81,12 @@ from .model_registry import ModelRegistry, ModelRegistryError
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
-from .research_engine import filter_settlement_rows_by_source, run_research, validate_hypothesis
+from .research_engine import (
+    filter_settlement_rows_by_source,
+    leakage_audit as audit_research_rows,
+    run_research,
+    validate_hypothesis,
+)
 from .player_identity import public_payload
 from .player_impact import apply_player_impact
 from .player_name_provider import (
@@ -98,14 +103,16 @@ from .portfolio import PortfolioConfig
 from .production import (
     EnvironmentContract,
     _settings_view,
+    mysql_backup_verification_status,
+    require_mysql_runtime,
     run_migrations,
     run_smoke_checks,
-    sqlite_backup_and_verify,
 )
 from .prediction_intelligence import (
     build_feature_snapshot,
     build_feature_snapshot_v2,
     build_performance_profiles,
+    parse_timestamp,
     run_backtest,
     weighted_ensemble,
 )
@@ -236,6 +243,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="足球赛前分析 API", version="0.1.0", lifespan=lifespan)
 settings = get_settings()
+require_mysql_runtime(settings)
 request_metrics = MetricsRegistry(window_size=500)
 # 比赛详情只读派生视图的短缓存：详情 payload 本身语义冻结，
 # 30 秒内重复打开同一比赛直接命中，避免重复全表扫描与重算。
@@ -375,7 +383,10 @@ settlement_service = SettlementService(repository, settings.simulation_competiti
 p5_provider_registry = build_default_provider_registry(provider, schedule_provider, league_provider)
 historical_data_service = HistoricalLeagueDataService(repository, p5_provider_registry)
 set_fitted_params_provider(lambda: load_fitted_params(repository))
-clubeelo_provider = ClubEloProvider()
+clubeelo_provider = ClubEloProvider(
+    timeout_seconds=settings.clubeelo_timeout_seconds,
+    max_retries=settings.clubeelo_max_retries,
+)
 recent_form_service = RecentFormService(repository)
 market_intelligence_service = MarketIntelligenceService(repository)
 model_evaluation_service = ModelEvaluationService(repository)
@@ -1799,6 +1810,26 @@ def fixture_ensemble(fixture_id: str) -> dict:
     )
     if not predictions:
         raise HTTPException(status_code=404, detail="Prediction was not found")
+    rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
+    champion = model_registry_service.champion("ensemble")
+    learned_weights = (champion.payload or {}).get("weights") if champion else None
+    return public_payload(
+        _ensemble_payload(
+            fixture_id,
+            predictions,
+            settlement_rows=rows,
+            learned_weights=learned_weights,
+        )
+    )
+
+
+def _ensemble_payload(
+    fixture_id: str,
+    predictions: list[dict],
+    *,
+    settlement_rows: list[dict],
+    learned_weights: dict | None,
+) -> dict:
     base_predictions = {
         str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek"): item.get("model_probabilities") or item.get("probabilities") or {}
         for item in predictions
@@ -1813,29 +1844,109 @@ def fixture_ensemble(fixture_id: str) -> dict:
     )
     if baseline:
         base_predictions["poisson"] = baseline
-    rows = repository.fixture_settlements(competition_id=settings.simulation_competition_id)
-    champion = model_registry_service.champion("ensemble")
-    learned_weights = (champion.payload or {}).get("weights") if champion else None
     ensemble = weighted_ensemble(
         base_predictions,
         weights=learned_weights,
-        profiles=build_performance_profiles(rows),
+        profiles=build_performance_profiles(settlement_rows),
         league_key=(predictions[0].get("league_key") or "") if predictions else None,
     )
-    return public_payload({
+    directions = {
+        model: max(probabilities, key=probabilities.get)
+        for model, probabilities in (ensemble.get("base_predictions") or {}).items()
+        if probabilities
+    }
+    agreement = (
+        {"status": "insufficient_members", "directions": directions}
+        if len(directions) < 2
+        else {
+            "status": "agree" if len(set(directions.values())) == 1 else "disagree",
+            "directions": directions,
+        }
+    )
+    profile_weighted = any(
+        scope != "baseline" for scope in (ensemble.get("profile_scopes") or {}).values()
+    )
+    return {
         "fixture_id": fixture_id,
         "ensemble": ensemble,
-        "weights_source": "model_registry" if learned_weights else "defaults",
-    })
+        "available_members": sorted((ensemble.get("base_predictions") or {}).keys()),
+        "agreement": agreement,
+        "weights_source": (
+            "model_registry"
+            if learned_weights
+            else "performance_profiles"
+            if profile_weighted
+            else "defaults"
+        ),
+    }
 
 
 @app.get("/api/ensemble")
-def ensemble_summary(fixture_id: str | None = None) -> dict:
-    """Return one requested ensemble or an empty collection for dashboard callers."""
+def ensemble_summary(
+    fixture_id: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict:
+    """Return one requested ensemble or real current fixture summaries."""
 
     if fixture_id:
         return fixture_ensemble(fixture_id)
-    return {"items": [], "count": 0, "is_simulated": True}
+    now = datetime.now(UTC)
+    fixtures = []
+    for fixture in repository.list_fixtures():
+        kickoff = parse_timestamp(fixture.get("kickoff"))
+        if fixture.get("status") != "scheduled" or kickoff is None or kickoff < now:
+            continue
+        fixtures.append(fixture)
+    fixtures.sort(key=lambda item: str(item.get("kickoff") or ""))
+    settlement_rows = repository.fixture_settlements(
+        competition_id=settings.simulation_competition_id
+    )
+    champion = model_registry_service.champion("ensemble")
+    learned_weights = (champion.payload or {}).get("weights") if champion else None
+    items = []
+    for fixture in fixtures:
+        current_id = str(fixture.get("id") or "")
+        predictions = repository.current_predictions_for_fixture(
+            current_id,
+            DEFAULT_PROMPT_CONTRACT.version,
+            settings.simulation_competition_id,
+        )
+        if not predictions:
+            continue
+        summary = _ensemble_payload(
+            current_id,
+            predictions,
+            settlement_rows=settlement_rows,
+            learned_weights=learned_weights,
+        )
+        summary.update(
+            {
+                "kickoff": fixture.get("kickoff"),
+                "league_key": fixture.get("league_key"),
+                "home_team": fixture.get("home_team"),
+                "away_team": fixture.get("away_team"),
+                "prediction_created_at": max(
+                    (str(item.get("created_at") or "") for item in predictions),
+                    default="",
+                ),
+                "readiness_reasons": (
+                    []
+                    if summary["ensemble"].get("status") == "ok"
+                    else ["no_usable_model_probabilities"]
+                ),
+            }
+        )
+        items.append(summary)
+    items.sort(key=lambda item: item["prediction_created_at"], reverse=True)
+    items = items[:limit]
+    return public_payload(
+        {
+            "items": items,
+            "count": len(items),
+            "is_simulated": False,
+            "empty_reason": None if items else "no_eligible_current_predictions",
+        }
+    )
 
 
 @app.get("/api/calibration")
@@ -1926,9 +2037,28 @@ def run_advanced_backtest(payload: dict) -> dict:
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     result.pop("_test_probabilities", None)
+    audit = audit_research_rows(build_backtest_rows(settlements))
+    result["leakage_audit"] = audit
     manifest = result.get("manifest") or {}
+    rejection_reasons = []
+    insufficient_sample = (
+        result.get("status") != "ok"
+        or not result.get("window_count")
+        or not result.get("sample_size")
+    )
+    if insufficient_sample:
+        rejection_reasons.append("insufficient_evaluation_sample")
+    if not audit.get("passed"):
+        rejection_reasons.append("leakage_audit_failed")
     if not manifest:
-        return {"run_id": None, "status": result.get("status"), "reason": result.get("reason"), "result": result}
+        rejection_reasons.append("manifest_unavailable")
+    if rejection_reasons:
+        return {
+            "run_id": None,
+            "status": "insufficient_data" if insufficient_sample else "rejected",
+            "reason_codes": rejection_reasons,
+            "result": result,
+        }
     run_id = f"backtest:{str(manifest['manifest_fingerprint']).removeprefix('manifest:')}"
     existing = next(
         (row for row in repository.backtest_runs(limit=200) if row["run_id"] == run_id),
@@ -2041,6 +2171,14 @@ def persist_round6_probability_backtest(
     """Explicitly persist one content-addressed Round 6 evaluation report."""
 
     report = _round6_probability_report(**payload.model_dump())
+    if report.get("status") != "ok":
+        return {
+            "run_id": None,
+            "reused": False,
+            "status": "insufficient_data",
+            "reason": "Round 6 eligibility gates did not pass",
+            "report": report,
+        }
     run = build_round6_backtest_run(report)
     return _persist_round6_backtest_run(run)
 
@@ -2142,8 +2280,11 @@ async def sync_football_data_season(division: str, season: int) -> dict:
 async def sync_clubeelo() -> dict:
     """Refresh ClubElo ratings (free API, no key)."""
 
-    csv_text = await clubeelo_provider.fetch_on()
-    return sync_clubeelo_ratings(repository, csv_text, localize=to_chinese_team_name)
+    return await refresh_clubeelo_ratings(
+        repository,
+        clubeelo_provider,
+        localize=to_chinese_team_name,
+    )
 
 
 @app.post("/api/admin/discipline/sync", dependencies=[Depends(require_admin)])
@@ -2214,6 +2355,12 @@ def active_fitted_params() -> dict:
 def production_readiness() -> dict:
     """P15 deployment gate: environment contract, migrations, smoke checks."""
 
+    return _production_readiness_payload()
+
+
+def _production_readiness_payload() -> dict:
+    """Build the deployment gate without triggering any durable writes."""
+
     contract = EnvironmentContract(settings.environment)
     violations = contract.validate(_settings_view(settings))
     migration_status = run_migrations(repository, dry_run=True)
@@ -2227,6 +2374,139 @@ def production_readiness() -> dict:
         "status": "ready" if not violations and smoke["status"] == "pass" and migration_status["status"] in {"validated", "not_supported"} else "blocked",
         "checked_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
+
+
+@app.get("/api/admin/activation-status", dependencies=[Depends(require_admin)])
+def activation_status() -> dict:
+    """Compose the read-only activation state for the existing admin surface."""
+
+    now = datetime.now(UTC)
+    readiness = _production_readiness_payload()
+    backup = mysql_backup_verification_status(settings.mysql_backup_verification_file)
+    fixtures = repository.list_fixtures()
+    upcoming = [
+        item
+        for item in fixtures
+        if item.get("status") == "scheduled"
+        and (kickoff := parse_timestamp(item.get("kickoff"))) is not None
+        and kickoff >= now
+    ]
+    upcoming_ids = {str(item.get("id") or "") for item in upcoming}
+    impact_rules = repository.player_impact_rules(status="active")
+    covered_fixture_ids = {
+        str(item.get("fixture_id") or "")
+        for item in impact_rules
+        if str(item.get("fixture_id") or "") in upcoming_ids
+    }
+    coverage_status = (
+        "not_applicable"
+        if not upcoming_ids
+        else "ready"
+        if len(covered_fixture_ids) == len(upcoming_ids)
+        else "partial"
+        if covered_fixture_ids
+        else "pending"
+    )
+
+    sync_runs = repository.data_sync_runs(limit=300)
+    conflicts = repository.fixture_conflicts(limit=200)
+    telemetry = provider_reliability(sync_runs, fixture_conflicts=conflicts)
+    job_runs = repository.job_runs(limit=200)
+    latest_jobs: dict[str, dict] = {}
+    for run in job_runs:
+        latest_jobs.setdefault(str(run.get("job_name") or ""), run)
+
+    def operation_source(key: str, label: str) -> dict:
+        run = latest_jobs.get(key)
+        if run is None:
+            return {"key": key, "label": label, "status": "not_run", "last_run_at": None, "error": None}
+        status = str(run.get("status") or "unknown")
+        return {
+            "key": key,
+            "label": label,
+            "status": "ready" if status == "success" else status,
+            "last_run_at": run.get("finished_at") or run.get("started_at"),
+            "error": run.get("error_summary"),
+        }
+
+    sources = [
+        operation_source("clubeelo", "ClubElo"),
+        operation_source("transfers_backfill", "转会数据"),
+        operation_source("player_stats_backfill", "球员统计"),
+        operation_source("lineup", "阵容数据"),
+        {
+            "key": "player_values",
+            "label": "球员身价",
+            "status": "unavailable",
+            "reason": "provider_required",
+            "last_run_at": None,
+            "error": None,
+        },
+        {
+            "key": "prematch_news",
+            "label": "赛前新闻",
+            "status": "unavailable",
+            "reason": "provider_required",
+            "last_run_at": None,
+            "error": None,
+        },
+    ]
+    ensemble = ensemble_summary(limit=20)
+    backtests = repository.backtest_runs(limit=5)
+    research = repository.research_runs(limit=5)
+    passing_backtests = [item for item in backtests if item.get("status") in {"ok", "completed", "passed"}]
+    passing_research = [item for item in research if item.get("status") == "completed"]
+
+    blockers = list(readiness.get("config_violations") or [])
+    if readiness.get("status") != "ready" and not blockers:
+        blockers.append("production_readiness_failed")
+    if readiness.get("is_production") and backup.get("status") != "verified":
+        blockers.append("mysql_backup_restore_not_verified")
+    attention = []
+    if coverage_status in {"pending", "partial"}:
+        attention.append("player_impact_coverage_incomplete")
+    if not ensemble.get("items"):
+        attention.append("ensemble_predictions_unavailable")
+    if not passing_backtests:
+        attention.append("backtest_run_unavailable")
+    if not passing_research:
+        attention.append("research_run_unavailable")
+    if any(item.get("status") in {"failed", "partial", "not_run"} for item in sources[:4]):
+        attention.append("provider_operations_need_attention")
+
+    return public_payload(
+        {
+            "status": "blocked" if blockers else "attention" if attention else "ready",
+            "checked_at": now.replace(microsecond=0).isoformat(),
+            "blocking_reasons": blockers,
+            "attention_reasons": attention,
+            "database": {
+                "backend": repository.engine.dialect.name,
+                "status": "ready" if repository.engine.dialect.name == "mysql" else "test_only",
+                "migration": readiness["migration_dry_run"],
+                "backup": backup,
+                "service_readiness": readiness,
+            },
+            "player_impact": {
+                "status": coverage_status,
+                "active_rule_count": len(impact_rules),
+                "upcoming_fixture_count": len(upcoming_ids),
+                "covered_fixture_count": len(covered_fixture_ids),
+            },
+            "providers": {"sources": sources, "telemetry": telemetry},
+            "ensemble": {
+                "status": "ready" if ensemble.get("items") else "pending",
+                "count": int(ensemble.get("count") or 0),
+                "empty_reason": ensemble.get("empty_reason"),
+                "items": ensemble.get("items") or [],
+            },
+            "evaluation": {
+                "status": "ready" if passing_backtests and passing_research else "pending",
+                "backtests": {"passing_count": len(passing_backtests), "recent": backtests},
+                "research": {"passing_count": len(passing_research), "recent": research},
+            },
+        }
+    )
 
 
 @app.post("/api/admin/production/migrations/dry-run", dependencies=[Depends(require_admin)])
@@ -2245,13 +2525,9 @@ def migration_apply() -> dict:
 
 @app.post("/api/admin/production/backup", dependencies=[Depends(require_admin)])
 def production_backup() -> dict:
-    """Back up the SQLite database and verify the backup restores."""
+    """Report the latest server-side MySQL restore verification."""
 
-    database_url = str(settings.database_url or "")
-    if not database_url.startswith("sqlite:///"):
-        return {"status": "not_supported", "reason": "automated backup verification currently supports SQLite only"}
-    database_path = database_url.removeprefix("sqlite:///").removeprefix("sqlite:///")
-    return sqlite_backup_and_verify(database_path)
+    return mysql_backup_verification_status(settings.mysql_backup_verification_file)
 
 
 @app.post("/api/admin/production/smoke", dependencies=[Depends(require_admin)])

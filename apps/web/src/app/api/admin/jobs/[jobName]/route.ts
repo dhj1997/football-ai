@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 export async function POST(_: NextRequest, { params }: { params: Promise<{ jobName: string }> }) {
   const { jobName } = await params;
@@ -9,16 +10,17 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ jobNa
       method: "POST",
       headers: { "x-admin-key": adminKey },
       cache: "no-store",
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(210_000),
     });
-    if (response.ok) {
-      return NextResponse.json(await response.json(), { status: response.status });
+    return forwardUpstream(response);
+  } catch (error) {
+    if (!webDemoModeEnabled()) {
+      return gatewayError(error, `/api/admin/jobs/${jobName}/run`);
     }
-  } catch {
-    // Fallback
   }
   return NextResponse.json({
     status: "ok",
+    mode: "demo",
     job: jobName,
     message: `任务 ${jobName} 触发成功（演练模式）`,
     triggered_at: new Date().toISOString(),

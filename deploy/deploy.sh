@@ -13,7 +13,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 PKG="football-ai-deploy-${STAMP}.tar.gz"
 
 cd "$(dirname "$0")/.."
-echo "[1/6] 打包本地代码（排除 .venv / node_modules / .next / .env / 数据库）"
+echo "[1/7] 打包本地代码（排除 .venv / node_modules / .next / .env / 数据库）"
 tar -czf "/tmp/${PKG}" \
   --exclude='.git' --exclude='.venv' --exclude='node_modules' --exclude='.next' \
   --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' --exclude='.tmp' --exclude='.pytest_tmp' --exclude='.pytest_cache' --exclude='__pycache__' \
@@ -22,11 +22,20 @@ tar -czf "/tmp/${PKG}" \
       --exclude='.env' --exclude='*.db' --exclude='.planning' --exclude='dist' --exclude='.tmp' --exclude='.pytest_tmp' --exclude='.pytest_cache' --exclude='__pycache__' \
       apps deploy AGENTS.md README.md package.json
 
-echo "[2/6] 上传到服务器"
+echo "[2/7] 上传到服务器"
 # MSYS_NO_PATHCONV=1 阻止 Git Bash 把远端 /tmp 路径改写成 Windows 路径；本地路径需显式转成 Windows 格式
 MSYS_NO_PATHCONV=1 "$WB" upload "$(cygpath -w "/tmp/${PKG}")" "/tmp/${PKG}" -f -i "$INSTANCE_ID" -r "$REGION"
 
-echo "[3/6] 服务器端：备份当前版本并解压覆盖"
+echo "[3/7] 服务器端：MySQL 备份与恢复验证"
+"$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 600 -c "
+set -e
+tar -xOf /tmp/${PKG} deploy/backup-verify.sh > /tmp/football-ai-backup-verify.sh
+chmod 700 /tmp/football-ai-backup-verify.sh
+bash /tmp/football-ai-backup-verify.sh backup
+rm -f /tmp/football-ai-backup-verify.sh
+"
+
+echo "[4/7] 服务器端：备份当前版本并解压覆盖"
 "$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 120 -c "
 set -e
 mkdir -p /opt/football-ai/backups
@@ -38,7 +47,7 @@ rm -f /tmp/${PKG}
 echo extracted
 "
 
-echo "[4/6] 服务器端：安装后端依赖 + 构建前端"
+echo "[5/7] 服务器端：安装后端依赖 + 构建前端"
 "$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 600 -c "
 set -e
 # 服务器 venv 无 pip（依赖由其他方式安装）；依赖未变时跳过是安全的，pyproject 变更后需手动补装
@@ -51,14 +60,14 @@ sudo -u football-ai env PATH=\$PATH pnpm install --prefer-offline --registry=htt
 sudo -u football-ai env PATH=\$PATH pnpm build
 "
 
-echo "[5/6] 重启服务"
+echo "[6/7] 重启服务"
 "$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 120 -c "
 systemctl restart football-ai-api football-ai-web
 sleep 6
 systemctl --no-pager --lines=3 status football-ai-api football-ai-web | head -30
 "
 
-echo "[6/6] 健康检查"
+echo "[7/7] 健康检查"
 "$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 60 -c "
 curl -fsS http://127.0.0.1:8000/health | head -c 200; echo
 curl -fsS -o /dev/null -w 'web:%{http_code}\n' http://127.0.0.1:3200/

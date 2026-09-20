@@ -39,9 +39,11 @@ class Settings(BaseSettings):
     chatgpt_fallback_model: str = "gpt-5.4-mini"
     simulation_competition_id: str = "dual-model-v1"
     admin_api_key: str = "dev-admin-key"
-    database_url: str = "sqlite:///./football_ai.db"
+    database_url: str = ""
+    mysql_backup_verification_file: str = "/opt/football-ai/backups/last-verified.json"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     use_demo_data: bool = False
+    web_demo_mode: bool = False
     schedule_provider: str = "thesportsdb"
     thesportsdb_api_key: str = "123"
     thesportsdb_base_url: str = "https://www.thesportsdb.com/api/v1/json"
@@ -95,6 +97,8 @@ class Settings(BaseSettings):
     match_stats_backfill_limit: int = 25
     automation_player_stats_interval_minutes: int = 1440
     player_stats_backfill_limit: int = 8
+    automation_player_impact_interval_minutes: int = 60
+    player_impact_backfill_limit: int = 32
     automation_discipline_interval_minutes: int = 60
     discipline_backfill_limit: int = 25
     automation_transfers_interval_minutes: int = 1440
@@ -104,6 +108,8 @@ class Settings(BaseSettings):
     weather_backfill_limit: int = 30
     weather_stale_hours: int = 6
     automation_clubeelo_interval_minutes: int = 1440
+    clubeelo_timeout_seconds: float = 15.0
+    clubeelo_max_retries: int = 1
     automation_squad_backfill_interval_minutes: int = 60
     squad_backfill_limit: int = 12
     automation_failure_backoff_minutes: int = 15

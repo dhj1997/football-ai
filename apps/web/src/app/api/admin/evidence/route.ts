@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 export async function POST(request: NextRequest) {
   const { fixtureId } = (await request.json()) as { fixtureId?: string };
@@ -15,15 +16,15 @@ export async function POST(request: NextRequest) {
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
-    if (response.ok) {
-      const payload = await response.json();
-      return NextResponse.json(payload, { status: response.status });
+    return forwardUpstream(response);
+  } catch (error) {
+    if (!webDemoModeEnabled()) {
+      return gatewayError(error, `/api/admin/fixtures/${fixtureId}/evidence`);
     }
-  } catch {
-    // Fallback
   }
   return NextResponse.json({
     status: "ok",
+    mode: "demo",
     message: "情报数据刷新成功（演练模式）",
     fixture_id: fixtureId,
     updated_at: new Date().toISOString(),

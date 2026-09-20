@@ -370,6 +370,46 @@ def test_player_impact_requires_cutoff_safe_database_rule(tmp_path) -> None:
     assert "供应商英文名" not in str(snapshot)
 
 
+def test_player_impact_uses_latest_rule_for_same_fixture_and_player(tmp_path) -> None:
+    repo = repository(tmp_path)
+    fixture = target_fixture()
+    for suffix, available_at, value in (
+        ("old", "2026-09-16T10:00:00+00:00", -0.08),
+        ("new", "2026-09-16T11:00:00+00:00", -0.14),
+    ):
+        repo.save_player_impact_rule(
+            {
+                "id": f"rule-striker-{suffix}",
+                "fixture_id": fixture["id"],
+                "player_id": "player-9",
+                "role": "attack",
+                "impact_type": "absence",
+                "impact_value": value,
+                "confidence": 0.9,
+                "source": "player-stats+availability",
+                "available_at": available_at,
+                "rule_version": "player-impact-rule-v1",
+                "status": "active",
+                "created_at": available_at,
+                "deprecated_at": None,
+            }
+        )
+    evidence = {
+        "availability": {
+            "players": [{"team": "home", "canonical_player_id": "player-9", "name": "供应商英文名"}],
+            "updated_at": "2026-09-16T11:00:00+00:00",
+        }
+    }
+
+    snapshot = engine_with(repo, []).calculate_snapshot(
+        fixture, evidence, "2026-09-16T12:00:00+00:00"
+    )
+
+    row = feature_row(snapshot, "player_impact")
+    assert row["feature_value"] == -0.14
+    assert row["source_record_ids"] == ["rule-striker-new"]
+
+
 def test_no_ml_guard_rejects_learned_and_nested_llm_numeric_paths() -> None:
     with pytest.raises(NoMLNumericPathError, match="learned"):
         assert_v2_numeric_path_allowed({"engine": "learned-ensemble", "weights": {"a": 1.0}})

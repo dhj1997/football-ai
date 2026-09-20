@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-Delegated through the approved design: Next.js and TypeScript for the web application, Python and FastAPI for the API and model runtime, PostgreSQL in production, and SQLite as the zero-setup local development database.
+Delegated through the approved design: Next.js and TypeScript for the web application, Python and FastAPI for the API and model runtime, MySQL for every non-test runtime, and SQLite only for isolated automated tests.
 
 ## Users
 

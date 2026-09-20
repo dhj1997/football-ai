@@ -346,6 +346,56 @@ def test_p3_intelligence_endpoints_return_read_only_contracts() -> None:
     assert client.get("/api/backtest/runs/missing-run").status_code == 404
 
 
+def test_global_ensemble_returns_real_current_fixture_summaries(monkeypatch) -> None:
+    kickoff = (datetime.now(UTC) + timedelta(hours=6)).isoformat()
+
+    class EnsembleRepository:
+        def list_fixtures(self):
+            return [
+                {
+                    "id": "ensemble-current",
+                    "status": "scheduled",
+                    "kickoff": kickoff,
+                    "league_key": "epl",
+                    "home_team": {"name": "阿森纳"},
+                    "away_team": {"name": "切尔西"},
+                }
+            ]
+
+        def fixture_settlements(self, competition_id=None):
+            return []
+
+        def current_predictions_for_fixture(self, fixture_id, *_args):
+            assert fixture_id == "ensemble-current"
+            return [
+                {
+                    "model_key": "deepseek",
+                    "league_key": "epl",
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "model_probabilities": {"home": 0.5, "draw": 0.3, "away": 0.2},
+                    "baseline": {"probabilities": {"home": 0.45, "draw": 0.3, "away": 0.25}},
+                }
+            ]
+
+    class EnsembleRegistry:
+        def champion(self, _model_key):
+            return None
+
+    monkeypatch.setattr(main_module, "repository", EnsembleRepository())
+    monkeypatch.setattr(main_module, "model_registry_service", EnsembleRegistry())
+
+    response = client.get("/api/ensemble")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["is_simulated"] is False
+    assert payload["items"][0]["fixture_id"] == "ensemble-current"
+    assert payload["items"][0]["available_members"] == ["deepseek", "poisson"]
+    assert payload["items"][0]["weights_source"] == "defaults"
+    assert payload["empty_reason"] is None
+
+
 def test_round6_probability_backtest_rejects_non_strict_filters(monkeypatch) -> None:
     headers = {"x-admin-key": "dev-admin-key"}
     received_filters = []
@@ -461,13 +511,13 @@ def test_round6_backtest_persistence_rejects_collisions_and_reuses_races(
         "run_id": "round6:stable",
         "name": "round6-temporal-probability-evaluation",
         "started_at": "2026-09-17T00:00:00+00:00",
-        "status": "insufficient_data",
+        "status": "ok",
         "payload": {"backtest_version": "round6-v1"},
     }
     monkeypatch.setattr(
         main_module,
         "_round6_probability_report",
-        lambda **_filters: {"status": "insufficient_data"},
+        lambda **_filters: {"status": "ok"},
     )
     monkeypatch.setattr(
         main_module,
@@ -477,7 +527,7 @@ def test_round6_backtest_persistence_rejects_collisions_and_reuses_races(
 
     class ConflictingRepository:
         def backtest_run(self, _run_id):
-            return {**deepcopy(run), "status": "ok"}
+            return {**deepcopy(run), "status": "completed"}
 
         def save_backtest_run(self, _run):
             raise AssertionError("conflicting run must not be saved")
@@ -506,6 +556,29 @@ def test_round6_backtest_persistence_rejects_collisions_and_reuses_races(
     assert raced.status_code == 200
     assert raced.json()["reused"] is True
     assert raced.json()["run"] == run
+
+
+def test_round6_insufficient_report_is_not_persisted(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "_round6_probability_report",
+        lambda **_filters: {"status": "insufficient_data", "eligible": 0},
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_round6_backtest_run",
+        lambda _report: (_ for _ in ()).throw(AssertionError("ineligible report must not build a run")),
+    )
+
+    response = client.post(
+        "/api/admin/backtest/probability",
+        headers={"x-admin-key": "dev-admin-key"},
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] is None
+    assert response.json()["status"] == "insufficient_data"
 
 
 def test_p5_data_registry_and_history_endpoints_are_read_only() -> None:

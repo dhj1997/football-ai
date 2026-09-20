@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 export async function POST(request: NextRequest) {
   let fixtureId: string | undefined;
@@ -20,17 +21,15 @@ export async function POST(request: NextRequest) {
       cache: "no-store",
       signal: AbortSignal.timeout(210_000),
     });
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("application/json")) {
-      return NextResponse.json({ detail: "预测服务暂时不可用，请稍后重试" }, { status: 502 });
+    return forwardUpstream(response);
+  } catch (error) {
+    if (!webDemoModeEnabled()) {
+      return gatewayError(error, `/api/admin/fixtures/${fixtureId}/predictions`);
     }
-    const payload = await response.json();
-    return NextResponse.json(payload, { status: response.status });
-  } catch {
-    // If backend is offline, return demo prediction completion
   }
   return NextResponse.json({
     status: "ok",
+    mode: "demo",
     message: "预测生成完成（演练模式）",
     fixture_id: fixtureId,
     created_at: new Date().toISOString(),

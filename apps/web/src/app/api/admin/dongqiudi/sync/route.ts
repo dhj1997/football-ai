@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 export async function POST() {
   const apiBase = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -10,14 +11,13 @@ export async function POST() {
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
-    if (response.ok) {
-      return NextResponse.json(await response.json(), { status: response.status });
-    }
-  } catch {
-    // Fallback
+    return forwardUpstream(response);
+  } catch (error) {
+    if (!webDemoModeEnabled()) return gatewayError(error, "/api/admin/dongqiudi/sync");
   }
   return NextResponse.json({
     status: "ok",
+    mode: "demo",
     message: "懂球帝数据同步完成（演练模式）",
     synced_at: new Date().toISOString(),
   });

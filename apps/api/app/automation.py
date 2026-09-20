@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable
 
@@ -78,6 +79,11 @@ class AutomationRunner:
             "analysis": (settings.automation_analysis_interval_minutes, self._analyze_upcoming),
             "settlement": (settings.automation_settlement_interval_minutes, self._settle_finished),
         }
+        if callable(getattr(prediction_service, "prepare_context", None)):
+            self._jobs["player_impact_rules"] = (
+                max(30, int(getattr(settings, "automation_player_impact_interval_minutes", 60))),
+                self._generate_player_impact_rules,
+            )
         if historical_accumulation_service is not None:
             self._jobs["historical_accumulation"] = (
                 max(1, int(getattr(settings, "automation_historical_accumulation_interval_minutes", 1440))),
@@ -336,6 +342,9 @@ class AutomationRunner:
                 merged["automation_refresh"] = refresh_state
                 updated = self.repository.save_fixture_evidence(fixture["id"], merged)
                 fixture = updated or fixture
+                prepare_context = getattr(self.prediction_service, "prepare_context", None)
+                if callable(prepare_context):
+                    await prepare_context(fixture, merged, prediction_timestamp=datetime.now(UTC))
                 counts["synced_count"] += 1
                 if (merged.get("lineup") or {}).get("confirmed"):
                     counts["confirmed_count"] += 1
@@ -438,7 +447,45 @@ class AutomationRunner:
         from .player_stats import sync_player_stats
 
         limit = max(1, int(getattr(self.settings, "player_stats_backfill_limit", 8)))
-        return await sync_player_stats(self.repository, self.espn_team_service, limit=limit)
+        result = await sync_player_stats(self.repository, self.espn_team_service, limit=limit)
+        if int(result.get("item_count") or 0) > 0:
+            result["player_impact"] = await self._generate_player_impact_rules()
+        return result
+
+    async def _generate_player_impact_rules(self) -> dict[str, Any]:
+        """Generate rules for a bounded set of upcoming stored fixtures."""
+
+        now = datetime.now(UTC)
+        limit = max(1, int(getattr(self.settings, "player_impact_backfill_limit", 32)))
+        prepare_context = getattr(self.prediction_service, "prepare_context", None)
+        if not callable(prepare_context):
+            return {"status": "unavailable", "item_count": 0, "reason": "prediction context preparation unavailable"}
+        generated = 0
+        reused = 0
+        insufficient = 0
+        errors: list[str] = []
+        candidates = self._future_scheduled_fixtures(now)[:limit]
+        for fixture in candidates:
+            context = deepcopy(fixture.get("evidence") or unavailable_context())
+            try:
+                await prepare_context(fixture, context, prediction_timestamp=now)
+                report = (context.get("player_impact") or {}).get("rule_generation") or {}
+                generated += int(report.get("generated_count") or 0)
+                reused += int(report.get("reused_count") or 0)
+                if report.get("status") == "insufficient_data":
+                    insufficient += 1
+            except Exception as error:
+                errors.append(f"{fixture.get('id')}: {_bounded_error(error)}")
+        return {
+            "status": "completed" if not errors else "partial",
+            "candidate_count": len(candidates),
+            "generated_count": generated,
+            "reused_count": reused,
+            "insufficient_count": insufficient,
+            "failed": len(errors),
+            "errors": errors[:20],
+            "item_count": generated,
+        }
 
     async def _refresh_weather(self) -> dict[str, Any]:
         """Refresh kickoff forecasts for upcoming fixtures (Open-Meteo)."""
@@ -476,11 +523,14 @@ class AutomationRunner:
         return await sync_transfers(self.repository, self.api_football_service, limit=limit)
 
     async def _sync_clubeelo(self) -> dict[str, Any]:
-        from .clubeelo_provider import sync_ratings
+        from .clubeelo_provider import refresh_ratings
         from .team_names import to_chinese_team_name
 
-        csv_text = await self.clubeelo_service.fetch_on()
-        return sync_ratings(self.repository, csv_text, localize=to_chinese_team_name)
+        return await refresh_ratings(
+            self.repository,
+            self.clubeelo_service,
+            localize=to_chinese_team_name,
+        )
 
     async def _backfill_squads(self) -> dict[str, Any]:
         """Fill squad rosters for fixtures whose dongqiudi twin lacks one.

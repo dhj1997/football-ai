@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 export async function POST(_: NextRequest, { params }: { params: Promise<{ fixtureId: string }> }) {
   const { fixtureId } = await params;
@@ -11,14 +12,15 @@ export async function POST(_: NextRequest, { params }: { params: Promise<{ fixtu
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
-    if (response.ok) {
-      return NextResponse.json(await response.json(), { status: response.status });
+    return forwardUpstream(response);
+  } catch (error) {
+    if (!webDemoModeEnabled()) {
+      return gatewayError(error, `/api/admin/fixtures/${fixtureId}/dongqiudi-sync`);
     }
-  } catch {
-    // Fallback
   }
   return NextResponse.json({
     status: "ok",
+    mode: "demo",
     message: "比赛懂球帝数据同步完成（演练模式）",
     fixture_id: fixtureId,
     synced_at: new Date().toISOString(),

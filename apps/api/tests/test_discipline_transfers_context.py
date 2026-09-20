@@ -8,7 +8,7 @@ from app.discipline_sync import (
     sync_discipline,
 )
 from app.prediction_service import _attach_match_context
-from app.team_names import to_chinese_team_name
+from app.team_names import to_chinese_player_name, to_chinese_team_name
 from app.transfers_sync import attach_transfers, sync_transfers
 
 
@@ -183,8 +183,8 @@ def test_attach_transfers_filters_by_recent_window() -> None:
     attach_transfers(repository, fixture, context, now=_dt("2026-09-19T12:00:00+00:00"))
 
     home = context["transfers"]["home"]
-    assert home["transfers_in"] == ["New Guy（2026-09-01，自 Old FC）"]
-    assert home["transfers_out"] == ["Leaver（2026-08-20，至 Rivals）"]
+    assert home["transfers_in"] == [f"{to_chinese_player_name('New Guy')}（2026-09-01，自 Old FC）"]
+    assert home["transfers_out"] == [f"{to_chinese_player_name('Leaver')}（2026-08-20，至 Rivals）"]
     assert context["transfers"]["away"] is None
 
 
@@ -194,6 +194,8 @@ async def test_transfers_sync_uses_evidence_team_ids_and_staleness() -> None:
         {
             "id": "f1",
             "league_key": "epl",
+            "status": "scheduled",
+            "kickoff": "2026-09-21T12:00:00+00:00",
             "evidence": {"team_ids": {"home": 42, "away": 43}},
         }
     ]
@@ -208,12 +210,87 @@ async def test_transfers_sync_uses_evidence_team_ids_and_staleness() -> None:
     repository.team_transfers_row = lambda team_id, season: None
     provider = StubTransfersProvider(results={"42": [{"player": "New Guy", "date": "2026-09-01", "type": "N", "in_team": "Hotspur", "in_team_id": 42, "out_team": "Old", "out_team_id": 9}]})
 
-    result = await sync_transfers(repository, provider, leagues=("epl",), limit=5)
+    result = await sync_transfers(
+        repository,
+        provider,
+        leagues=("epl",),
+        limit=5,
+        now=_dt("2026-09-20T12:00:00+00:00"),
+    )
 
     assert result["teams_fetched"] == 2
     assert result["records_saved"] == 1
-    assert saved["42"][0]["player"] == "New Guy"
+    assert saved["42"][0]["player"] == to_chinese_player_name("New Guy")
     assert saved["43"] == []
+
+
+@pytest.mark.asyncio
+async def test_transfers_sync_bounds_failed_attempts_and_reports_missing_ids() -> None:
+    fixture_rows = [
+        {
+            "id": "f1",
+            "league_key": "epl",
+            "status": "scheduled",
+            "kickoff": "2026-09-21T12:00:00+00:00",
+            "evidence": {"team_ids": {"home": 41, "away": 42}},
+        },
+        {
+            "id": "f2",
+            "league_key": "epl",
+            "status": "scheduled",
+            "kickoff": "2026-09-22T12:00:00+00:00",
+            "evidence": {"team_ids": {"home": 43}},
+        },
+    ]
+    repository = StubRepository(fixture_rows)
+    repository.team_transfers_row = lambda *_args: None
+    calls: list[str] = []
+
+    class FailingProvider:
+        async def team_transfers(self, team_id):
+            calls.append(str(team_id))
+            raise RuntimeError("quota unavailable")
+
+    result = await sync_transfers(
+        repository,
+        FailingProvider(),
+        leagues=("epl",),
+        limit=2,
+        now=_dt("2026-09-20T12:00:00+00:00"),
+    )
+
+    assert result["status"] == "failed"
+    assert result["teams_attempted"] == 2
+    assert result["failed"] == 2
+    assert result["provider_id_missing"] == 1
+    assert calls == ["41", "42"]
+
+
+@pytest.mark.asyncio
+async def test_transfers_sync_reports_zero_targets_without_calling_provider() -> None:
+    repository = StubRepository(
+        [
+            {
+                "id": "past",
+                "league_key": "epl",
+                "status": "finished",
+                "kickoff": "2026-09-19T12:00:00+00:00",
+                "evidence": {"team_ids": {"home": 1, "away": 2}},
+            }
+        ]
+    )
+    provider = StubTransfersProvider(results={})
+
+    result = await sync_transfers(
+        repository,
+        provider,
+        leagues=("epl",),
+        now=_dt("2026-09-20T12:00:00+00:00"),
+    )
+
+    assert result["status"] == "zero_targets"
+    assert result["teams_targeted"] == 0
+    assert provider.calls == []
 
 
 def test_attach_match_context_marks_cups_and_round() -> None:
