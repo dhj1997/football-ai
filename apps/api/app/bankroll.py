@@ -580,7 +580,7 @@ class BankrollService:
             "settled_count": len(settled),
             "open_count": len(open_bets),
             "max_drawdown": betting_drawdown,
-            "equity_curve": _equity_curve(settled, transactions),
+            "equity_curve": _equity_curve(settled, transactions, self.initial_bankroll),
             "is_simulated": True,
             "model_key": self.model_key,
             "competition_id": self.competition_id,

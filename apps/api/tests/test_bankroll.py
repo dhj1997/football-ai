@@ -114,6 +114,7 @@ def test_automation_fixed_stake_places_one_hundred(tmp_path) -> None:
     assert placed["stake"] == 100.0
     assert repository.current_balance() == 4900.0
     assert service.summary()["initial_balance"] == 5000.0
+    assert service.summary()["equity_curve"][0]["balance"] == 5000.0
 
 
 def test_legacy_two_percent_bet_is_refunded_and_resized(tmp_path) -> None:

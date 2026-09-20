@@ -12,6 +12,8 @@ from .data_quality_engine import record_fixture_conflicts
 
 # 临近开球窗口内 prematch 富化（赔率/让球价/分析）的重刷节流。
 PREMATCH_REFRESH_MINUTES = 15
+SCORE_RECOVERY_LOOKBACK_DAYS = 30
+SCORE_RECOVERY_LIMIT = 20
 from .dongqiudi_provider import DongqiudiProvider
 from .team_names import to_chinese_player_name, to_chinese_team_name
 
@@ -85,17 +87,31 @@ class DongqiudiSyncService:
             start = now.astimezone(CHINA_TZ).date() - timedelta(days=1)
             end = (now + timedelta(hours=self.lookahead_hours)).astimezone(CHINA_TZ).date()
             rows = await self.provider.fixtures(start, end)
-            existing = [
+            fixtures = self.repository.list_fixtures()
+            in_window = [
                 fixture
-                for fixture in self.repository.list_fixtures()
+                for fixture in fixtures
                 if self._source_match_id(fixture)
                 and start.isoformat() <= str(fixture.get("fixture_date") or "") <= end.isoformat()
             ]
+            recovery_start = now - timedelta(days=SCORE_RECOVERY_LOOKBACK_DAYS)
+            recovery = sorted(
+                (
+                    fixture
+                    for fixture in fixtures
+                    if self._source_match_id(fixture)
+                    and fixture.get("status") == "scheduled"
+                    and (kickoff := _as_utc(fixture.get("kickoff"))) is not None
+                    and recovery_start <= kickoff < now
+                ),
+                key=lambda fixture: (_as_utc(fixture.get("kickoff")), str(fixture.get("id") or "")),
+            )[:SCORE_RECOVERY_LIMIT]
             existing_by_match = {
                 self._source_match_id(fixture): fixture
-                for fixture in existing
+                for fixture in [*in_window, *recovery]
                 if self._source_match_id(fixture)
             }
+            existing = list(existing_by_match.values())
             results_by_match = {
                 str(row.get("external_ids", {}).get("dongqiudi")): row
                 for row in rows
@@ -145,6 +161,7 @@ class DongqiudiSyncService:
                 "source_count": len(rows),
                 "matched_count": matched_count,
                 "updated_count": updated_count,
+                "recovery_count": len(recovery),
                 "item_count": updated_count,
                 "last_synced_at": synced_at,
                 "from": start.isoformat(),

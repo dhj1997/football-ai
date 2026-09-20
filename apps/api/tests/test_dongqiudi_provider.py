@@ -304,6 +304,197 @@ async def test_dongqiudi_score_sync_updates_existing_fixture_only() -> None:
     assert repository.fixture["predictions"] == [{"id": "prediction-1"}]
 
 
+@pytest.mark.asyncio
+async def test_dongqiudi_score_sync_recovers_twenty_oldest_overdue_fixtures() -> None:
+    now = datetime.now(UTC)
+    fixtures = []
+    expected_match_ids = set()
+    for days_ago in range(2, 23):
+        kickoff = now - timedelta(days=days_ago)
+        match_id = str(900000 + days_ago)
+        fixtures.append(
+            {
+                "id": f"sportsdb-recovery-{days_ago}",
+                "external_ids": {"dongqiudi": match_id},
+                "fixture_date": kickoff.astimezone(CHINA_TZ).date().isoformat(),
+                "kickoff": kickoff.isoformat(),
+                "status": "scheduled",
+                "score": None,
+            }
+        )
+        if days_ago >= 3:
+            expected_match_ids.add(match_id)
+    too_old = now - timedelta(days=31)
+    fixtures.extend(
+        [
+            {
+                "id": "sportsdb-too-old",
+                "external_ids": {"dongqiudi": "800001"},
+                "fixture_date": too_old.astimezone(CHINA_TZ).date().isoformat(),
+                "kickoff": too_old.isoformat(),
+                "status": "scheduled",
+                "score": None,
+            },
+            {
+                "id": "sportsdb-future",
+                "external_ids": {"dongqiudi": "800002"},
+                "fixture_date": (now + timedelta(days=5)).astimezone(CHINA_TZ).date().isoformat(),
+                "kickoff": (now + timedelta(days=5)).isoformat(),
+                "status": "scheduled",
+                "score": None,
+            },
+            {
+                "id": "sportsdb-no-dongqiudi-id",
+                "external_ids": {},
+                "fixture_date": (now - timedelta(days=10)).astimezone(CHINA_TZ).date().isoformat(),
+                "kickoff": (now - timedelta(days=10)).isoformat(),
+                "status": "scheduled",
+                "score": None,
+            },
+        ]
+    )
+
+    class Provider:
+        configured = True
+
+        def __init__(self):
+            self.calls = []
+
+        async def fixtures(self, start_date, end_date):
+            return []
+
+        async def match_result(self, match_id):
+            self.calls.append(match_id)
+            return {
+                "match_id": match_id,
+                "status": "finished",
+                "provider_status": "Played",
+                "score": {"home": 3, "away": 1},
+            }
+
+    class Repository:
+        def __init__(self):
+            self.updates = []
+
+        def list_fixtures(self, league_key=None):
+            return fixtures
+
+        def upsert_fixture(self, fixture, synced_at=None):
+            self.updates.append(fixture)
+
+    provider = Provider()
+    repository = Repository()
+
+    result = await DongqiudiSyncService(provider, repository).sync_scores()
+
+    assert set(provider.calls) == expected_match_ids
+    assert len(provider.calls) == 20
+    assert result["updated_count"] == 20
+    assert len(repository.updates) == 20
+
+
+@pytest.mark.asyncio
+async def test_dongqiudi_score_sync_queries_shared_match_id_once() -> None:
+    now = datetime.now(UTC)
+    fixture_date = now.astimezone(CHINA_TZ).date().isoformat()
+    kickoff = (now - timedelta(hours=1)).isoformat()
+    fixtures = [
+        {
+            "id": "dongqiudi-54577422",
+            "source": "dongqiudi",
+            "external_ids": {"dongqiudi": "54577422"},
+            "fixture_date": fixture_date,
+            "kickoff": kickoff,
+            "status": "scheduled",
+            "score": None,
+        },
+        {
+            "id": "sportsdb-2594578",
+            "external_ids": {"dongqiudi": "54577422"},
+            "fixture_date": fixture_date,
+            "kickoff": kickoff,
+            "status": "scheduled",
+            "score": None,
+        },
+    ]
+
+    class Provider:
+        configured = True
+
+        def __init__(self):
+            self.calls = []
+
+        async def fixtures(self, start_date, end_date):
+            return []
+
+        async def match_result(self, match_id):
+            self.calls.append(match_id)
+            return {
+                "match_id": match_id,
+                "status": "finished",
+                "provider_status": "Played",
+                "score": {"home": 3, "away": 1},
+            }
+
+    class Repository:
+        def __init__(self):
+            self.updates = []
+
+        def list_fixtures(self, league_key=None):
+            return fixtures
+
+        def upsert_fixture(self, fixture, synced_at=None):
+            self.updates.append(fixture)
+
+    provider = Provider()
+    repository = Repository()
+
+    await DongqiudiSyncService(provider, repository).sync_scores()
+
+    assert provider.calls == ["54577422"]
+    assert repository.updates[0]["id"] == "sportsdb-2594578"
+
+
+@pytest.mark.asyncio
+async def test_dongqiudi_score_sync_preserves_overdue_fixture_on_detail_failure() -> None:
+    now = datetime.now(UTC)
+    fixture = {
+        "id": "sportsdb-detail-error",
+        "external_ids": {"dongqiudi": "54570000"},
+        "fixture_date": (now - timedelta(days=10)).astimezone(CHINA_TZ).date().isoformat(),
+        "kickoff": (now - timedelta(days=10)).isoformat(),
+        "status": "scheduled",
+        "score": None,
+    }
+
+    class Provider:
+        configured = True
+
+        async def fixtures(self, start_date, end_date):
+            return []
+
+        async def match_result(self, match_id):
+            raise RuntimeError("detail unavailable")
+
+    class Repository:
+        def __init__(self):
+            self.updates = []
+
+        def list_fixtures(self, league_key=None):
+            return [fixture]
+
+        def upsert_fixture(self, fixture, synced_at=None):
+            self.updates.append(fixture)
+
+    repository = Repository()
+
+    result = await DongqiudiSyncService(Provider(), repository).sync_scores()
+
+    assert result["updated_count"] == 0
+    assert result["errors"] == ["sportsdb-detail-error: detail unavailable"]
+    assert repository.updates == []
+
+
 def test_dongqiudi_odds_state_normalizes_european_and_asian_fields() -> None:
     european = DongqiudiProvider._map_odds_state({"homeWin": "1.77", "draw": "3.70", "awayWin": "3.50"}, "1x2")
     asian = DongqiudiProvider._map_odds_state({"homeWin": "0.98", "awayWin": "0.88", "draw": "半/一", "draw_value": "0.75"}, "asian_handicap")
