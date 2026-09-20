@@ -12,6 +12,8 @@ set -euo pipefail
 APP_DIR=/opt/football-ai/app
 BACKUP_DIR=/opt/football-ai/backups
 VERIFICATION_MARKER="$BACKUP_DIR/last-verified.json"
+API_SERVICE=${BACKUP_API_SERVICE:-football-ai-api}
+API_WAS_ACTIVE=0
 cd "$APP_DIR"
 
 WORK_DIR=$(mktemp -d /tmp/football-ai-backup-verify.XXXXXX)
@@ -25,6 +27,8 @@ RESTORE_ERROR="$WORK_DIR/restore.err"
 FINGERPRINT_PROD="$WORK_DIR/fp-prod.txt"
 FINGERPRINT_CHECK="$WORK_DIR/fp-check.txt"
 cleanup() {
+  STATUS=$?
+  trap - EXIT
   case "$WORK_DIR" in
     /tmp/football-ai-backup-verify.*)
       rm -f -- "$READINESS_JSON" "$MYSQLDUMP_ERROR" "$RESTORE_ERROR" \
@@ -32,6 +36,14 @@ cleanup() {
       rmdir -- "$WORK_DIR" 2>/dev/null || true
       ;;
   esac
+  if [ "$API_WAS_ACTIVE" -eq 1 ]; then
+    echo "== restart API writer =="
+    if ! systemctl start "$API_SERVICE"; then
+      echo "failed to restart $API_SERVICE" >&2
+      STATUS=1
+    fi
+  fi
+  exit "$STATUS"
 }
 trap cleanup EXIT
 
@@ -73,6 +85,20 @@ if [ "${1:-}" != "backup" ]; then
   exit 0
 fi
 
+echo "== quiesce API writer =="
+if ! command -v systemctl >/dev/null 2>&1; then
+  echo "systemctl is required to quiesce $API_SERVICE" >&2
+  exit 1
+fi
+if systemctl is-active --quiet "$API_SERVICE"; then
+  API_WAS_ACTIVE=1
+  systemctl stop "$API_SERVICE"
+fi
+if systemctl is-active --quiet "$API_SERVICE"; then
+  echo "failed to stop $API_SERVICE" >&2
+  exit 1
+fi
+
 echo "== backup =="
 STAMP=$(date +%Y%m%d-%H%M%S)
 DUMP="$BACKUP_DIR/db-$STAMP.sql"
@@ -107,11 +133,8 @@ if ! "${RESTORE_CMD[@]}" | M "$CHECKDB" > "$RESTORE_ERROR" 2>&1; then
   exit 1
 fi
 
-# 热表在 dump 后仍被自动化写入（job 心跳/赔率同步），其行数漂移不构成
-# 恢复失败；严格指纹只比较冷数据表。
-HOT_TABLES="job_runs|odds_snapshots|sync_metadata|data_sync_runs"
 ALL_TABLE_LIST=$(M -N -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$DB' AND table_type='BASE TABLE';")
-TABLE_LIST=$(printf '%s\n' "$ALL_TABLE_LIST" | grep -Ev "^($HOT_TABLES)$")
+TABLE_LIST="$ALL_TABLE_LIST"
 MATCH=0; MISMATCH=0; MISSING=0; QUERY_ERROR=0
 : > "$FINGERPRINT_PROD"; : > "$FINGERPRINT_CHECK"
 for T in $ALL_TABLE_LIST; do
@@ -142,7 +165,7 @@ M -e "DROP DATABASE IF EXISTS $CHECKDB;"
 
 echo "== fingerprint =="
 if [ $QUERY_ERROR -eq 0 ] && [ $MISSING -eq 0 ] && [ $MISMATCH -eq 0 ]; then
-  echo "RESTORE_VERIFIED tables=$MATCH (hot tables excluded: $HOT_TABLES)"
+  echo "RESTORE_VERIFIED tables=$MATCH"
 else
   echo "RESTORE_MISMATCH match=$MATCH mismatch=$MISMATCH missing=$MISSING query_error=$QUERY_ERROR"
   diff "$FINGERPRINT_PROD" "$FINGERPRINT_CHECK" | head -10
