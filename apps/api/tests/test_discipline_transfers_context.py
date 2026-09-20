@@ -225,6 +225,93 @@ async def test_transfers_sync_uses_evidence_team_ids_and_staleness() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transfers_sync_resolves_stored_api_football_identity() -> None:
+    repository = StubRepository(
+        [
+            {
+                "id": "f1",
+                "league_key": "epl",
+                "status": "scheduled",
+                "kickoff": "2026-09-21T12:00:00+00:00",
+                "home_team": {"name": "曼彻斯特城"},
+                "away_team": {"name": "未知升班球队"},
+                "evidence": {},
+            }
+        ]
+    )
+    repository.team_identities = lambda limit=1000: [
+        {
+            "source": "api-football",
+            "source_team_id": "50",
+            "league": "EPL",
+            "display_name": "曼彻斯特城",
+            "identity_status": "resolved",
+            "conflict": False,
+        }
+    ]
+    repository.team_transfers_row = lambda *_args: None
+    repository.save_team_transfers = lambda *_args, **_kwargs: None
+    provider = StubTransfersProvider(results={"50": []})
+
+    result = await sync_transfers(
+        repository,
+        provider,
+        leagues=("epl",),
+        limit=5,
+        now=_dt("2026-09-20T12:00:00+00:00"),
+    )
+
+    assert result["teams_targeted"] == 1
+    assert result["identity_resolved"] == 1
+    assert result["provider_id_missing"] == 1
+    assert provider.calls == ["50"]
+
+
+def test_attach_transfers_resolves_stored_api_football_identity() -> None:
+    class IdentityTransferRepository:
+        def team_identities(self, limit=1000):
+            return [
+                {
+                    "source": "api-football",
+                    "source_team_id": "50",
+                    "league": "EPL",
+                    "display_name": "曼彻斯特城",
+                    "identity_status": "resolved",
+                    "conflict": False,
+                }
+            ]
+
+        def team_transfers_row(self, team_id, season):
+            if str(team_id) != "50":
+                return None
+            return {
+                "transfers": [
+                    {"player": "New Guy", "date": "2026-09-01", "in_team_id": 50, "out_team": "Old FC"}
+                ]
+            }
+
+    fixture = {
+        "league_key": "epl",
+        "home_team": {"name": "曼彻斯特城"},
+        "away_team": {"name": "未知升班球队"},
+        "evidence": {},
+    }
+    context: dict = {}
+
+    attach_transfers(
+        IdentityTransferRepository(),
+        fixture,
+        context,
+        now=_dt("2026-09-20T12:00:00+00:00"),
+    )
+
+    assert context["transfers"]["home"]["transfers_in"] == [
+        f"{to_chinese_player_name('New Guy')}（2026-09-01，自 Old FC）"
+    ]
+    assert context["transfers"]["away"] is None
+
+
+@pytest.mark.asyncio
 async def test_transfers_sync_bounds_failed_attempts_and_reports_missing_ids() -> None:
     fixture_rows = [
         {

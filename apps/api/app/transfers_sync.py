@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 from .competition_registry import season_for
 from .historical_validation import parse_timestamp
-from .team_names import to_chinese_player_name
+from .team_names import to_chinese_player_name, to_chinese_team_name
 
 TRANSFER_LEAGUES: tuple[str, ...] = ("epl", "laliga", "csl", "cfa_cup")
 STALE_AFTER = timedelta(days=30)
@@ -34,11 +34,13 @@ async def sync_transfers(
 
     current = now or datetime.now(UTC)
     rows = repository.list_fixtures() or []
+    identity_index = _api_football_identity_index(repository)
     team_ids, target_state = _transfer_targets(
         rows,
         leagues,
         current=current,
         lookahead_days=lookahead_days,
+        identity_index=identity_index,
     )
     run = _start_sync_run(repository, target_state)
     attempted = 0
@@ -117,8 +119,9 @@ def attach_transfers(
 
     evidence = fixture.get("evidence") if isinstance(fixture.get("evidence"), dict) else {}
     team_ids = evidence.get("team_ids") if isinstance(evidence.get("team_ids"), dict) else {}
-    home_id = team_ids.get("home")
-    away_id = team_ids.get("away")
+    identity_index = _api_football_identity_index(repository)
+    home_id = team_ids.get("home") or _identity_team_id(identity_index, fixture, "home")
+    away_id = team_ids.get("away") or _identity_team_id(identity_index, fixture, "away")
     if home_id in (None, "") and away_id in (None, ""):
         return
     league_key = str(fixture.get("league_key") or "")
@@ -164,12 +167,14 @@ def _transfer_targets(
     *,
     current: datetime,
     lookahead_days: int,
+    identity_index: Mapping[tuple[str, str], str] | None = None,
 ) -> tuple[list[tuple[str, str]], dict[str, int]]:
     """Upcoming distinct teams with real API-Football IDs and target diagnostics."""
 
     seen: dict[str, str] = {}
     upcoming = 0
     provider_id_missing = 0
+    identity_resolved = 0
     horizon = current + timedelta(days=max(1, int(lookahead_days)))
     for row in rows:
         if str(row.get("league_key") or "") not in leagues:
@@ -186,6 +191,10 @@ def _transfer_targets(
         for side in ("home", "away"):
             team_id = team_ids.get(side)
             if team_id in (None, ""):
+                team_id = _identity_team_id(identity_index or {}, row, side)
+                if team_id not in (None, ""):
+                    identity_resolved += 1
+            if team_id in (None, ""):
                 provider_id_missing += 1
                 continue
             seen.setdefault(str(team_id), league_key)
@@ -194,8 +203,56 @@ def _transfer_targets(
         {
             "upcoming_fixture_count": upcoming,
             "provider_id_missing": provider_id_missing,
+            "identity_resolved": identity_resolved,
         },
     )
+
+
+def _api_football_identity_index(repository: Any) -> dict[tuple[str, str], str]:
+    reader = getattr(repository, "team_identities", None)
+    identities = reader(limit=1000) if callable(reader) else []
+    candidates: dict[tuple[str, str], set[str]] = {}
+    for item in identities or []:
+        if str(item.get("source") or "").casefold() != "api-football":
+            continue
+        if str(item.get("identity_status") or "").casefold() != "resolved" or item.get("conflict"):
+            continue
+        provider_id = str(item.get("source_team_id") or "")
+        key = (
+            _league_key(item.get("league")),
+            _team_name_key(item.get("display_name") or item.get("normalized_name")),
+        )
+        if provider_id and all(key):
+            candidates.setdefault(key, set()).add(provider_id)
+    return {
+        key: next(iter(values))
+        for key, values in candidates.items()
+        if len(values) == 1
+    }
+
+
+def _identity_team_id(
+    identity_index: Mapping[tuple[str, str], str],
+    fixture: Mapping[str, Any],
+    side: str,
+) -> str | None:
+    team = fixture.get(f"{side}_team")
+    name = team.get("name") if isinstance(team, Mapping) else None
+    return identity_index.get(
+        (_league_key(fixture.get("league_key")), _team_name_key(name))
+    )
+
+
+def _league_key(value: Any) -> str:
+    normalized = str(value or "").strip().casefold().replace("_", "")
+    return {"lal": "laliga", "laliga": "laliga", "epl": "epl", "csl": "csl", "cfacup": "cfacup"}.get(
+        normalized,
+        normalized,
+    )
+
+
+def _team_name_key(value: Any) -> str:
+    return "".join(to_chinese_team_name(str(value or "")).split()).casefold()
 
 
 def _start_sync_run(repository: Any, target_state: Mapping[str, int]) -> dict[str, Any]:
