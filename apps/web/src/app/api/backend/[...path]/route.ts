@@ -17,6 +17,10 @@ import type { DateFilter, FixtureLeagueFilter } from "@/lib/types";
 import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 const apiBase = (process.env.API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
+const reportReadPaths = new Set([
+  "api/backtest/three-leagues",
+  "api/model-evaluation",
+]);
 
 function handleMockFallback(path: string[], searchParams: URLSearchParams) {
   const pathStr = path.join("/");
@@ -96,7 +100,8 @@ function handleMockFallback(path: string[], searchParams: URLSearchParams) {
 
 async function forward(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
-  const target = `${apiBase}/${path.join("/")}${request.nextUrl.search}`;
+  const pathStr = path.join("/");
+  const target = `${apiBase}/${pathStr}${request.nextUrl.search}`;
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("content-length");
@@ -108,7 +113,9 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       headers,
       body,
       cache: "no-store",
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(
+        request.method === "GET" && reportReadPaths.has(pathStr) ? 30_000 : 4000,
+      ),
     });
 
     return forwardUpstream(response);

@@ -116,19 +116,20 @@ export function PerformanceDashboard() {
     setError(null);
     try {
       const query = metricQuery(filters);
-      const [summary, betData, decisionData, dualDecisionData, strategyData, metricData] =
+      const [summary, betData, decisionData, strategyData, metricData] =
         await Promise.all([
           fetchBankroll(),
           fetchBets(selectedModel),
-          fetchDecisionAudits(query, selectedModel),
           fetchDecisionAudits(query, "all"),
           fetchStrategyPerformance(query),
           fetchPredictionMetrics(query, selectedModel),
         ]);
       setBankroll(summary);
       setBets(betData.items);
-      setDecisions(decisionData.items);
-      setDualDecisions(dualDecisionData.items);
+      setDecisions(
+        decisionData.items.filter((item) => item.model_key === selectedModel),
+      );
+      setDualDecisions(decisionData.items);
       setStrategies(strategyData.items);
       setMetrics(metricData);
     } catch (reason) {
@@ -144,17 +145,18 @@ export function PerformanceDashboard() {
     void Promise.all([
       fetchBankroll(),
       fetchBets(selectedModel),
-      fetchDecisionAudits(query, selectedModel),
       fetchDecisionAudits(query, "all"),
       fetchStrategyPerformance(query),
       fetchPredictionMetrics(query, selectedModel),
     ])
-      .then(([summary, betData, decisionData, dualDecisionData, strategyData, metricData]) => {
-        setDualDecisions(dualDecisionData.items);
+      .then(([summary, betData, decisionData, strategyData, metricData]) => {
         if (!active) return;
         setBankroll(summary);
         setBets(betData.items);
-        setDecisions(decisionData.items);
+        setDecisions(
+          decisionData.items.filter((item) => item.model_key === selectedModel),
+        );
+        setDualDecisions(decisionData.items);
         setStrategies(strategyData.items);
         setMetrics(metricData);
       })

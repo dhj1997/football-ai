@@ -667,6 +667,31 @@ def test_p6_evaluation_endpoints_return_frozen_insufficient_report() -> None:
     assert client.get("/api/leagues/Bundesliga/model-evaluation").status_code == 400
 
 
+def test_model_evaluation_reuses_latest_persisted_report(monkeypatch) -> None:
+    frozen = {
+        "experiment_id": "p6:persisted",
+        "status": "ok",
+        "league": "ALL",
+        "reports": {},
+        "leakage_audit": {"violations": 0},
+    }
+    monkeypatch.setattr(
+        repository,
+        "model_evaluation_experiments",
+        lambda league=None, limit=100: [frozen],
+    )
+
+    def fail_if_recomputed(*args, **kwargs):
+        raise AssertionError("persisted model evaluation should be reused")
+
+    monkeypatch.setattr(main_module.model_evaluation_service, "evaluate", fail_if_recomputed)
+
+    response = client.get("/api/model-evaluation")
+
+    assert response.status_code == 200
+    assert response.json()["experiment_id"] == "p6:persisted"
+
+
 def test_public_fixture_payload_removes_supplier_player_names() -> None:
     fixture = seed_real_fixture("api-player-boundary", 127)
     fixture["status"] = "finished"
@@ -1015,7 +1040,7 @@ def test_decisions_endpoint_returns_latest_auditable_no_bet_row() -> None:
     assert payload["items"][0]["considered_selection"] == "home"
 
 
-def test_decisions_endpoint_flags_a_simulation_bet_when_current_candidate_changed() -> None:
+def test_decisions_endpoint_flags_a_simulation_bet_when_current_candidate_changed(monkeypatch) -> None:
     fixture = seed_real_fixture("api-decision-mismatch", 130)
     fixture.update(
         {
@@ -1068,6 +1093,11 @@ def test_decisions_endpoint_flags_a_simulation_bet_when_current_candidate_change
             "competition_id": repository.competition_id,
         }
     )
+
+    def fail_on_single_bet_read(*args, **kwargs):
+        raise AssertionError("decision endpoint must batch linked-bet reads")
+
+    monkeypatch.setattr(repository, "bet_for_prediction", fail_on_single_bet_read)
 
     response = client.get(
         "/api/decisions",

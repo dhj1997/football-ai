@@ -263,6 +263,9 @@ def test_higher_edge_fixture_is_clamped_by_league_day_limit(tmp_path) -> None:
     assert first_bet is not None
     assert second_bet is not None
     assert repository.bet_for_prediction("league-p1") is not None
+    batch = repository.bets_for_predictions(["league-p1", "league-p2", "missing"])
+    assert set(batch) == {"league-p1", "league-p2"}
+    assert batch["league-p1"]["id"] == first_bet["id"]
     assert len(repository.bets()) == 2
     assert repository.bets()[0]["stake"] == 10.0
     assert repository.current_balance() == 980.0

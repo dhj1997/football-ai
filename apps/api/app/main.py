@@ -1174,10 +1174,18 @@ def model_evaluation(experiment_id: str | None = None, league: str | None = None
         if result is None:
             raise HTTPException(status_code=404, detail="Model evaluation experiment was not found")
     else:
-        try:
-            result = _evaluate_p6(league)
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
+        code = normalize_league_code(league) if league else None
+        if league and code is None:
+            raise HTTPException(status_code=400, detail="Only CSL, EPL, and LAL are supported")
+        listing = getattr(repository, "model_evaluation_experiments", None)
+        stored = listing(league=code or "ALL", limit=1) if callable(listing) else []
+        if stored:
+            result = stored[0]
+        else:
+            try:
+                result = _evaluate_p6(league)
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
     return serialize_public(result)
 
 
@@ -1437,12 +1445,21 @@ def prediction_decisions(
         None if model == "all" else model,
         settings.simulation_competition_id,
     )
+    bet_reader = getattr(repository, "bets_for_predictions", None)
+    linked_bets = (
+        bet_reader(
+            (row.get("prediction") or {}).get("id")
+            for row in rows
+        )
+        if callable(bet_reader)
+        else {}
+    )
     items: list[dict] = []
     for row in rows:
         prediction = row.get("prediction") or {}
         fixture = row.get("fixture") or {}
         decision = prediction.get("decision") or {}
-        linked_bet = repository.bet_for_prediction(prediction["id"])
+        linked_bet = linked_bets.get(str(prediction["id"]))
         if linked_bet:
             current_market = decision.get("market")
             current_selection = decision.get("selection")

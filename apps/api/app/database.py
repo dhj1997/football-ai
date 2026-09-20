@@ -5543,6 +5543,27 @@ class PredictionRepository:
             ).mappings().first()
         return json.loads(row["payload"]) if row else None
 
+    def bets_for_predictions(self, prediction_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Return simulated bets keyed by prediction ID in one database read."""
+
+        ids = sorted({str(value) for value in prediction_ids if value})
+        if not ids:
+            return {}
+        placeholders = ", ".join(f":prediction_{index}" for index, _ in enumerate(ids))
+        parameters = {f"prediction_{index}": prediction_id for index, prediction_id in enumerate(ids)}
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT prediction_id, payload FROM bets "
+                    f"WHERE prediction_id IN ({placeholders})"
+                ),
+                parameters,
+            ).mappings().all()
+        return {
+            str(row["prediction_id"]): json.loads(row["payload"])
+            for row in rows
+        }
+
     def bets(
         self,
         status: str | None = None,
