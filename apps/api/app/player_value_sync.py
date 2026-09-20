@@ -7,6 +7,7 @@ from typing import Any
 
 from .player_identity import localize_player_record
 from .player_value_provider import SUPPORTED_LEAGUES
+from .team_names import to_chinese_team_name
 
 
 async def sync_player_values(
@@ -99,7 +100,9 @@ def _upcoming_players(
     fixture_reader = getattr(repository, "fixture", None)
     targets: dict[str, dict[str, Any]] = {}
     missing_squads = 0
-    for fixture in repository.list_fixtures():
+    fixtures = repository.list_fixtures()
+    team_id_index = _dongqiudi_team_id_index(fixtures)
+    for fixture in fixtures:
         league_key = str(fixture.get("league_key") or "")
         kickoff = _as_utc(fixture.get("kickoff"))
         if (
@@ -115,6 +118,12 @@ def _upcoming_players(
             squad = list(((free_team_data.get(side) or {}).get("squad") or []))
             if not squad and twin:
                 team_id = str(((twin.get(f"{side}_team") or {}).get("provider_id") or ""))
+            else:
+                team_id = ""
+            if not squad and not team_id:
+                team_name = (fixture.get(f"{side}_team") or {}).get("name")
+                team_id = team_id_index.get((league_key, _team_name_key(team_name)), "")
+            if not squad and team_id:
                 snapshot = repository.team_snapshot(league_key, team_id) if team_id else None
                 squad = list((snapshot or {}).get("roster") or [])
             if not squad:
@@ -127,6 +136,29 @@ def _upcoming_players(
                 if provider_id and canonical_id:
                     targets.setdefault(canonical_id, player)
     return targets, missing_squads
+
+
+def _dongqiudi_team_id_index(fixtures: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    candidates: dict[tuple[str, str], set[str]] = {}
+    for fixture in fixtures:
+        if not str(fixture.get("id") or "").startswith("dongqiudi-"):
+            continue
+        league_key = str(fixture.get("league_key") or "")
+        for side in ("home", "away"):
+            team = fixture.get(f"{side}_team") or {}
+            team_id = str(team.get("provider_id") or "")
+            name_key = _team_name_key(team.get("name"))
+            if league_key and team_id and name_key:
+                candidates.setdefault((league_key, name_key), set()).add(team_id)
+    return {
+        key: next(iter(team_ids))
+        for key, team_ids in candidates.items()
+        if len(team_ids) == 1
+    }
+
+
+def _team_name_key(value: Any) -> str:
+    return "".join(to_chinese_team_name(str(value or "")).split()).casefold()
 
 
 def _dongqiudi_twin(repository: Any, fixture: dict[str, Any], fixture_reader: Any) -> dict[str, Any] | None:

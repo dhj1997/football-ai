@@ -151,3 +151,33 @@ async def test_sync_stops_after_transport_timeout() -> None:
     assert provider.calls == ["1"]
     assert result["status"] == "failed"
     assert result["players_failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_reuses_unique_team_id_from_other_dongqiudi_fixture() -> None:
+    repository = Repository([])
+    repository.fixtures.append(
+        {
+            "id": "dongqiudi-old",
+            "status": "finished",
+            "league_key": "csl",
+            "kickoff": "2026-09-01T00:00:00+00:00",
+            "home_team": {"name": "测试客队", "provider_id": "500001"},
+            "away_team": {"name": "其他队", "provider_id": "500002"},
+        }
+    )
+    repository.fixtures[0]["away_team"] = {"name": "测试客队"}
+    repository.snapshots = {("csl", "500001"): {"roster": [player("9")]}}
+    repository.team_snapshot = lambda league_key, team_id: repository.snapshots.get((league_key, team_id))
+    provider = Provider()
+
+    result = await sync_player_values(
+        repository,
+        provider,
+        limit=2,
+        now=datetime(2026, 9, 20, tzinfo=UTC),
+    )
+
+    assert result["squads_missing"] == 1
+    assert result["players_saved"] == 1
+    assert provider.calls == ["9"]
