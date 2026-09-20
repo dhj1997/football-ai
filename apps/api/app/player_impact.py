@@ -254,7 +254,9 @@ def _team_impact(context: dict[str, Any], side: str) -> dict[str, Any]:
     confirmed = bool(lineup.get("confirmed"))
 
     for player in squad:
-        stats = player.get("statistics") or {}
+        stats = _normalized_statistics(player.get("statistics"))
+        if stats and not isinstance(player.get("statistics"), Mapping):
+            player["statistics"] = stats
         appearances = _number(stats.get("appearances"), 0)
         substitute_appearances = _number(stats.get("substitute_appearances"), 0)
         observed_starts = _optional_number(stats.get("starts"))
@@ -378,6 +380,32 @@ def _team_impact(context: dict[str, Any], side: str) -> dict[str, Any]:
         "expected_replacements": replacements,
         **retention,
     }
+
+
+def _normalized_statistics(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if not isinstance(value, list):
+        return {}
+    aliases = {
+        "出场": "appearances",
+        "首发": "starts",
+        "替补": "substitute_appearances",
+        "分钟": "minutes",
+        "进球": "goals",
+        "助攻": "assists",
+        "扑救": "saves",
+        "评分": "rating",
+    }
+    normalized: dict[str, Any] = {}
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        for key, raw in item.items():
+            canonical = aliases.get(str(key).strip())
+            if canonical and raw not in (None, ""):
+                normalized[canonical] = raw
+    return normalized
 
 
 def _start_probability(

@@ -119,6 +119,24 @@ def test_missing_market_value_stays_null_and_does_not_block_impact() -> None:
     assert evidence["player_impact"]["home"]["data_status"] in {"partial", "complete"}
 
 
+def test_dongqiudi_statistic_list_is_normalized() -> None:
+    evidence = context([])
+    star = evidence["squads"]["home"][0]
+    star["statistics"] = [
+        {"出场": "9"},
+        {"进球": "5"},
+        {"助攻": "2"},
+        {"身价(欧)": "1.4亿"},
+    ]
+
+    apply_player_impact(evidence)
+
+    assert star["statistics"] == {"appearances": "9", "goals": "5", "assists": "2"}
+    assert star["appearances"] == 9
+    assert star["goals_per90"] == 0.667
+    assert star["assists_per90"] == 0.267
+
+
 def test_absence_rule_is_source_timestamped_localized_and_idempotent(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "impact.db"))
     repository.initialize()
