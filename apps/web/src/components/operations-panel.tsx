@@ -42,6 +42,7 @@ const jobs: JobConfig[] = [
   { key: "dongqiudi_prematch", label: "懂球帝临场数据", icon: Zap },
   { key: "clubeelo", label: "ClubElo 评级", icon: Gauge },
   { key: "transfers_backfill", label: "转会数据", icon: ArrowLeftRight },
+  { key: "player_values_backfill", label: "球员身价", icon: Users },
   { key: "player_stats_backfill", label: "球员统计", icon: Users },
   { key: "player_impact_rules", label: "球员影响规则", icon: ShieldAlert },
   { key: "ensemble_learning", label: "集成权重", icon: Layers3 },
@@ -243,7 +244,7 @@ function activationTone(status: string) {
 
 function sourceStatusText(source: ActivationSourceStatus) {
   if (source.reason === "provider_required") return "需要数据源";
-  return {
+  const status = {
     ready: "正常",
     running: "运行中",
     partial: "部分完成",
@@ -251,6 +252,10 @@ function sourceStatusText(source: ActivationSourceStatus) {
     not_run: "尚未运行",
     unavailable: "不可用",
   }[source.status];
+  if (source.key !== "player_values" || !source.details) return status;
+  const targeted = Number(source.details.players_targeted ?? 0);
+  const covered = Number(source.details.players_saved ?? 0) + Number(source.details.players_skipped_fresh ?? 0);
+  return targeted > 0 ? `${status} · ${covered}/${targeted}` : status;
 }
 
 function sourceTone(source: ActivationSourceStatus) {

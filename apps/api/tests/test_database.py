@@ -211,6 +211,66 @@ def test_player_value_snapshot_is_upserted_with_provenance(tmp_path) -> None:
     assert repository.player_values([]) == []
 
 
+def test_player_value_history_merges_and_selects_at_cutoff(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "player-value-history.db"))
+    repository.initialize()
+    base = {
+        "canonical_player_id": "player-1",
+        "provider_player_id": "50222265",
+        "market_value_source": "dongqiudi",
+        "cached_at": "2026-09-20T00:00:00+00:00",
+    }
+    repository.save_player_values(
+        [
+            {
+                **base,
+                "market_value_eur": 10_000_000,
+                "market_value_as_of": "2026-01-01",
+                "history": [
+                    {
+                        "market_value_eur": 10_000_000,
+                        "market_value_currency": "EUR",
+                        "market_value_source": "dongqiudi",
+                        "market_value_as_of": "2026-01-01",
+                        "captured_at": "2026-09-20T00:00:00+00:00",
+                    }
+                ],
+            }
+        ]
+    )
+    repository.save_player_values(
+        [
+            {
+                **base,
+                "market_value_eur": 20_000_000,
+                "market_value_as_of": "2026-08-01",
+                "history": [
+                    {
+                        "market_value_eur": 20_000_000,
+                        "market_value_currency": "EUR",
+                        "market_value_source": "dongqiudi",
+                        "market_value_as_of": "2026-08-01",
+                        "captured_at": "2026-09-20T00:00:00+00:00",
+                    }
+                ],
+            }
+        ]
+    )
+
+    current = repository.player_values(["player-1"])[0]
+    historical = repository.player_values(
+        ["player-1"],
+        as_of="2026-03-01T00:00:00+00:00",
+    )[0]
+
+    assert current["market_value_eur"] == 20_000_000
+    assert historical["market_value_eur"] == 10_000_000
+    assert repository.player_values(
+        ["player-1"],
+        as_of="2025-12-31T23:59:59+00:00",
+    ) == []
+
+
 def test_player_name_snapshot_is_upserted_with_provenance(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "player-names.db"))
     repository.initialize()

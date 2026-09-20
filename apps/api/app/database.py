@@ -4868,23 +4868,27 @@ class PredictionRepository:
         return json.loads(row["payload"]) if row else None
 
     def save_player_values(self, values: list[dict[str, Any]]) -> None:
-        """Upsert licensed market-value snapshots with their provenance."""
+        """Merge dated market-value history for each canonical player."""
 
         with self.engine.begin() as connection:
             for value in values:
-                parameters = {
-                    "canonical_player_id": value["canonical_player_id"],
-                    "updated_at": value.get("cached_at") or datetime.now(UTC).replace(microsecond=0).isoformat(),
-                    "payload": json.dumps(value, ensure_ascii=False),
-                }
-                exists = connection.execute(
+                existing = connection.execute(
                     text(
-                        "SELECT canonical_player_id FROM player_value_snapshots "
+                        "SELECT payload FROM player_value_snapshots "
                         "WHERE canonical_player_id = :canonical_player_id"
                     ),
-                    parameters,
-                ).first()
-                if exists:
+                    {"canonical_player_id": value["canonical_player_id"]},
+                ).mappings().first()
+                payload = _merge_player_value_payload(
+                    json.loads(existing["payload"]) if existing else None,
+                    value,
+                )
+                parameters = {
+                    "canonical_player_id": value["canonical_player_id"],
+                    "updated_at": payload.get("cached_at") or datetime.now(UTC).replace(microsecond=0).isoformat(),
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                }
+                if existing:
                     connection.execute(
                         text(
                             "UPDATE player_value_snapshots SET updated_at = :updated_at, payload = :payload "
@@ -4901,8 +4905,12 @@ class PredictionRepository:
                         parameters,
                     )
 
-    def player_values(self, canonical_player_ids: list[str]) -> list[dict[str, Any]]:
-        """Return cached value snapshots for the requested canonical players."""
+    def player_values(
+        self,
+        canonical_player_ids: list[str],
+        as_of: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return each player's newest value at or before an optional cutoff."""
 
         if not canonical_player_ids:
             return []
@@ -4916,7 +4924,11 @@ class PredictionRepository:
                 ),
                 parameters,
             ).mappings().all()
-        return [json.loads(row["payload"]) for row in rows]
+        selected = [
+            _player_value_at(json.loads(row["payload"]), as_of)
+            for row in rows
+        ]
+        return [item for item in selected if item is not None]
 
     def save_player_names(self, values: list[dict[str, Any]]) -> None:
         """Upsert cached Chinese player-name translations with provenance."""
@@ -6080,6 +6092,104 @@ class PredictionRepository:
 
         rows = self.job_runs(job_name, 1)
         return rows[0] if rows else None
+
+
+def _merge_player_value_payload(
+    existing: dict[str, Any] | None,
+    incoming: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve prior dated values while refreshing one player's payload."""
+
+    if not existing and not incoming.get("history"):
+        return dict(incoming)
+    if existing and not existing.get("history") and not incoming.get("history"):
+        return dict(incoming)
+    records: dict[tuple[str, str, float], dict[str, Any]] = {}
+    for payload in (existing or {}, incoming):
+        history = payload.get("history") if isinstance(payload.get("history"), list) else []
+        if not history:
+            history = [_player_value_history_entry(payload)]
+        for record in history:
+            if not isinstance(record, dict):
+                continue
+            try:
+                amount = float(record.get("market_value_eur"))
+            except (TypeError, ValueError):
+                continue
+            as_of = str(record.get("market_value_as_of") or "")
+            source = str(record.get("market_value_source") or "")
+            if not as_of or not source or _parse_datetime(as_of) is None:
+                continue
+            key = (as_of, source, amount)
+            previous = records.get(key)
+            if previous is None or str(record.get("captured_at") or "") >= str(previous.get("captured_at") or ""):
+                records[key] = dict(record)
+    history = sorted(
+        records.values(),
+        key=lambda item: (
+            _parse_datetime(item.get("market_value_as_of")) or datetime.min.replace(tzinfo=UTC),
+            str(item.get("captured_at") or ""),
+        ),
+    )
+    if not history:
+        return dict(incoming)
+    latest = history[-1]
+    result = {**(existing or {}), **incoming, **latest}
+    result["canonical_player_id"] = incoming["canonical_player_id"]
+    result["cached_at"] = incoming.get("cached_at") or latest.get("captured_at")
+    result["history"] = history
+    return result
+
+
+def _player_value_history_entry(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: payload.get(key)
+        for key in (
+            "market_value_eur",
+            "market_value_currency",
+            "market_value_source",
+            "market_value_as_of",
+            "provider_player_id",
+            "provider_person_id",
+            "player_name",
+            "source_url",
+            "captured_at",
+        )
+    } | {"captured_at": payload.get("captured_at") or payload.get("cached_at")}
+
+
+def _player_value_at(payload: dict[str, Any], as_of: Any | None) -> dict[str, Any] | None:
+    history = payload.get("history") if isinstance(payload.get("history"), list) else []
+    if not history:
+        if as_of is None:
+            return payload
+        record_at = _parse_datetime(payload.get("market_value_as_of"))
+        cutoff = _parse_datetime(as_of)
+        return payload if record_at is not None and cutoff is not None and record_at <= cutoff else None
+    cutoff = _parse_datetime(as_of) if as_of is not None else None
+    if as_of is not None and cutoff is None:
+        return None
+    candidates = [
+        item
+        for item in history
+        if isinstance(item, dict)
+        and (record_at := _parse_datetime(item.get("market_value_as_of"))) is not None
+        and (cutoff is None or record_at <= cutoff)
+    ]
+    if not candidates:
+        return None
+    selected = max(
+        candidates,
+        key=lambda item: (
+            _parse_datetime(item.get("market_value_as_of")) or datetime.min.replace(tzinfo=UTC),
+            str(item.get("captured_at") or ""),
+        ),
+    )
+    result = dict(payload)
+    result.pop("history", None)
+    result.update(selected)
+    result["cached_at"] = payload.get("cached_at") or selected.get("captured_at")
+    return result
 
 
 def _odds_payload_from_quotes(quotes: list[dict[str, Any]]) -> dict[str, Any]:

@@ -24,7 +24,7 @@ export async function GET() {
     player_impact: { status: "pending", active_rule_count: 0, upcoming_fixture_count: 0, covered_fixture_count: 0 },
     providers: {
       sources: [
-        { key: "player_values", label: "球员身价", status: "unavailable", reason: "provider_required" },
+        { key: "player_values", label: "球员身价", status: "not_run" },
         { key: "prematch_news", label: "赛前新闻", status: "unavailable", reason: "provider_required" },
       ],
       telemetry: [],

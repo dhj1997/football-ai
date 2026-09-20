@@ -95,7 +95,7 @@ from .player_name_provider import (
     FallbackPlayerNameProvider,
     PlayerNameService,
 )
-from .player_value_provider import NullPlayerValueProvider, PlayerValueService
+from .player_value_provider import DongqiudiPlayerValueProvider, PlayerValueService
 from .player_stats import PlayerStatsService, sync_player_stats
 from .weather_provider import WeatherProvider
 from .weather_sync import sync_weather
@@ -311,8 +311,12 @@ deepseek_chain_provider = FreeLlmChainProvider(
     candidate_timeout_seconds=settings.free_llm_candidate_timeout_seconds,
     enabled=settings.free_llm_enabled,
 )
-player_value_provider = NullPlayerValueProvider()
-player_value_service = PlayerValueService(player_value_provider, repository)
+player_value_provider = DongqiudiPlayerValueProvider(dongqiudi_provider)
+player_value_service = PlayerValueService(
+    player_value_provider,
+    repository,
+    stale_after_days=settings.player_values_stale_days,
+)
 player_stats_service = PlayerStatsService(repository)
 chatgpt_provider = ChatGptProvider(
     settings.api_chatgpt_key,
@@ -437,6 +441,7 @@ automation_runner = AutomationRunner(
     clubeelo_service=clubeelo_provider,
     dongqiudi_team_service=dongqiudi_provider,
     squad_fallback_provider=espn_evidence_provider,
+    player_value_provider=player_value_provider,
 )
 runtime_config_updated_at: str | None = None
 
@@ -1294,7 +1299,16 @@ async def fixture_detail(fixture_id: str) -> dict:
         if not context["squads"].get(side):
             context["squads"][side] = free_data.get("squad") or []
     await player_name_service.enrich(context, resolve_missing=False)
-    await player_value_service.enrich(context, str(fixture.get("league_key") or ""))
+    value_cutoff = (
+        prediction.get("prediction_cutoff_at") or prediction.get("created_at")
+        if prediction
+        else datetime.now(UTC)
+    )
+    await player_value_service.enrich(
+        context,
+        str(fixture.get("league_key") or ""),
+        cutoff_at=value_cutoff,
+    )
     apply_player_impact(context)
     shared_fixtures: list[dict] | None = None
     if fixture.get("status") == "scheduled" and not fixture.get("is_demo") and str(fixture.get("league_key") or "") in {"epl", "laliga"}:
@@ -2422,8 +2436,9 @@ def activation_status() -> dict:
     for run in job_runs:
         latest_jobs.setdefault(str(run.get("job_name") or ""), run)
 
-    def operation_source(key: str, label: str) -> dict:
-        run = latest_jobs.get(key)
+    def operation_source(job_key: str, label: str, *, source_key: str | None = None) -> dict:
+        run = latest_jobs.get(job_key)
+        key = source_key or job_key
         if run is None:
             return {"key": key, "label": label, "status": "not_run", "last_run_at": None, "error": None}
         status = str(run.get("status") or "unknown")
@@ -2433,21 +2448,15 @@ def activation_status() -> dict:
             "status": "ready" if status == "success" else status,
             "last_run_at": run.get("finished_at") or run.get("started_at"),
             "error": run.get("error_summary"),
+            "details": run.get("result") if isinstance(run.get("result"), dict) else None,
         }
 
     sources = [
         operation_source("clubeelo", "ClubElo"),
         operation_source("transfers_backfill", "转会数据"),
         operation_source("player_stats_backfill", "球员统计"),
+        operation_source("player_values_backfill", "球员身价", source_key="player_values"),
         operation_source("lineup", "阵容数据"),
-        {
-            "key": "player_values",
-            "label": "球员身价",
-            "status": "unavailable",
-            "reason": "provider_required",
-            "last_run_at": None,
-            "error": None,
-        },
         {
             "key": "prematch_news",
             "label": "赛前新闻",
@@ -2488,7 +2497,8 @@ def activation_status() -> dict:
         attention.append("backtest_run_unavailable")
     if not passing_research:
         attention.append("research_run_unavailable")
-    if any(item.get("status") in {"failed", "partial", "not_run"} for item in sources[:4]):
+    actionable_sources = [item for item in sources if item.get("reason") != "provider_required"]
+    if any(item.get("status") in {"failed", "partial", "not_run"} for item in actionable_sources):
         attention.append("provider_operations_need_attention")
 
     return public_payload(

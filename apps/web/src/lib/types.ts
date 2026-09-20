@@ -354,8 +354,8 @@ export interface EvidenceContext {
   player_value?: {
     provider_configured: boolean;
     source: string | null;
-    redisplay_authorized: boolean;
     coverage: string[];
+    cutoff_at?: string | null;
     available_count: number;
     missing_count: number;
     status: "available" | "unavailable";
@@ -837,6 +837,7 @@ export interface JobRun {
     | "dongqiudi_prematch"
     | "clubeelo"
     | "transfers_backfill"
+    | "player_values_backfill"
     | "player_stats_backfill"
     | "player_impact_rules"
     | "ensemble_learning"
@@ -857,6 +858,7 @@ export interface ActivationSourceStatus {
   reason?: "provider_required" | string;
   last_run_at?: string | null;
   error?: string | null;
+  details?: Record<string, unknown> | null;
 }
 
 export interface ActivationStatus {

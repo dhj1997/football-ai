@@ -269,6 +269,19 @@ function formatTimestamp(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatValueDate(value: string | null) {
+  if (!value) return "日期待确认";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
+function playerValueSourceLabel(source: string | null) {
+  return source === "dongqiudi" ? "懂球帝" : source ?? "来源待确认";
+}
+
 function formatPreciseTimestamp(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
@@ -1592,7 +1605,7 @@ function SquadTable({
                       className="truncate text-right font-mono tabular-nums text-slate-300"
                       title={
                         player.market_value_source
-                          ? `${player.market_value_source} · ${player.market_value_as_of ? formatTimestamp(player.market_value_as_of) : "时间待确认"}`
+                          ? `${playerValueSourceLabel(player.market_value_source)} · ${formatValueDate(player.market_value_as_of ?? null)}`
                           : "暂无可靠身价"
                       }
                     >
@@ -1840,7 +1853,7 @@ export function TeamProfiles({
             eyebrow="SQUAD REGISTER"
             title="全队球员与身价"
             level={3}
-            meta="身价字段需授权数据源"
+            meta="懂球帝历史身价 · 日期见球员行"
           />
           <div className="grid gap-3 lg:grid-cols-2">
             <SquadTable
@@ -2185,7 +2198,7 @@ export function PlayerImpactPanel({ detail }: { detail: FixtureDetail }) {
       player.market_value_eur !== null && player.market_value_eur !== undefined,
   );
   const valueMeta = valuePlayer?.market_value_source
-    ? `${valuePlayer.market_value_source} · ${valuePlayer.market_value_as_of ? formatTimestamp(valuePlayer.market_value_as_of) : "时间待确认"}`
+    ? `${playerValueSourceLabel(valuePlayer.market_value_source)} · ${formatValueDate(valuePlayer.market_value_as_of ?? null)}`
     : "暂无可靠身价";
   if (!impact)
     return (

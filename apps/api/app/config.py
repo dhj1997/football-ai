@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     match_stats_backfill_limit: int = 25
     automation_player_stats_interval_minutes: int = 1440
     player_stats_backfill_limit: int = 8
+    automation_player_values_interval_minutes: int = 1440
+    player_values_backfill_limit: int = 120
+    player_values_lookahead_days: int = 14
+    player_values_stale_days: int = 14
     automation_player_impact_interval_minutes: int = 60
     player_impact_backfill_limit: int = 32
     automation_discipline_interval_minutes: int = 60

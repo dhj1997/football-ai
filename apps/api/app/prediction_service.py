@@ -388,7 +388,11 @@ class PredictionService:
         if recent_form is not None:
             context["recent_form"] = recent_form
         if self.player_value_service is not None:
-            await self.player_value_service.enrich(context, str(fixture.get("league_key") or ""))
+            await self.player_value_service.enrich(
+                context,
+                str(fixture.get("league_key") or ""),
+                cutoff_at=prediction_timestamp,
+            )
         if self.player_stats_service is not None:
             # 球员赛季统计只增强证据层；失败不阻断预测。
             try:

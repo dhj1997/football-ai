@@ -3,14 +3,26 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.database import PredictionRepository
-from app.player_value_provider import NullPlayerValueProvider, PlayerValueService
+from app.player_value_provider import (
+    NullPlayerValueProvider,
+    PlayerValueService,
+    parse_dongqiudi_player_value,
+)
+from app.team_names import to_chinese_player_name
 
 
 def context() -> dict:
     return {
-        "source": "espn-evidence",
+        "source": "dongqiudi",
         "squads": {
-            "home": [{"id": "1", "name": "测试球员", "original_name": "测试球员"}],
+            "home": [
+                {
+                    "id": "50222265",
+                    "provider_player_id": "50222265",
+                    "name": "Wei Shihao",
+                    "original_name": "Wei Shihao",
+                }
+            ],
             "away": [],
         },
         "lineup": {"home_players": [], "away_players": []},
@@ -33,63 +45,100 @@ async def test_null_provider_keeps_market_value_missing(tmp_path) -> None:
     assert evidence["player_value"]["reason"]
 
 
+def test_dongqiudi_history_is_normalized_with_chinese_name() -> None:
+    result = parse_dongqiudi_player_value(
+        {
+            "base_info": {"person_id": "50222265", "person_name": "Wei Shihao"},
+            "history_market_values": {
+                "2025": [
+                    {
+                        "record_date": "2025-06-19",
+                        "market_value": 850000,
+                        "person_info": {"id": "222265"},
+                    },
+                    {"record_date": "bad-date", "market_value": 900000},
+                ],
+                "2026": [{"record_date": "2026-06-08", "market_value": 750000}],
+            },
+        },
+        canonical_player_id="player-1",
+        provider_player_id="50222265",
+        source_url="https://www.dongqiudi.com/player/50222265",
+        captured_at="2026-09-20T00:00:00+00:00",
+    )
+
+    assert result is not None
+    assert result["player_name"] == to_chinese_player_name("Wei Shihao")
+    assert result["market_value_eur"] == 750000
+    assert result["market_value_as_of"] == "2026-06-08"
+    assert result["provider_player_id"] == "50222265"
+    assert result["history"][0]["provider_person_id"] == "222265"
+    assert len(result["history"]) == 2
+
+
 @pytest.mark.asyncio
-async def test_provider_requires_authorized_three_league_coverage(tmp_path) -> None:
-    class UnauthorizedProvider:
+async def test_enrichment_is_cache_only_and_respects_prediction_cutoff(tmp_path) -> None:
+    class Provider:
         configured = True
-        source_name = "unlicensed-test"
-        supported_leagues = frozenset({"epl", "laliga"})
-        redisplay_authorized = False
+        source_name = "dongqiudi"
+        supported_leagues = frozenset({"epl", "laliga", "csl"})
 
         def __init__(self) -> None:
             self.calls = 0
 
-        async def fetch_values(self, canonical_player_ids, league_key):
+        async def fetch_player_value(self, player):
             self.calls += 1
-            return []
+            raise AssertionError("prediction enrichment must not call Dongqiudi")
 
-    provider = UnauthorizedProvider()
-    repository = PredictionRepository(str(tmp_path / "blocked-values.db"))
+    repository = PredictionRepository(str(tmp_path / "cutoff-values.db"))
     repository.initialize()
+    provider = Provider()
+    evidence = context()
+    await PlayerValueService(NullPlayerValueProvider(), repository).enrich(evidence, "epl")
+    player_id = evidence["squads"]["home"][0]["canonical_player_id"]
+    repository.save_player_values(
+        [
+            {
+                "canonical_player_id": player_id,
+                "provider_player_id": "50222265",
+                "market_value_eur": 20_000_000,
+                "market_value_source": "dongqiudi",
+                "market_value_as_of": "2026-08-01",
+                "cached_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+                "history": [
+                    {
+                        "market_value_eur": 10_000_000,
+                        "market_value_currency": "EUR",
+                        "market_value_source": "dongqiudi",
+                        "market_value_as_of": "2026-01-01",
+                        "captured_at": "2026-09-20T00:00:00+00:00",
+                    },
+                    {
+                        "market_value_eur": 20_000_000,
+                        "market_value_currency": "EUR",
+                        "market_value_source": "dongqiudi",
+                        "market_value_as_of": "2026-08-01",
+                        "captured_at": "2026-09-20T00:00:00+00:00",
+                    },
+                ],
+            }
+        ]
+    )
 
-    await PlayerValueService(provider, repository).enrich(context(), "epl")
+    await PlayerValueService(provider, repository).enrich(
+        evidence,
+        "epl",
+        cutoff_at="2026-03-01T00:00:00+00:00",
+    )
 
+    player = evidence["squads"]["home"][0]
+    assert player["market_value_eur"] == 10_000_000
+    assert player["market_value_as_of"] == "2026-01-01"
     assert provider.calls == 0
 
 
 @pytest.mark.asyncio
-async def test_authorized_value_is_cached_and_can_be_read_without_provider(tmp_path) -> None:
-    class LicensedProvider:
-        configured = True
-        source_name = "licensed-test"
-        supported_leagues = frozenset({"epl", "laliga", "csl"})
-        redisplay_authorized = True
-
-        async def fetch_values(self, canonical_player_ids, league_key):
-            return [
-                {
-                    "canonical_player_id": canonical_player_ids[0],
-                    "market_value_eur": 25_000_000,
-                    "market_value_source": self.source_name,
-                    "market_value_as_of": datetime.now(UTC).replace(microsecond=0).isoformat(),
-                }
-            ]
-
-    repository = PredictionRepository(str(tmp_path / "cached-values.db"))
-    repository.initialize()
-    first = context()
-    await PlayerValueService(LicensedProvider(), repository).enrich(first, "epl")
-    cached = context()
-    await PlayerValueService(NullPlayerValueProvider(), repository).enrich(cached, "epl")
-
-    player = cached["squads"]["home"][0]
-    assert player["market_value_eur"] == 25_000_000
-    assert player["market_value_source"] == "licensed-test"
-    assert player["market_value_freshness"] == "fresh"
-
-
-@pytest.mark.asyncio
-async def test_stale_cached_value_does_not_break_enrichment(tmp_path) -> None:
+async def test_stale_cache_does_not_hide_value(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "stale-values.db"))
     repository.initialize()
     evidence = context()
@@ -100,13 +149,15 @@ async def test_stale_cached_value_does_not_break_enrichment(tmp_path) -> None:
             {
                 "canonical_player_id": player_id,
                 "market_value_eur": 1_000_000,
-                "market_value_source": "licensed-test",
-                "market_value_as_of": (datetime.now(UTC) - timedelta(days=45)).isoformat(),
-                "cached_at": datetime.now(UTC).isoformat(),
+                "market_value_source": "dongqiudi",
+                "market_value_as_of": "2026-01-01",
+                "cached_at": (datetime.now(UTC) - timedelta(days=45)).isoformat(),
             }
         ]
     )
 
     await PlayerValueService(NullPlayerValueProvider(), repository).enrich(evidence, "epl")
 
-    assert evidence["squads"]["home"][0]["market_value_status"] == "stale"
+    player = evidence["squads"]["home"][0]
+    assert player["market_value_eur"] == 1_000_000
+    assert player["market_value_status"] == "stale"

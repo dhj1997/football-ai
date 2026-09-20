@@ -47,6 +47,7 @@ class AutomationRunner:
         clubeelo_service: Any | None = None,
         dongqiudi_team_service: Any | None = None,
         squad_fallback_provider: Any | None = None,
+        player_value_provider: Any | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -69,6 +70,7 @@ class AutomationRunner:
         self.dongqiudi_team_service = dongqiudi_team_service
         self.squad_fallback_provider = squad_fallback_provider
         self.squad_fallback = squad_fallback_provider
+        self.player_value_provider = player_value_provider
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._jobs: dict[str, tuple[int, Callable[[], Awaitable[dict[str, Any]]]]] = {
@@ -156,6 +158,11 @@ class AutomationRunner:
             self._jobs["squad_backfill"] = (
                 max(30, int(getattr(settings, "automation_squad_backfill_interval_minutes", 60))),
                 self._backfill_squads,
+            )
+        if player_value_provider is not None and getattr(player_value_provider, "configured", False):
+            self._jobs["player_values_backfill"] = (
+                max(60, int(getattr(settings, "automation_player_values_interval_minutes", 1440))),
+                self._backfill_player_values,
             )
         if dongqiudi_sync_service is not None and bool(getattr(settings, "dongqiudi_enabled", True)):
             self._jobs["dongqiudi_schedule"] = (
@@ -536,6 +543,19 @@ class AutomationRunner:
             self.api_football_service,
             dongqiudi_provider=self.dongqiudi_team_service,
             limit=limit,
+        )
+
+    async def _backfill_player_values(self) -> dict[str, Any]:
+        """Refresh Dongqiudi values for players in upcoming cached squads."""
+
+        from .player_value_sync import sync_player_values
+
+        return await sync_player_values(
+            self.repository,
+            self.player_value_provider,
+            limit=max(1, int(getattr(self.settings, "player_values_backfill_limit", 120))),
+            lookahead_days=max(1, int(getattr(self.settings, "player_values_lookahead_days", 14))),
+            stale_after_days=max(1, int(getattr(self.settings, "player_values_stale_days", 14))),
         )
 
     async def _sync_clubeelo(self) -> dict[str, Any]:

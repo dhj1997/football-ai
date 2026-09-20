@@ -114,6 +114,7 @@ def runner(
     dongqiudi=None,
     dongqiudi_team=None,
     squad_fallback=None,
+    player_value=None,
 ) -> AutomationRunner:
     return AutomationRunner(
         settings(),
@@ -127,6 +128,7 @@ def runner(
         dongqiudi_sync_service=dongqiudi,
         dongqiudi_team_service=dongqiudi_team,
         squad_fallback_provider=squad_fallback,
+        player_value_provider=player_value,
     )
 
 
@@ -253,6 +255,27 @@ async def test_analysis_uses_only_thesportsdb_public_evidence(tmp_path) -> None:
     assert evidence.public_calls == 1
     assert result["result"]["prediction_count"] == 1
     assert repository.fixture("fixture-fallback")["evidence"]["source"] == "thesportsdb-partial"
+
+
+@pytest.mark.asyncio
+async def test_player_value_backfill_job_is_registered_and_persisted(tmp_path) -> None:
+    class PlayerValueProvider:
+        configured = True
+        source_name = "dongqiudi"
+        request_interval_seconds = 0
+
+        async def fetch_player_value(self, player):
+            raise AssertionError("zero-target run must not fetch players")
+
+    repository = PredictionRepository(str(tmp_path / "player-value-job.db"))
+    repository.initialize()
+    automation = runner(repository, player_value=PlayerValueProvider())
+
+    run = await automation.run_job("player_values_backfill")
+
+    assert run["status"] == "success"
+    assert run["result"]["status"] == "zero_targets"
+    assert repository.last_job_run("player_values_backfill")["id"] == run["id"]
 
 
 def test_legacy_prediction_without_ai_metadata_is_upgraded(tmp_path) -> None:

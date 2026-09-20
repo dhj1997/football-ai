@@ -70,9 +70,10 @@ def test_activation_status_composes_real_read_only_components() -> None:
         for item in payload["providers"]["sources"]
         if item["status"] == "unavailable"
     } == {
-        ("player_values", "provider_required"),
         ("prematch_news", "provider_required"),
     }
+    player_values = next(item for item in payload["providers"]["sources"] if item["key"] == "player_values")
+    assert player_values["status"] in {"ready", "partial", "failed", "not_run"}
 
 
 def test_activation_status_separates_exploratory_and_confirmatory_research(monkeypatch) -> None:
