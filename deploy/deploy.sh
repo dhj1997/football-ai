@@ -62,14 +62,26 @@ sudo -u football-ai env PATH=\$PATH pnpm build
 
 echo "[6/7] 重启服务"
 "$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 120 -c "
+set -e
 systemctl restart football-ai-api football-ai-web
-sleep 6
+systemctl is-active --quiet football-ai-api football-ai-web
 systemctl --no-pager --lines=3 status football-ai-api football-ai-web | head -30
 "
 
 echo "[7/7] 健康检查"
 "$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 60 -c "
-curl -fsS http://127.0.0.1:8000/health | head -c 200; echo
+set -e
+for ATTEMPT in \$(seq 1 30); do
+  if HEALTH=\$(curl -fsS --max-time 3 http://127.0.0.1:8000/health); then
+    printf '%s' \"\$HEALTH\" | head -c 200; echo
+    break
+  fi
+  if [ \"\$ATTEMPT\" -eq 30 ]; then
+    echo 'api health FAILED after 30 attempts' >&2
+    exit 1
+  fi
+  sleep 1
+done
 curl -fsS -o /dev/null -w 'web:%{http_code}\n' http://127.0.0.1:3200/
 "
 
