@@ -14,6 +14,27 @@ BACKUP_DIR=/opt/football-ai/backups
 VERIFICATION_MARKER="$BACKUP_DIR/last-verified.json"
 cd "$APP_DIR"
 
+WORK_DIR=$(mktemp -d /tmp/football-ai-backup-verify.XXXXXX)
+case "$WORK_DIR" in
+  /tmp/football-ai-backup-verify.*) ;;
+  *) echo "invalid temporary directory: $WORK_DIR" >&2; exit 1 ;;
+esac
+READINESS_JSON="$WORK_DIR/readiness.json"
+MYSQLDUMP_ERROR="$WORK_DIR/mysqldump.err"
+RESTORE_ERROR="$WORK_DIR/restore.err"
+FINGERPRINT_PROD="$WORK_DIR/fp-prod.txt"
+FINGERPRINT_CHECK="$WORK_DIR/fp-check.txt"
+cleanup() {
+  case "$WORK_DIR" in
+    /tmp/football-ai-backup-verify.*)
+      rm -f -- "$READINESS_JSON" "$MYSQLDUMP_ERROR" "$RESTORE_ERROR" \
+        "$FINGERPRINT_PROD" "$FINGERPRINT_CHECK"
+      rmdir -- "$WORK_DIR" 2>/dev/null || true
+      ;;
+  esac
+}
+trap cleanup EXIT
+
 KEY=$(grep -E '^ADMIN_API_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"')
 URL=$(grep -E '^DATABASE_URL=' .env | head -1 | cut -d= -f2- | tr -d '"')
 CREDS=$(echo "$URL" | sed -E 's|^mysql(\+pymysql)?://||; s|@.*||')
@@ -27,10 +48,12 @@ DBPORT=$(echo "$HOSTPORT" | cut -d: -f2)
 M() { mysql -h "$DBHOST" -P "$DBPORT" -u "$DBUSER" "$@"; }
 
 echo "== readiness =="
-if curl -fsS -m 30 -H "x-admin-key: $KEY" http://127.0.0.1:8000/api/production/readiness > /tmp/readiness.json; then
-  python3 - <<'PYEOF' 2>/dev/null || head -c 800 /tmp/readiness.json
+if curl -fsS -m 30 -H "x-admin-key: $KEY" http://127.0.0.1:8000/api/production/readiness > "$READINESS_JSON"; then
+  python3 - "$READINESS_JSON" <<'PYEOF' 2>/dev/null || head -c 800 "$READINESS_JSON"
 import json
-data = json.load(open('/tmp/readiness.json'))
+import sys
+
+data = json.load(open(sys.argv[1], encoding='utf-8'))
 print('status:', data.get('status'))
 print('environment:', data.get('environment'))
 print('config_violations:', data.get('config_violations'))
@@ -58,10 +81,10 @@ if [ -n "${2:-}" ] && [ -f "${2}" ]; then
   echo "reusing existing dump: $DUMP"
 else
   mkdir -p "$BACKUP_DIR"
-  mysqldump -h "$DBHOST" -P "$DBPORT" -u "$DBUSER" --single-transaction --quick --routines --triggers --events "$DB" > "$DUMP" 2>/tmp/mysqldump.err
+  mysqldump -h "$DBHOST" -P "$DBPORT" -u "$DBUSER" --single-transaction --quick --routines --triggers --events "$DB" > "$DUMP" 2>"$MYSQLDUMP_ERROR"
   DUMP_RC=$?
   if [ $DUMP_RC -ne 0 ]; then
-    echo "mysqldump FAILED: $(head -c 200 /tmp/mysqldump.err)"
+    echo "mysqldump FAILED: $(head -c 200 "$MYSQLDUMP_ERROR")"
     exit 1
   fi
   gzip -f "$DUMP"
@@ -78,8 +101,8 @@ if [[ "$DUMP" == *.gz ]]; then
 else
   RESTORE_CMD=(cat "$DUMP")
 fi
-if ! "${RESTORE_CMD[@]}" | M "$CHECKDB" > /tmp/restore.err 2>&1; then
-  echo "restore FAILED: $(head -c 300 /tmp/restore.err)"
+if ! "${RESTORE_CMD[@]}" | M "$CHECKDB" > "$RESTORE_ERROR" 2>&1; then
+  echo "restore FAILED: $(head -c 300 "$RESTORE_ERROR")"
   M -e "DROP DATABASE IF EXISTS $CHECKDB;"
   exit 1
 fi
@@ -90,7 +113,6 @@ HOT_TABLES="job_runs|odds_snapshots|sync_metadata|data_sync_runs"
 ALL_TABLE_LIST=$(M -N -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$DB' AND table_type='BASE TABLE';")
 TABLE_LIST=$(printf '%s\n' "$ALL_TABLE_LIST" | grep -Ev "^($HOT_TABLES)$")
 MATCH=0; MISMATCH=0; MISSING=0; QUERY_ERROR=0
-FINGERPRINT_PROD=/tmp/fp-prod.txt; FINGERPRINT_CHECK=/tmp/fp-check.txt
 : > "$FINGERPRINT_PROD"; : > "$FINGERPRINT_CHECK"
 for T in $ALL_TABLE_LIST; do
   PRESENT=$(M -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$CHECKDB' AND table_name='$T';" 2>/dev/null)
