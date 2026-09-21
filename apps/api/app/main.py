@@ -121,7 +121,7 @@ from .feature_coverage import build_feature_coverage
 from .no_ml_guard import NoMLNumericPathError
 from .probability_engine import ProbabilityEngineError, TransparentProbabilityEngine
 from .schedule_provider import TheSportsDbProvider
-from .schedule_sync import ScheduleSyncService, deduplicate_fixtures
+from .schedule_sync import ScheduleSyncService, deduplicate_fixtures, filter_fixture_rows
 from .settlement import SettlementService
 from .team_names import to_chinese_team_name
 from .recent_form import RecentFormService
@@ -733,6 +733,12 @@ def _kickoff_started(fixture: dict) -> bool:
     return kickoff <= datetime.now(UTC)
 
 
+def _is_upcoming_fixture(fixture: dict) -> bool:
+    """Return whether a fixture is still in progress or yet to start."""
+
+    return str(fixture.get("status") or "").casefold() in {"scheduled", "live"}
+
+
 def _fixture_evidence_summary(fixture: dict) -> dict:
     context = fixture.get("evidence") or {}
     recent_form = context.get("recent_form") or {}
@@ -869,7 +875,7 @@ def health() -> dict:
 
 @app.get("/api/fixtures")
 async def fixtures(
-    date_filter: Annotated[Literal["yesterday", "today", "tomorrow", "upcoming", "history"], Query(alias="date")] = "today",
+    date_filter: Annotated[Literal["yesterday", "today", "tomorrow", "upcoming", "history"], Query(alias="date")] = "upcoming",
     league: str = "all",
     season: str | None = None,
     date_from: str | None = None,
@@ -885,6 +891,7 @@ async def fixtures(
             raise HTTPException(status_code=400, detail="赛事筛选项无效或当前数据源未覆盖")
         league = canonical_league.casefold()
     now = datetime.now(CHINA_TZ).date()
+    upcoming_window = date_filter == "upcoming" and date_from is None and date_to is None
     start_date: str | None
     end_date: str | None
     if date_from is not None or date_to is not None:
@@ -921,11 +928,13 @@ async def fixtures(
         sync_state = schedule_sync.cached_state()
         if sync_state["status"] != "fresh":
             schedule_sync.refresh_in_background()
-    all_rows = deduplicate_fixtures(cached_rows)
+    all_rows = filter_fixture_rows(deduplicate_fixtures(cached_rows))
     league_key = None if league == "all" else league
     rows = all_rows if league_key is None else [row for row in all_rows if row["league_key"] == league_key]
     if season is not None:
         rows = [row for row in rows if str(row.get("season") or "") == str(season)]
+    if upcoming_window:
+        rows = [row for row in rows if _is_upcoming_fixture(row)]
     if date_filter == "history":
         rows.reverse()
 
@@ -940,15 +949,20 @@ async def fixtures(
 
     sync = repository.fixture_sync()
     if not rows and not sync and settings.use_demo_data:
-        rows = demo_fixtures(now)
+        rows = filter_fixture_rows(demo_fixtures(now))
         if date_filter == "today":
             rows = [item for item in rows if datetime.fromisoformat(item["kickoff"]).date() == now]
         elif date_filter == "yesterday":
             rows = [item for item in rows if datetime.fromisoformat(item["kickoff"]).date() == now - timedelta(days=1)]
         elif date_filter == "tomorrow":
             rows = [item for item in rows if datetime.fromisoformat(item["kickoff"]).date() == now + timedelta(days=1)]
-        elif date_filter == "upcoming":
-            rows = [item for item in rows if now <= datetime.fromisoformat(item["kickoff"]).date() <= now + timedelta(days=6)]
+        elif upcoming_window:
+            rows = [
+                item
+                for item in rows
+                if now <= datetime.fromisoformat(item["kickoff"]).date() <= now + timedelta(days=6)
+                and _is_upcoming_fixture(item)
+            ]
         else:
             rows = [item for item in rows if datetime.fromisoformat(item["kickoff"]).date() < now]
         if league_key:

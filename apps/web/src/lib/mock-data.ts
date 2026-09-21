@@ -178,7 +178,11 @@ export function getMockFixtures(date: DateFilter, league: FixtureLeagueFilter): 
     if (date === "today") return f.fixture_date === todayStr;
     if (date === "tomorrow") return f.fixture_date === tomStr;
     if (date === "yesterday") return f.fixture_date === yestStr;
-    if (date === "upcoming") return (f.fixture_date ?? "") >= todayStr;
+    if (date === "upcoming") {
+      const fixtureDate = f.fixture_date ?? "";
+      const endDate = formatDateStr(6);
+      return fixtureDate >= todayStr && fixtureDate <= endDate && ["scheduled", "live"].includes(f.status);
+    }
     if (date === "history") return (f.fixture_date ?? "") < todayStr;
     return true;
   });

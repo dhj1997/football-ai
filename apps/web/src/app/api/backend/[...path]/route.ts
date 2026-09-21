@@ -27,7 +27,7 @@ function handleMockFallback(path: string[], searchParams: URLSearchParams) {
   const pathStr = path.join("/");
 
   if (pathStr === "api/fixtures" || pathStr === "fixtures") {
-    const date = (searchParams.get("date") ?? "today") as DateFilter;
+    const date = (searchParams.get("date") ?? "upcoming") as DateFilter;
     const league = (searchParams.get("league") ?? "all") as FixtureLeagueFilter;
     const items = getMockFixtures(date, league);
     return NextResponse.json({

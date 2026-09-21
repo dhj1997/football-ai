@@ -265,6 +265,42 @@ def test_fixture_list_supports_yesterday_and_upcoming_with_compact_summary(monke
         repository.upsert_fixture(fixture)
         fixtures.append(fixture)
 
+    finished_today = deepcopy(fixtures[1])
+    finished_today.update(
+        {
+            "id": "api-date-window-finished-today",
+            "kickoff": (datetime.combine(today, datetime.min.time(), tzinfo=CHINA_TZ) + timedelta(minutes=30)).isoformat(),
+            "status": "finished",
+            "score": {"home": 1, "away": 0},
+        }
+    )
+    repository.upsert_fixture(finished_today)
+    fixtures.append(finished_today)
+
+    friendly_other = deepcopy(fixtures[1])
+    friendly_other.update(
+        {
+            "id": "api-friendly-other",
+            "league_key": "international_friendlies",
+            "league": {"id": 10, "name": "国际友谊赛", "country": "国际", "mark": "IF"},
+            "home_team": {"name": "日本", "original_name": "Japan"},
+            "away_team": {"name": "韩国", "original_name": "South Korea"},
+        }
+    )
+    repository.upsert_fixture(friendly_other)
+    fixtures.append(friendly_other)
+
+    friendly_china = deepcopy(friendly_other)
+    friendly_china.update(
+        {
+            "id": "api-friendly-china",
+            "home_team": {"name": "中国", "original_name": "China PR"},
+            "away_team": {"name": "日本", "original_name": "Japan"},
+        }
+    )
+    repository.upsert_fixture(friendly_china)
+    fixtures.append(friendly_china)
+
     requested_windows: list[tuple[str | None, str | None]] = []
 
     def cached_fixtures(start_date: str | None, end_date: str | None) -> list[dict]:
@@ -303,6 +339,9 @@ def test_fixture_list_supports_yesterday_and_upcoming_with_compact_summary(monke
     upcoming_items = {item["id"]: item for item in upcoming.json()["items"]}
     assert {"api-date-window-0", "api-date-window-6"} <= set(upcoming_items)
     assert "api-date-window-7" not in upcoming_items
+    assert "api-date-window-finished-today" not in upcoming_items
+    assert "api-friendly-other" not in upcoming_items
+    assert "api-friendly-china" in upcoming_items
     summary_item = upcoming_items["api-date-window-0"]
     assert summary_item["fixture_date"] == fixtures[1]["fixture_date"]
     assert "evidence" not in summary_item

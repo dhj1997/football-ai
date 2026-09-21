@@ -8,6 +8,72 @@ from .data import CHINA_TZ
 from .team_names import to_chinese_team_name
 
 
+_CHINA_MENS_TEAM_NAMES = {
+    "中国",
+    "中国男足",
+    "中国国家队",
+    "中国国家男子足球队",
+    "china",
+    "china pr",
+    "pr china",
+    "people's republic of china",
+    "people republic of china",
+    "china national team",
+    "china national football team",
+}
+_NON_SENIOR_TEAM_MARKERS = (
+    "u19",
+    "u20",
+    "u21",
+    "u23",
+    "u-19",
+    "u-20",
+    "u-21",
+    "u-23",
+    "youth",
+    "olympic",
+    "women",
+    "female",
+    "ladies",
+    "女足",
+    "女子",
+    "青年",
+    "奥运",
+)
+
+
+def _is_china_mens_team(team: Any) -> bool:
+    """Match the senior men's China team without admitting Hong Kong or U23."""
+
+    if not isinstance(team, dict):
+        return False
+    for candidate in (team.get("name"), team.get("original_name")):
+        raw = str(candidate or "").strip()
+        if not raw:
+            continue
+        folded = " ".join(raw.casefold().replace("_", " ").split())
+        if any(marker in folded for marker in _NON_SENIOR_TEAM_MARKERS):
+            continue
+        localized = to_chinese_team_name(raw).strip()
+        if localized in _CHINA_MENS_TEAM_NAMES or folded in _CHINA_MENS_TEAM_NAMES:
+            return True
+        if folded.startswith("china ") and "hong kong" not in folded and "taipei" not in folded:
+            return True
+    return False
+
+
+def filter_fixture_rows(fixtures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only China senior-team fixtures for international friendlies."""
+
+    return [
+        fixture
+        for fixture in fixtures
+        if str(fixture.get("league_key") or "").casefold() != "international_friendlies"
+        or _is_china_mens_team(fixture.get("home_team"))
+        or _is_china_mens_team(fixture.get("away_team"))
+    ]
+
+
 class ScheduleSyncService:
     """Refresh the schedule cache once when it is absent or stale."""
 
@@ -138,12 +204,12 @@ class ScheduleSyncService:
                 provider_errors.append(f"{candidate.__class__.__name__}: {error}")
         if not rows and provider_errors:
             raise RuntimeError("; ".join(provider_errors))
-        rows = deduplicate_fixtures(rows)
+        rows = filter_fixture_rows(deduplicate_fixtures(rows))
         result_status = "unavailable"
         if self.result_provider is not None and bool(getattr(self.result_provider, "configured", False)):
             try:
                 result_rows = await self.result_provider.fixtures(start_date, end_date)
-                rows = _merge_result_rows(rows, result_rows)
+                rows = filter_fixture_rows(_merge_result_rows(rows, result_rows))
                 result_status = "updated"
             except Exception:
                 result_status = "failed"

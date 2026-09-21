@@ -124,56 +124,6 @@ function writeFavorites(ids: string[]) {
   }
 }
 
-function DateStrip({
-  selected,
-  onSelect,
-}: {
-  selected: string | null;
-  onSelect: (iso: string | null) => void;
-}) {
-  const today = new Date();
-  const days: Array<{ iso: string; day: string; date: string; isToday: boolean }> = [];
-  for (let offset = -3; offset <= 10; offset += 1) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + offset);
-    const iso = d.toLocaleDateString("sv-SE");
-    days.push({
-      iso,
-      day: offset === 0 ? "今天" : ["日", "一", "二", "三", "四", "五", "六"][d.getDay()],
-      date: `${d.getMonth() + 1}/${d.getDate()}`,
-      isToday: offset === 0,
-    });
-  }
-  return (
-    <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto" role="tablist" aria-label="按日期查看赛程">
-      {days.map((day) => {
-        const activeDay = selected === day.iso;
-        return (
-          <button
-            key={day.iso}
-            type="button"
-            role="tab"
-            aria-selected={activeDay}
-            onClick={() => onSelect(activeDay ? null : day.iso)}
-            className={`shrink-0 rounded-lg px-2.5 py-1.5 text-center transition-colors ${
-              activeDay
-                ? "bg-amber-500/20 text-amber-400"
-                : day.isToday
-                  ? "bg-pitch-800 text-slate-200 hover:bg-slate-700/50"
-                  : "text-slate-500 hover:bg-slate-800/40 hover:text-slate-300"
-            }`}
-          >
-            <span className="block text-[10px] leading-none">{day.day}</span>
-            <span className="mt-0.5 block font-mono text-xs font-semibold leading-none">
-              {day.date}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // Tailwind 工具类复用片段（替代原全局 CSS 类）。
 const eyebrowClass =
   "text-[10px] font-bold uppercase tracking-wider font-mono text-blue-400";
@@ -3616,9 +3566,7 @@ function defaultFixtureId(items: Fixture[]): string | null {
 }
 
 export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
-  const [dateFilter, setDateFilter] = useState<DateFilter>("today");
-  // 日期横条选中的具体日期（ISO）；设置后优先于 dateFilter 生效。
-  const [specificDate, setSpecificDate] = useState<string | null>(null);
+  const [dateFilter, setDateFilter] = useState<DateFilter>("upcoming");
   const [favorites, setFavorites] = useState<string[]>(() => readFavorites());
   const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [leagueFilter, setLeagueFilter] = useState<LeagueFilter>("all");
@@ -3647,7 +3595,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
 
   useEffect(() => {
     let active = true;
-    const cached = specificDate ? null : readCachedFixtures(dateFilter, "all");
+    const cached = readCachedFixtures(dateFilter, "all");
     if (cached) {
       queueMicrotask(() => {
         if (!active) return;
@@ -3666,7 +3614,7 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
         setLoading(false);
       });
     }
-    void fetchFixtures(dateFilter, "all", specificDate ?? undefined)
+    void fetchFixtures(dateFilter, "all")
       .then((response) => {
         if (!active) return;
         setFixtures(response.items);
@@ -3692,14 +3640,12 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
       .finally(() => {
         if (active) setLoading(false);
       });
-    if (!specificDate) {
-      if (dateFilter === "today") prefetchFixtures("tomorrow", "all");
-      if (dateFilter === "tomorrow") prefetchFixtures("today", "all");
-    }
+    if (dateFilter === "today") prefetchFixtures("tomorrow", "all");
+    if (dateFilter === "tomorrow") prefetchFixtures("today", "all");
     return () => {
       active = false;
     };
-  }, [dateFilter, specificDate, operatorMode, reloadToken]);
+  }, [dateFilter, operatorMode, reloadToken]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -3819,20 +3765,12 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
             description="筛选值得研究的比赛，再核对证据、模型共识与风险。"
             aside={
               <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-auto sm:items-end">
-                <DateStrip
-                  selected={specificDate}
-                  onSelect={(iso) => {
-                    setLoading(true);
-                    setSpecificDate(iso);
-                  }}
-                />
                 <Tabs
                   ariaLabel="日期范围"
                   value={dateFilter}
                   className="w-full justify-start sm:w-auto sm:justify-end"
                   onChange={(value) => {
                     setLoading(true);
-                    setSpecificDate(null);
                     setDateFilter(value);
                   }}
                   items={dateTabs.map((tab) => ({
@@ -3985,14 +3923,6 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
           }
           aside={
             <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-auto sm:items-end">
-              <DateStrip
-                selected={specificDate}
-                onSelect={(iso) => {
-                  setLoading(true);
-                  setSuccess(null);
-                  setSpecificDate(iso);
-                }}
-              />
               <Tabs
                 ariaLabel="日期范围"
                 value={dateFilter}
@@ -4000,7 +3930,6 @@ export function FixtureWorkspace({ operatorMode }: { operatorMode: boolean }) {
                 onChange={(value) => {
                   setLoading(true);
                   setSuccess(null);
-                  setSpecificDate(null);
                   setDateFilter(value);
                 }}
                 items={dateTabs.map((tab) => ({ value: tab.key, label: tab.label }))}

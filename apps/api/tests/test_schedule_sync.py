@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.schedule_sync import ScheduleSyncService, deduplicate_fixtures
+from app.schedule_sync import ScheduleSyncService, deduplicate_fixtures, filter_fixture_rows
 
 
 class FakeRepository:
@@ -52,6 +52,28 @@ def fixture_row(*, status="live", score=None, away="布莱顿"):
         "home_team": {"name": "切尔西"},
         "away_team": {"name": away},
     }
+
+
+def test_filter_fixture_rows_limits_international_friendlies_to_china_mens_team() -> None:
+    china = {
+        **fixture_row(status="scheduled", score=None, away="日本"),
+        "id": "friendly-china",
+        "league_key": "international_friendlies",
+        "home_team": {"name": "China PR", "original_name": "China PR"},
+    }
+    unrelated = {
+        **fixture_row(status="scheduled", score=None, away="韩国"),
+        "id": "friendly-unrelated",
+        "league_key": "international_friendlies",
+        "home_team": {"name": "日本", "original_name": "Japan"},
+    }
+    u23 = {
+        **china,
+        "id": "friendly-u23",
+        "home_team": {"name": "中国U23", "original_name": "China U23"},
+    }
+
+    assert [row["id"] for row in filter_fixture_rows([china, unrelated, u23])] == ["friendly-china"]
 
 
 class FixtureProvider(FakeProvider):
