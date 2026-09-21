@@ -187,6 +187,71 @@ def test_asian_settlement_is_aggregated_in_metrics(tmp_path) -> None:
     assert service.metrics()["asian_handicap_results"]["half_win"] == 1
 
 
+def test_financial_metrics_include_settled_bet_without_evaluation(tmp_path) -> None:
+    repository = PredictionRepository(
+        str(tmp_path / "ledger-metrics.db"),
+        "p1",
+        ("deepseek",),
+        initial_balance=5000.0,
+    )
+    repository.initialize()
+    orphan_prediction = prediction()
+    orphan_prediction.update(
+        {
+            "id": "orphan-ledger-prediction",
+            "fixture_id": "orphan-ledger-fixture",
+            "model_key": "deepseek",
+            "competition_id": "p1",
+        }
+    )
+    repository.save(orphan_prediction)
+    placed = repository.place_bet(
+        {
+            "id": "orphan-ledger-bet",
+            "prediction_id": orphan_prediction["id"],
+            "fixture_id": orphan_prediction["fixture_id"],
+            "fixture_date": "2026-08-29",
+            "placed_at": "2026-08-28T08:00:00+00:00",
+            "market": "1x2",
+            "selection": "home",
+            "handicap_line": None,
+            "odds": 2.0,
+            "stake": 100.0,
+            "league_key": "epl",
+            "season": "2026",
+            "model_version": orphan_prediction["model_version"],
+            "model_key": "deepseek",
+            "competition_id": "p1",
+        }
+    )
+    assert placed is not None
+    repository.settle_bet(
+        placed["id"],
+        "2026-08-29T20:00:00+00:00",
+        "full_loss",
+        0.0,
+    )
+    service = SettlementService(repository, "p1")
+
+    report = service.metrics(
+        league_key="epl",
+        season="2026",
+        start_date="2026-08-01",
+        end_date="2026-08-31",
+        model_key="deepseek",
+    )
+
+    assert report["sample_size"] == 0
+    assert report["portfolio"]["bets"] == 1
+    assert report["portfolio"]["stake"] == 100.0
+    assert report["portfolio"]["realized_pnl"] == -100.0
+    assert report["portfolio"]["roi"] == -1.0
+    assert report["portfolio"]["max_drawdown"] == 0.02
+    assert service.metrics(league_key="laliga", model_key="deepseek")["portfolio"]["bets"] == 0
+    assert service.metrics(start_date="2026-09-01", model_key="deepseek")["portfolio"]["bets"] == 0
+    assert service.metrics(season="2025", model_key="deepseek")["portfolio"]["bets"] == 0
+
+
 def test_metrics_expose_forecast_market_portfolio_layers_and_quality_gate(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "quality.db"))
     repository.initialize()

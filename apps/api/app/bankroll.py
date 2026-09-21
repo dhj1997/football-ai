@@ -494,6 +494,7 @@ class BankrollService:
             "bet_odds": selected_candidate.get("odds"),
             "stake": stake,
             "league_key": fixture.get("league_key"),
+            "season": fixture.get("season"),
             "kickoff": fixture.get("kickoff"),
             "home_team": (fixture.get("home_team") or {}).get("name"),
             "away_team": (fixture.get("away_team") or {}).get("name"),

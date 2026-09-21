@@ -96,6 +96,35 @@ def test_activation_status_separates_exploratory_and_confirmatory_research(monke
     assert research["confirmatory_count"] == 1
 
 
+def test_activation_status_reads_each_provider_latest_run_by_job_name(monkeypatch) -> None:
+    hidden_run = {
+        "job_name": "transfers_backfill",
+        "started_at": "2026-09-20T07:42:43+00:00",
+        "finished_at": "2026-09-20T07:43:59+00:00",
+        "status": "success",
+        "error_summary": None,
+        "result": {"status": "completed", "item_count": 256},
+    }
+
+    monkeypatch.setattr(repository, "job_runs", lambda job_name=None, limit=50: [])
+    monkeypatch.setattr(
+        repository,
+        "last_job_run",
+        lambda job_name: hidden_run if job_name == "transfers_backfill" else None,
+    )
+
+    response = client.get("/api/admin/activation-status", headers=_ADMIN)
+
+    assert response.status_code == 200
+    transfers = next(
+        item for item in response.json()["providers"]["sources"]
+        if item["key"] == "transfers_backfill"
+    )
+    assert transfers["status"] == "ready"
+    assert transfers["last_run_at"] == hidden_run["finished_at"]
+    assert transfers["details"] == hidden_run["result"]
+
+
 def test_backup_endpoint_reports_mysql_restore_marker(tmp_path, monkeypatch) -> None:
     marker = tmp_path / "last-verified.json"
     marker.write_text(

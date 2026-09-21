@@ -2448,13 +2448,9 @@ def activation_status() -> dict:
     sync_runs = repository.data_sync_runs(limit=300)
     conflicts = repository.fixture_conflicts(limit=200)
     telemetry = provider_reliability(sync_runs, fixture_conflicts=conflicts)
-    job_runs = repository.job_runs(limit=200)
-    latest_jobs: dict[str, dict] = {}
-    for run in job_runs:
-        latest_jobs.setdefault(str(run.get("job_name") or ""), run)
 
     def operation_source(job_key: str, label: str, *, source_key: str | None = None) -> dict:
-        run = latest_jobs.get(job_key)
+        run = repository.last_job_run(job_key)
         key = source_key or job_key
         if run is None:
             return {"key": key, "label": label, "status": "not_run", "last_run_at": None, "error": None}

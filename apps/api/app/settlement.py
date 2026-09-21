@@ -341,16 +341,33 @@ class SettlementService:
             for row in rows
             if isinstance(row.get("data_completeness"), (int, float))
         ]
-        prediction_ids = {row["prediction_id"] for row in rows}
+        settlements_by_prediction = {
+            str(row.get("prediction_id") or ""): row
+            for row in rows
+            if row.get("prediction_id")
+        }
+        settled_bets = [
+            bet
+            for bet in self.repository.bets(
+                status="settled",
+                model_key=model_key,
+                competition_id=competition_id or self.competition_id,
+            )
+            if _bet_matches_metrics_filters(
+                bet,
+                settlements_by_prediction.get(str(bet.get("prediction_id") or "")),
+                league_key=league_key,
+                season=season,
+                start_date=start_date,
+                end_date=end_date,
+                model_version=model_version,
+            )
+        ]
         asian_counts = {
             key: 0 for key in ("full_win", "half_win", "push", "half_loss", "full_loss")
         }
-        for bet in self.repository.bets(
-            status="settled",
-            model_key=model_key,
-            competition_id=competition_id or self.competition_id,
-        ):
-            if bet.get("prediction_id") not in prediction_ids or bet.get("market") != "asian_handicap":
+        for bet in settled_bets:
+            if bet.get("market") != "asian_handicap":
                 continue
             result = bet.get("settlement_result")
             if result in asian_counts:
@@ -407,19 +424,14 @@ class SettlementService:
             ),
             _forecast_probabilities,
         )
-        settled_bets = [
-            bet for bet in self.repository.bets(
-                status="settled",
-                model_key=model_key,
-                competition_id=competition_id or self.competition_id,
-            )
-            if bet.get("prediction_id") in prediction_ids
-        ]
         clv_values = [
             float(bet["clv"])
             for bet in settled_bets if bet.get("clv") is not None
         ]
-        portfolio = _portfolio_metrics(settled_bets)
+        portfolio = _portfolio_metrics(
+            settled_bets,
+            initial_balance=float(getattr(self.repository, "initial_balance", 1000.0)),
+        )
         executed_prediction_ids = {str(bet.get("prediction_id")) for bet in settled_bets}
         decision_statuses = [
             str((row.get("decision") or {}).get("status") or (
@@ -756,10 +768,46 @@ def _paired_model_comparison(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _portfolio_metrics(bets: list[dict[str, Any]]) -> dict[str, Any]:
+def _bet_matches_metrics_filters(
+    bet: dict[str, Any],
+    settlement: dict[str, Any] | None,
+    *,
+    league_key: str | None,
+    season: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    model_version: str | None,
+) -> bool:
+    """Apply report filters to immutable bet fields with settlement fallback."""
+
+    settlement = settlement or {}
+    fixture_date = str(bet.get("fixture_date") or settlement.get("fixture_date") or "")
+    values = {
+        "league_key": str(bet.get("league_key") or settlement.get("league_key") or ""),
+        "season": str(bet.get("season") or settlement.get("season") or ""),
+        "model_version": str(bet.get("model_version") or settlement.get("model_version") or ""),
+    }
+    if league_key and values["league_key"] != str(league_key):
+        return False
+    if season and values["season"] != str(season):
+        return False
+    if model_version and values["model_version"] != str(model_version):
+        return False
+    if start_date and (not fixture_date or fixture_date < str(start_date)):
+        return False
+    if end_date and (not fixture_date or fixture_date > str(end_date)):
+        return False
+    return True
+
+
+def _portfolio_metrics(
+    bets: list[dict[str, Any]],
+    *,
+    initial_balance: float = 1000.0,
+) -> dict[str, Any]:
     settled_staked = round(sum(float(item.get("stake") or 0) for item in bets), 2)
     profit = round(sum(float(item.get("net_profit") or 0) for item in bets), 2)
-    balance = 1000.0
+    balance = max(0.0, float(initial_balance))
     peak = balance
     max_drawdown = 0.0
     for bet in sorted(bets, key=lambda item: (str(item.get("settled_at") or ""), str(item.get("id") or ""))):
