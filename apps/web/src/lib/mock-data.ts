@@ -901,6 +901,7 @@ export function getMockRuntimeConfig(): RuntimeConfigResponse {
         api_key_hint: "sk-...e4f",
         provider_ready: true,
         enabled: true,
+        execution_mode: "shadow",
       },
       chatgpt: {
         key: "chatgpt",
@@ -911,6 +912,7 @@ export function getMockRuntimeConfig(): RuntimeConfigResponse {
         api_key_hint: "sk-...9ab",
         provider_ready: true,
         enabled: true,
+        execution_mode: "active",
       },
     },
     portfolio: {

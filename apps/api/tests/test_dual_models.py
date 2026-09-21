@@ -315,6 +315,74 @@ def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_pat
     assert selected[0].model_key == "chatgpt"
 
 
+def test_shadow_model_cannot_displace_or_create_simulated_bet(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "shadow.db"), "dual", ("deepseek", "chatgpt"))
+    repository.initialize()
+    context = {
+        "odds": {
+            "home": 2.1,
+            "draw": 3.2,
+            "away": 3.6,
+            "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        }
+    }
+    deepseek = BankrollService(repository, PortfolioConfig()).configure(
+        "deepseek",
+        "dual",
+        execution_mode="shadow",
+    )
+    chatgpt = BankrollService(repository, PortfolioConfig()).configure(
+        "chatgpt",
+        "dual",
+        execution_mode="active",
+    )
+    services = {"deepseek": deepseek, "chatgpt": chatgpt}
+    dual = DualBankrollService(services, "dual")
+    deepseek_prediction = prediction("deepseek", "prediction-deepseek-shadow")
+    chatgpt_prediction = prediction("chatgpt", "prediction-chatgpt-active")
+
+    def fixed_candidate(self, item, _fixture, _context):
+        score = {"deepseek": 0.99, "chatgpt": 0.90}[self.model_key]
+        return candidate(self.model_key, item["id"], score)
+
+    for service in services.values():
+        service.candidate_for_prediction = MethodType(fixed_candidate, service)
+
+    deepseek_transactions_before = repository.bankroll_transactions("deepseek", "dual")
+    assert deepseek.place_for_candidate(
+        deepseek_prediction,
+        fixture(),
+        candidate("deepseek", deepseek_prediction["id"], 0.99),
+    ) is None
+
+    bets = dual.place_for_predictions(
+        [deepseek_prediction, chatgpt_prediction],
+        fixture(),
+        context,
+    )
+
+    assert [bet["model_key"] for bet in bets] == ["chatgpt"]
+    assert repository.bets(model_key="deepseek", competition_id="dual") == []
+    assert repository.bankroll_transactions("deepseek", "dual") == deepseek_transactions_before
+    assert all(
+        execution["model_key"] != "deepseek"
+        for execution in repository.bet_executions(competition_id="dual")
+    )
+    assert deepseek.execution_for_prediction(
+        deepseek_prediction,
+        fixture(),
+        linked_bet=None,
+        bet_lookup_complete=True,
+    ) == {
+        "status": "no_bet",
+        "reason_codes": ["model_shadow_only"],
+        "reason": "模型仅观察，不执行模拟下注",
+        "bet_id": None,
+        "execution_id": None,
+        "execution_status": "REJECTED",
+    }
+
+
 def test_failed_ai_does_not_place_poisson_fallback_bet() -> None:
     class Service:
         def candidate_for_prediction(self, *_args):

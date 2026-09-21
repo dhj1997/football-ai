@@ -376,8 +376,8 @@ prediction_service = DualPredictionService(
     model_registry_service,
 )
 active_bankroll_services = {
-    **({"deepseek": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("deepseek", settings.simulation_competition_id)} if settings.deepseek_enabled else {}),
-    "chatgpt": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("chatgpt", settings.simulation_competition_id),
+    **({"deepseek": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("deepseek", settings.simulation_competition_id, execution_mode=settings.deepseek_execution_mode)} if settings.deepseek_enabled else {}),
+    "chatgpt": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("chatgpt", settings.simulation_competition_id, execution_mode=settings.chatgpt_execution_mode),
 }
 bankroll_service = DualBankrollService(
     active_bankroll_services,
@@ -467,6 +467,7 @@ def _runtime_model_config() -> dict:
             "api_key_hint": _masked_api_key(provider.api_key),
             "provider_ready": provider.configured,
             "enabled": settings.deepseek_enabled if key == "deepseek" else True,
+            "execution_mode": getattr(bankroll_service.services.get(key), "execution_mode", "disabled"),
         }
         for key, provider in providers.items()
     }
@@ -836,8 +837,10 @@ def health() -> dict:
         "standings_provider_configured": league_provider.configured,
         "deepseek_configured": settings.deepseek_enabled and deepseek_provider.configured,
         "deepseek_enabled": settings.deepseek_enabled,
+        "deepseek_execution_mode": settings.deepseek_execution_mode,
         "deepseek_model": settings.deepseek_model,
         "chatgpt_configured": chatgpt_provider.configured,
+        "chatgpt_execution_mode": settings.chatgpt_execution_mode,
         "chatgpt_model": settings.chatgpt_model,
         "simulated_bankroll_balance": bankroll_service.summary()["balance"],
         "automation_enabled": settings.automation_enabled,

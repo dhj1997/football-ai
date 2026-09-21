@@ -2177,6 +2177,7 @@ const decisionReasonLabels: Record<string, string> = {
   risk_limit: "风险额度受限",
   league_daily_limit: "同模型同联赛当日已有更高优势场次",
   model_disagreement: "模型分歧过大",
+  model_shadow_only: "模型仅观察，不执行模拟下注",
 };
 
 function impactPlayerKey(player: {
@@ -3271,6 +3272,8 @@ function executionStatusLabel(
   modelRecommendationStatus?: string,
 ) {
   if (status === "bet") return "执行模拟下注";
+  if (reasonCodes.includes("model_shadow_only"))
+    return "模型仅观察，不执行模拟下注";
   if (aiStatus && aiStatus !== "completed") return "AI 服务失败";
   if (reasonCodes.includes("odds_pending") || reasonCodes.includes("stale_odds"))
     return "等待赔率刷新";

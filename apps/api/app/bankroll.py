@@ -124,11 +124,21 @@ class BankrollService:
         self.model_key = "deepseek"
         self.competition_id = "legacy"
         self.uncapped = False
+        self.execution_mode = "active"
 
-    def configure(self, model_key: str, competition_id: str, uncapped: bool = False) -> "BankrollService":
+    def configure(
+        self,
+        model_key: str,
+        competition_id: str,
+        uncapped: bool = False,
+        execution_mode: str = "active",
+    ) -> "BankrollService":
         self.model_key = model_key
         self.competition_id = competition_id
         self.uncapped = uncapped
+        if execution_mode not in {"active", "shadow"}:
+            raise ValueError(f"Unsupported execution mode: {execution_mode}")
+        self.execution_mode = execution_mode
         return self
 
     def place_for_prediction(
@@ -137,7 +147,7 @@ class BankrollService:
         fixture: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if fixture.get("status") != "scheduled" or _fixture_started(fixture):
+        if self.execution_mode != "active" or fixture.get("status") != "scheduled" or _fixture_started(fixture):
             return None
         fixed_stake = _fixed_stake(context)
         if fixed_stake is not None:
@@ -256,7 +266,8 @@ class BankrollService:
         """Execute one globally selected candidate without re-ranking its model peers."""
 
         if (
-            fixture.get("status") != "scheduled"
+            self.execution_mode != "active"
+            or fixture.get("status") != "scheduled"
             or _fixture_started(fixture)
             or not _prediction_allows_execution(prediction)
         ):
@@ -315,6 +326,15 @@ class BankrollService:
                 "execution_status": "SETTLED" if linked.get("status") == "settled" else "EXECUTED",
                 "risk_gate": linked.get("risk_gate"),
                 "portfolio_candidate": linked.get("portfolio_candidate"),
+            }
+        if self.execution_mode == "shadow":
+            return {
+                "status": "no_bet",
+                "reason_codes": ["model_shadow_only"],
+                "reason": "模型仅观察，不执行模拟下注",
+                "bet_id": None,
+                "execution_id": None,
+                "execution_status": "REJECTED",
             }
         if decision.get("status") != "bet":
             return {
@@ -450,7 +470,7 @@ class BankrollService:
         prediction: dict[str, Any],
         fixture: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if not _prediction_allows_execution(prediction):
+        if self.execution_mode != "active" or not _prediction_allows_execution(prediction):
             return None
         candidate = prediction.get("portfolio_candidate")
         if not isinstance(candidate, dict):
@@ -701,7 +721,7 @@ class DualBankrollService:
         for prediction in predictions:
             model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"
             service = self.services.get(model_key)
-            if service is None:
+            if service is None or getattr(service, "execution_mode", "active") != "active":
                 continue
             candidate = service.candidate_for_prediction(prediction, fixture, context)
             if candidate is not None:
@@ -721,17 +741,24 @@ class DualBankrollService:
             if (prediction.get("ai") or {}).get("status") != "completed":
                 continue
             baseline_service = self.services.get(str(prediction.get("model_key") or "deepseek"))
-            if baseline_service is None:
+            if baseline_service is None or getattr(baseline_service, "execution_mode", "active") != "active":
                 continue
             poisson = baseline_service.candidate_for_poisson(prediction, fixture, context)
             if poisson is not None and _follows_ai_direction(prediction, poisson):
                 candidate_entries.append((poisson, baseline_service, prediction))
                 break
-        fallback_service = next(iter(self.services.values()), None)
+        fallback_service = next(
+            (
+                service
+                for service in self.services.values()
+                if getattr(service, "execution_mode", "active") == "active"
+            ),
+            None,
+        )
         fallback_prediction = predictions[0] if predictions else {}
         for candidate in additional_candidates or []:
             service = self.services.get(str(_candidate_value(candidate, "model_key"))) or fallback_service
-            if service is None:
+            if service is None or getattr(service, "execution_mode", "active") != "active":
                 continue
             prediction = by_prediction_id.get(
                 str(_candidate_value(candidate, "prediction_id")),

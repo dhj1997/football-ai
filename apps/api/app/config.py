@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,12 +26,14 @@ class Settings(BaseSettings):
     free_llm_candidate_timeout_seconds: float = 45.0
     free_llm_enabled: bool = True
     deepseek_enabled: bool = True
+    deepseek_execution_mode: Literal["active", "shadow"] = "shadow"
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_timeout_seconds: float = 90
     deepseek_max_retries: int = 1
     deepseek_max_tokens: int = 3000
     api_chatgpt_key: str = ""
+    chatgpt_execution_mode: Literal["active", "shadow"] = "active"
     chatgpt_model: str = "gpt-5.6-sol"
     chatgpt_base_url: str = "https://api.quya.org/v1"
     chatgpt_timeout_seconds: float = 180

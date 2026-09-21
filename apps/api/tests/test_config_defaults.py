@@ -22,6 +22,13 @@ def test_chatgpt_has_a_fallback_model_for_timeouts() -> None:
     assert settings.chatgpt_fallback_model == "gpt-5.4-mini"
 
 
+def test_deepseek_defaults_to_shadow_execution_only() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.deepseek_execution_mode == "shadow"
+    assert settings.chatgpt_execution_mode == "active"
+
+
 def test_league_exposure_cap_allows_two_league_day_bets() -> None:
     """单联赛 = 2 x 权益 x 2% = 4%,即同联赛当日可容纳两注。"""
 

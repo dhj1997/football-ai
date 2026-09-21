@@ -190,6 +190,8 @@ def test_runtime_model_config_requires_admin_and_updates_in_process() -> None:
         assert response.status_code == 200
         payload = response.json()
         assert payload["models"]["deepseek"]["model"] == "deepseek-test-model"
+        assert payload["models"]["deepseek"]["execution_mode"] == settings.deepseek_execution_mode
+        assert payload["models"]["chatgpt"]["execution_mode"] == settings.chatgpt_execution_mode
         assert payload["portfolio"]["min_edge"] == 0.12
         assert deepseek_provider.model == "deepseek-test-model"
         assert settings.portfolio_min_edge == 0.12

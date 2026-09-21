@@ -669,6 +669,7 @@ export interface RuntimeModelConfig {
   api_key_hint: string | null;
   provider_ready: boolean;
   enabled: boolean;
+  execution_mode: "active" | "shadow" | "disabled";
 }
 
 export interface RuntimePortfolioConfig {

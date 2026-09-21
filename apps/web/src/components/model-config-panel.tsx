@@ -103,7 +103,7 @@ export function ModelConfigPanel() {
                 <strong className="text-xs font-bold">{item.label}</strong>
                 <small className="font-mono text-[11px] text-slate-500">{key}</small>
               </div>
-              <StatusBadge variant={!item.enabled ? "partial" : item.provider_ready ? "ready" : "partial"}>{!item.enabled ? "暂时停用" : item.provider_ready ? "可用" : item.api_key_configured ? "配置不完整" : "未配置 Key"}</StatusBadge>
+              <StatusBadge variant={!item.enabled || item.execution_mode === "shadow" ? "partial" : item.provider_ready ? "ready" : "partial"}>{!item.enabled ? "暂时停用" : item.execution_mode === "shadow" ? "仅观察" : item.provider_ready ? "可用" : item.api_key_configured ? "配置不完整" : "未配置 Key"}</StatusBadge>
             </div>
             <div className="space-y-2.5">
               <label className="block"><span className="mb-1 block text-[11px] text-slate-400">模型名称</span><input className={inputClasses} value={current.model} onChange={(event) => updateModel(key, "model", event.target.value)} /></label>
