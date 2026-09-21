@@ -1,7 +1,27 @@
 export type DateFilter =
   "yesterday" | "today" | "tomorrow" | "upcoming" | "history";
 export type LeagueFilter =
-  "all" | "epl" | "laliga" | "csl" | "cfa_cup" | "ucl" | "acl";
+  | "all"
+  | "epl"
+  | "laliga"
+  | "csl"
+  | "cfa_cup"
+  | "ucl"
+  | "acl"
+  | "world_cup"
+  | "world_cup_qualifiers"
+  | "international_friendlies"
+  | "asian_cup"
+  | "asian_qualifiers"
+  | "afc_u23_asian_cup"
+  | "afc_u23_qualifiers"
+  | "asian_games_men"
+  | "euro"
+  | "euro_qualifiers"
+  | "copa_america"
+  | "africa_cup"
+  | "africa_qualifiers"
+  | "nations_league";
 export type FixtureLeagueKey =
   | "epl"
   | "laliga"
@@ -10,10 +30,18 @@ export type FixtureLeagueKey =
   | "ucl"
   | "acl"
   | "world_cup"
-  | "asian_cup"
-  | "euro"
   | "world_cup_qualifiers"
+  | "international_friendlies"
+  | "asian_cup"
   | "asian_qualifiers"
+  | "afc_u23_asian_cup"
+  | "afc_u23_qualifiers"
+  | "asian_games_men"
+  | "euro"
+  | "euro_qualifiers"
+  | "copa_america"
+  | "africa_cup"
+  | "africa_qualifiers"
   | "nations_league";
 export type FixtureLeagueFilter = "all" | FixtureLeagueKey;
 export type ModelKey = "deepseek" | "chatgpt";
@@ -218,7 +246,14 @@ export interface Fixture {
   provider_id: number | null;
   fixture_date?: string;
   league_key: FixtureLeagueKey;
-  league: { id: number; name: string; country: string; mark: string };
+  league: {
+    id: number;
+    name: string;
+    country: string;
+    mark: string;
+    logo?: string | null;
+    logo_source?: string | null;
+  };
   kickoff: string;
   status: "scheduled" | "finished" | "postponed" | "cancelled" | "live";
   home_team: Team;
@@ -227,6 +262,21 @@ export interface Fixture {
   venue: string;
   lineup_confirmed: boolean;
   is_demo: boolean;
+  national_competition?: {
+    key: string;
+    name: string;
+    confederation: string;
+    competition_type: string;
+    gender: "men";
+    age_group: "senior" | "u23";
+    logo_url: string | null;
+    logo_source: string | null;
+  } | null;
+  confederation?: string | null;
+  gender?: string | null;
+  age_group?: string | null;
+  logo_asset?: string | null;
+  logo_source?: string | null;
   evidence_summary?: {
     ready_count: number;
     total_count: number;

@@ -19,8 +19,10 @@ class ScheduleSyncService:
         ttl_minutes: int,
         result_provider: Any | None = None,
         lookahead_days: int = 1,
+        supplemental_providers: list[Any] | None = None,
     ) -> None:
         self.provider = provider
+        self.supplemental_providers = list(supplemental_providers or [])
         self.repository = repository
         self.result_provider = result_provider
         self.lookback_days = lookback_days
@@ -33,6 +35,10 @@ class ScheduleSyncService:
         self._cache_load_lock = asyncio.Lock()
         self._refresh_task: asyncio.Task | None = None
 
+    @property
+    def configured(self) -> bool:
+        return self._configured()
+
     async def ensure_fresh(self) -> dict[str, Any]:
         """Refresh stale data, falling back to an existing cache on failure."""
 
@@ -40,7 +46,7 @@ class ScheduleSyncService:
         metadata = await asyncio.to_thread(self.repository.fixture_sync)
         if self._is_fresh(metadata, now):
             return self._state("fresh", metadata)
-        if not self.provider.configured:
+        if not self._configured():
             return self._state("stale" if metadata else "unconfigured", metadata)
 
         async with self._lock:
@@ -111,7 +117,7 @@ class ScheduleSyncService:
     async def force_refresh(self) -> dict[str, Any]:
         """Refresh immediately for an explicit operator action."""
 
-        if not self.provider.configured:
+        if not self._configured():
             raise RuntimeError("免费赛程数据源未配置")
         async with self._lock:
             return await self._refresh(datetime.now(UTC))
@@ -120,7 +126,19 @@ class ScheduleSyncService:
         today = now.astimezone(CHINA_TZ).date()
         start_date = today - timedelta(days=self.lookback_days)
         end_date = today + timedelta(days=self.lookahead_days)
-        rows = await self.provider.fixtures(start_date, end_date)
+        rows: list[dict[str, Any]] = []
+        provider_errors: list[str] = []
+        providers = [self.provider, *self.supplemental_providers]
+        for candidate in providers:
+            if not bool(getattr(candidate, "configured", False)):
+                continue
+            try:
+                rows.extend(await candidate.fixtures(start_date, end_date))
+            except Exception as error:
+                provider_errors.append(f"{candidate.__class__.__name__}: {error}")
+        if not rows and provider_errors:
+            raise RuntimeError("; ".join(provider_errors))
+        rows = deduplicate_fixtures(rows)
         result_status = "unavailable"
         if self.result_provider is not None and bool(getattr(self.result_provider, "configured", False)):
             try:
@@ -129,7 +147,11 @@ class ScheduleSyncService:
                 result_status = "updated"
             except Exception:
                 result_status = "failed"
-        request_count = ((end_date - start_date).days + 1) * len(self.provider.LEAGUE_IDS)
+        request_count = ((end_date - start_date).days + 1) * sum(
+            int(getattr(candidate, "request_league_count", len(getattr(candidate, "LEAGUE_IDS", {}))))
+            for candidate in providers
+            if bool(getattr(candidate, "configured", False))
+        )
         enrich = getattr(self.provider, "enrich_fixtures", None)
         if callable(enrich):
             rows = await enrich(rows, max_teams=max(0, (30 - request_count) // 2))
@@ -158,9 +180,13 @@ class ScheduleSyncService:
             ),
             "request_count": request_count,
             "result_sync_status": result_status,
+            "provider_errors": provider_errors[:10],
             "from": start_date.isoformat(),
             "to": end_date.isoformat(),
         }
+
+    def _configured(self) -> bool:
+        return any(bool(getattr(candidate, "configured", False)) for candidate in [self.provider, *self.supplemental_providers])
 
     def _is_fresh(self, metadata: dict[str, Any] | None, now: datetime) -> bool:
         if not metadata:

@@ -78,6 +78,7 @@ from .understat_provider import (
     sync_understat_xg,
 )
 from .model_registry import ModelRegistry, ModelRegistryError
+from .national_competitions import NATIONAL_COMPETITIONS, national_metadata
 from .provider import ApiFootballProvider
 from .prediction_service import PredictionService
 from .prompt_contract import DEFAULT_PROMPT_CONTRACT
@@ -294,6 +295,7 @@ schedule_sync = ScheduleSyncService(
     settings.schedule_cache_ttl_minutes,
     None,
     settings.schedule_lookahead_days,
+    supplemental_providers=[provider],
 )
 deepseek_provider = DeepSeekProvider(
     settings.api_deepseek_key,
@@ -772,6 +774,7 @@ def _fixture_list_item(fixture: dict, prediction_fixture_ids: set[str]) -> dict:
         "venue",
         "lineup_confirmed",
         "is_demo",
+        "national_competition",
     )
     fixture_date = fixture.get("fixture_date")
     if not fixture_date and fixture.get("kickoff"):
@@ -795,9 +798,21 @@ def _fixture_list_item(fixture: dict, prediction_fixture_ids: set[str]) -> dict:
                 **prices,
                 "updated_at": odds.get("updated_at") or odds.get("captured_at"),
             }
+    national = fixture.get("national_competition") or national_metadata(fixture.get("league_key"))
+    league_payload = fixture.get("league") or {}
+    logo_asset = league_payload.get("logo")
+    logo_source = league_payload.get("logo_source")
+    if isinstance(national, dict):
+        logo_asset = logo_asset or national.get("logo_url")
+        logo_source = logo_source or national.get("logo_source")
     return {
         **{key: fixture.get(key) for key in fields},
         "fixture_date": fixture_date,
+        "confederation": national.get("confederation") if isinstance(national, dict) else None,
+        "gender": national.get("gender") if isinstance(national, dict) else None,
+        "age_group": national.get("age_group") if isinstance(national, dict) else None,
+        "logo_asset": logo_asset,
+        "logo_source": logo_source,
         "evidence_summary": _fixture_evidence_summary(fixture),
         "odds_summary": odds_summary,
         "has_prediction": str(fixture.get("id") or "") in prediction_fixture_ids,
@@ -813,7 +828,7 @@ def health() -> dict:
         mode = "cached"
     elif settings.use_demo_data:
         mode = "demo"
-    elif schedule_provider.configured:
+    elif schedule_sync.configured:
         mode = "empty"
     else:
         mode = "unconfigured"
@@ -825,13 +840,13 @@ def health() -> dict:
     return {
         "status": "ok",
         "database_backend": repository.engine.dialect.name,
-        "provider_configured": schedule_provider.configured,
+        "provider_configured": schedule_sync.configured,
         "evidence_provider_configured": api_football_evidence_provider.public_configured,
         "evidence_sources": list(MATCH_EVIDENCE_SOURCES),
         "schedule_provider": settings.schedule_provider,
         "dongqiudi_configured": dongqiudi_provider.configured,
         "dongqiudi_last_synced_at": dongqiudi_last_synced_at,
-        "schedule_provider_configured": schedule_provider.configured,
+        "schedule_provider_configured": schedule_sync.configured,
         "mode": mode,
         "last_synced_at": sync["synced_at"] if sync else None,
         "standings_provider_configured": league_provider.configured,
@@ -867,7 +882,7 @@ async def fixtures(
         if canonical_league is None:
             canonical_league = schedule_provider.normalize_league_key(league)
         if canonical_league is None:
-            raise HTTPException(status_code=400, detail="仅支持英超、西甲、中超、中国足协杯、欧冠、亚冠、世界杯、亚洲杯、欧洲杯、世预赛、亚洲预选赛、欧国联")
+            raise HTTPException(status_code=400, detail="赛事筛选项无效或当前数据源未覆盖")
         league = canonical_league.casefold()
     now = datetime.now(CHINA_TZ).date()
     start_date: str | None
@@ -945,7 +960,7 @@ async def fixtures(
         mode = "empty"
     elif sync_state["status"] == "failed":
         mode = "error"
-    elif schedule_provider.configured:
+    elif schedule_sync.configured:
         mode = "empty"
     else:
         mode = "unconfigured"
@@ -956,15 +971,22 @@ async def fixtures(
     return public_payload({
         "items": [_fixture_list_item(row, prediction_fixture_ids) for row in rows],
         "mode": mode,
-        "provider_configured": schedule_provider.configured,
+        "provider_configured": schedule_sync.configured,
         "evidence_provider_configured": api_football_evidence_provider.public_configured,
         "evidence_sources": list(MATCH_EVIDENCE_SOURCES),
         "schedule_provider": settings.schedule_provider,
-        "schedule_provider_configured": schedule_provider.configured,
+        "schedule_provider_configured": schedule_sync.configured,
         "dongqiudi_configured": dongqiudi_provider.configured,
         "dongqiudi_last_synced_at": dongqiudi_last_synced_at,
         "sync_status": sync_state["status"],
         "league_counts": league_counts,
+        "national_competitions": [
+            {
+                **item.as_dict(),
+                "fixture_count": league_counts.get(item.key, 0),
+            }
+            for item in NATIONAL_COMPETITIONS.values()
+        ],
         "last_synced_at": sync["synced_at"] if sync else None,
     })
 
@@ -3022,7 +3044,7 @@ async def sync_fixture_dongqiudi(fixture_id: str) -> dict:
 async def sync_fixtures() -> dict:
     """Synchronize the supported leagues into the local fixture cache."""
 
-    if not schedule_provider.configured:
+    if not schedule_sync.configured:
         raise HTTPException(status_code=409, detail="请先配置免费赛程数据源；当前没有真实赛程缓存")
     try:
         if settings.schedule_provider != "thesportsdb":

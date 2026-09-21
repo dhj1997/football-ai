@@ -89,6 +89,20 @@ const leagueTabs: Array<{ key: LeagueFilter; label: string }> = [
   { key: "ucl", label: "欧冠" },
   { key: "acl", label: "亚冠" },
   { key: "cfa_cup", label: "足协杯" },
+  { key: "world_cup", label: "世界杯" },
+  { key: "world_cup_qualifiers", label: "世预赛" },
+  { key: "international_friendlies", label: "国际友谊赛" },
+  { key: "asian_cup", label: "亚洲杯" },
+  { key: "asian_qualifiers", label: "亚洲杯预选赛" },
+  { key: "afc_u23_asian_cup", label: "亚足联U23亚洲杯" },
+  { key: "afc_u23_qualifiers", label: "U23亚洲杯预选赛" },
+  { key: "asian_games_men", label: "亚运男足" },
+  { key: "euro", label: "欧洲杯" },
+  { key: "euro_qualifiers", label: "欧洲杯预选赛" },
+  { key: "copa_america", label: "美洲杯" },
+  { key: "africa_cup", label: "非洲杯" },
+  { key: "africa_qualifiers", label: "非洲杯预选赛" },
+  { key: "nations_league", label: "欧国联" },
 ];
 
 const FAVORITES_KEY = "greencompass:favorite-fixtures";
@@ -472,7 +486,7 @@ function FixtureRow({
           title={fixture.league.name || fixture.league_key.toUpperCase()}
           aria-label={`联赛 ${fixture.league.name || fixture.league_key.toUpperCase()}`}
         >
-          <LeagueIcon league={fixture.league_key} size={13} className="shrink-0" />
+          <LeagueIcon league={fixture.league_key} logoUrl={fixture.logo_asset ?? fixture.league.logo} size={13} className="shrink-0" />
           <span className="truncate">
             {fixture.league.name || fixture.league_key.toUpperCase()}
           </span>
@@ -672,7 +686,7 @@ function FixtureGroupCard({
     <Card className="overflow-hidden">
       <header className="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-800/40 px-4 py-3">
         <span className="flex min-w-0 items-center gap-2.5">
-          <LeagueIcon league={group.leagueKey} size={18} className="shrink-0" />
+          <LeagueIcon league={group.leagueKey} logoUrl={group.league.logo} size={18} className="shrink-0" />
           <strong className="truncate text-xs font-bold text-white">
             {group.league.name}
           </strong>

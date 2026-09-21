@@ -4,14 +4,33 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 import httpx
 
+from .national_competitions import (
+    NATIONAL_COMPETITIONS,
+    NATIONAL_COMPETITION_KEYS,
+    national_competition_from_api_id,
+)
 from .team_names import to_chinese_team_name
 
 
 class ApiFootballProvider:
     """Fetch API-Football data only during explicit operator actions."""
 
-    LEAGUE_IDS = {"epl": 39, "laliga": 140, "csl": 169, "cfa_cup": 171}
-    LEAGUE_NAMES = {"cfa_cup": "中国足协杯"}
+    LEAGUE_IDS = {
+        "epl": 39,
+        "laliga": 140,
+        "csl": 169,
+        "cfa_cup": 171,
+        **{key: item.api_football_ids[0] for key, item in NATIONAL_COMPETITIONS.items() if item.api_football_ids},
+    }
+    LEAGUE_ID_GROUPS = {
+        key: tuple(item.api_football_ids)
+        for key, item in NATIONAL_COMPETITIONS.items()
+        if item.api_football_ids
+    }
+    LEAGUE_NAMES = {
+        "cfa_cup": "中国足协杯",
+        **{key: item.name for key, item in NATIONAL_COMPETITIONS.items()},
+    }
     CHINA_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
 
     def __init__(self, api_key: str, base_url: str) -> None:
@@ -30,7 +49,13 @@ class ApiFootballProvider:
 
         if league_key in {"csl", "cfa_cup"}:
             return fixture_date.year
+        if league_key in NATIONAL_COMPETITION_KEYS:
+            return fixture_date.year
         return fixture_date.year if fixture_date.month >= 7 else fixture_date.year - 1
+
+    @property
+    def request_league_count(self) -> int:
+        return len(self.LEAGUE_IDS) + sum(len(ids) - 1 for ids in self.LEAGUE_ID_GROUPS.values())
 
     async def fixtures(self, start_date: date, end_date: date) -> list[dict]:
         """Fetch one date window using one request per supported league."""
@@ -43,23 +68,29 @@ class ApiFootballProvider:
             headers={"x-apisports-key": self.api_key},
             timeout=15,
         ) as client:
-            for league_key, league_id in self.LEAGUE_IDS.items():
-                response = await client.get(
-                    "/fixtures",
-                    params={
-                        "from": start_date.isoformat(),
-                        "to": end_date.isoformat(),
-                        "league": league_id,
-                        "season": self.season_for(league_key, end_date),
-                        "timezone": "Asia/Shanghai",
-                    },
-                )
-                response.raise_for_status()
-                payload = response.json()
-                if payload.get("errors"):
-                    raise RuntimeError(f"API-Football error for {league_key}: {payload['errors']}")
-                for item in payload.get("response", []):
-                    results.append(self._map_fixture(item, league_key))
+            for league_key, configured_id in self.LEAGUE_IDS.items():
+                league_ids = self.LEAGUE_ID_GROUPS.get(league_key, (configured_id,))
+                for league_id in league_ids:
+                    response = await client.get(
+                        "/fixtures",
+                        params={
+                            "from": start_date.isoformat(),
+                            "to": end_date.isoformat(),
+                            "league": league_id,
+                            "season": self.season_for(league_key, end_date),
+                            "timezone": "Asia/Shanghai",
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if payload.get("errors"):
+                        raise RuntimeError(f"API-Football error for {league_key}: {payload['errors']}")
+                    for item in payload.get("response", []):
+                        mapped_key = league_key
+                        provider_competition = national_competition_from_api_id((item.get("league") or {}).get("id"))
+                        if provider_competition is not None:
+                            mapped_key = provider_competition.key
+                        results.append(self._map_fixture(item, mapped_key))
         return results
 
     async def historical_fixtures(
@@ -275,11 +306,29 @@ class ApiFootballProvider:
         kickoff = datetime.fromisoformat(fixture["date"].replace("Z", "+00:00"))
         if kickoff.tzinfo is None:
             kickoff = kickoff.replace(tzinfo=UTC)
+        competition = NATIONAL_COMPETITIONS.get(league_key)
+        provider_league_name = str(league.get("name") or "")
+        league_name = ApiFootballProvider.LEAGUE_NAMES.get(league_key, provider_league_name)
+        league_metadata = competition.as_dict() if competition is not None else None
+        mapped_league = {
+            "id": league["id"],
+            "name": league_name,
+            "country": competition.confederation if competition is not None else league.get("country") or "",
+            "mark": competition.key.upper() if competition is not None else provider_league_name[:3].upper(),
+        }
+        if league_metadata is not None:
+            mapped_league.update(
+                {
+                    "logo": league_metadata.get("logo_url"),
+                    "logo_source": league_metadata.get("logo_source"),
+                }
+            )
         return {
             "id": f"api-{fixture['id']}",
             "provider_id": fixture["id"],
             "league_key": league_key,
-            "league": {"id": league["id"], "name": ApiFootballProvider.LEAGUE_NAMES.get(league_key, league["name"]), "country": league["country"], "mark": "CFA" if league_key == "cfa_cup" else league["name"][:3].upper()},
+            "league": mapped_league,
+            "national_competition": league_metadata,
             "fixture_date": kickoff.astimezone(ApiFootballProvider.CHINA_TZ).date().isoformat(),
             "kickoff": fixture["date"],
             "status": status,

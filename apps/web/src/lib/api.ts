@@ -27,6 +27,17 @@ export type FixtureListResponse = {
   schedule_provider_configured: boolean;
   sync_status: "fresh" | "updated" | "stale" | "failed" | "unconfigured";
   league_counts: Record<string, number>;
+  national_competitions?: Array<{
+    key: string;
+    name: string;
+    confederation: string;
+    competition_type: string;
+    gender: "men";
+    age_group: "senior" | "u23";
+    fixture_count: number;
+    logo_url: string | null;
+    logo_source: string | null;
+  }>;
   last_synced_at: string | null;
   dongqiudi_last_synced_at?: string | null;
 };

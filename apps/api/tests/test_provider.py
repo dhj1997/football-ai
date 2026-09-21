@@ -59,3 +59,26 @@ def test_fixture_mapping_localizes_china_fa_cup_label() -> None:
     assert result["league_key"] == "cfa_cup"
     assert result["league"]["id"] == 171
     assert result["league"]["name"] == "中国足协杯"
+
+
+def test_fixture_mapping_adds_national_competition_metadata_and_source_logo() -> None:
+    item = {
+        "fixture": {
+            "id": 458,
+            "date": "2026-06-12T19:30:00+08:00",
+            "status": {"short": "NS"},
+            "venue": {"name": "National Stadium"},
+        },
+        "league": {"id": 532, "name": "AFC U23 Asian Cup", "country": "Asia"},
+        "teams": {
+            "home": {"id": 10, "name": "China U23", "code": "CHN"},
+            "away": {"id": 20, "name": "Japan U23", "code": "JPN"},
+        },
+        "goals": {"home": None, "away": None},
+    }
+
+    result = ApiFootballProvider._map_fixture(item, "afc_u23_asian_cup")
+
+    assert result["national_competition"]["gender"] == "men"
+    assert result["national_competition"]["age_group"] == "u23"
+    assert result["league"]["logo"] == "https://media.api-sports.io/football/leagues/532.png"

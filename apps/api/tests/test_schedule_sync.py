@@ -67,6 +67,30 @@ class FixtureProvider(FakeProvider):
 
 
 @pytest.mark.asyncio
+async def test_refresh_merges_configured_supplemental_provider_rows() -> None:
+    repository = FakeRepository()
+    primary = FixtureProvider([fixture_row(status="scheduled", score=None)])
+    supplemental = FixtureProvider(
+        [
+            {
+                **fixture_row(status="scheduled", score=None),
+                "id": "api-1",
+                "source": "api-football",
+                "kickoff": "2026-08-30T13:05:00+00:00",
+                "external_ids": {"api_football": "1"},
+            }
+        ]
+    )
+    service = ScheduleSyncService(primary, repository, 1, 60, supplemental_providers=[supplemental])
+
+    await service.force_refresh()
+
+    assert len(repository.replacements[0][2]) == 1
+    assert repository.replacements[0][2][0]["id"] == "sportsdb-1"
+    assert repository.replacements[0][2][0]["external_ids"]["api_football"] == "1"
+
+
+@pytest.mark.asyncio
 async def test_missing_cache_is_refreshed_once() -> None:
     repository = FakeRepository()
     provider = FakeProvider()

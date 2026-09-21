@@ -6,6 +6,11 @@ from typing import Any
 
 import httpx
 
+from .national_competitions import (
+    NATIONAL_COMPETITIONS,
+    NATIONAL_COMPETITION_KEYS,
+    national_metadata,
+)
 from .team_names import to_chinese_player_name, to_chinese_team_name
 
 
@@ -21,6 +26,11 @@ class TheSportsDbProvider:
         "cfa_cup": 5525,
         "ucl": 4480,
         "world_cup": 4429,
+        **{
+            key: item.thesportsdb_id
+            for key, item in NATIONAL_COMPETITIONS.items()
+            if item.thesportsdb_id is not None
+        },
     }
     SUPPORTED_LEAGUE_KEYS = (
         "epl",
@@ -35,6 +45,7 @@ class TheSportsDbProvider:
         "world_cup_qualifiers",
         "asian_qualifiers",
         "nations_league",
+        *NATIONAL_COMPETITION_KEYS,
     )
     LEAGUE_NAMES = {
         "epl": "英超",
@@ -49,6 +60,7 @@ class TheSportsDbProvider:
         "world_cup_qualifiers": "世预赛",
         "asian_qualifiers": "亚洲预选赛",
         "nations_league": "欧国联",
+        **{key: item.name for key, item in NATIONAL_COMPETITIONS.items()},
     }
     LEAGUE_COUNTRIES = {
         "epl": "英格兰",
@@ -63,6 +75,7 @@ class TheSportsDbProvider:
         "world_cup_qualifiers": "世界",
         "asian_qualifiers": "亚洲",
         "nations_league": "欧洲",
+        **{key: item.confederation for key, item in NATIONAL_COMPETITIONS.items()},
     }
     LEAGUE_MARKS = {
         "epl": "PL",
@@ -77,6 +90,7 @@ class TheSportsDbProvider:
         "world_cup_qualifiers": "WCQ",
         "asian_qualifiers": "AQ",
         "nations_league": "UNL",
+        **{key: key.upper()[:5] for key in NATIONAL_COMPETITION_KEYS},
     }
     LEAGUE_ALIASES = {
         "epl": "epl",
@@ -124,6 +138,11 @@ class TheSportsDbProvider:
         "nations league": "nations_league",
         "欧国联": "nations_league",
         "nations_league": "nations_league",
+        **{
+            alias.casefold(): item.key
+            for item in NATIONAL_COMPETITIONS.values()
+            for alias in (item.key, item.name, *item.aliases)
+        },
     }
     CHINA_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
 
@@ -361,6 +380,20 @@ class TheSportsDbProvider:
             status = "finished"
         else:
             status = "scheduled"
+        competition_metadata = national_metadata(league_key)
+        league = {
+            "id": cls.LEAGUE_IDS[league_key],
+            "name": cls.LEAGUE_NAMES[league_key],
+            "country": cls.LEAGUE_COUNTRIES[league_key],
+            "mark": cls.LEAGUE_MARKS[league_key],
+        }
+        if competition_metadata is not None:
+            league.update(
+                {
+                    "logo": competition_metadata.get("logo_url"),
+                    "logo_source": competition_metadata.get("logo_source"),
+                }
+            )
         return {
             "id": f"sportsdb-{item['idEvent']}",
             "provider_id": int(item["idEvent"]),
@@ -368,12 +401,8 @@ class TheSportsDbProvider:
                 "api_football": _optional_int(item.get("idAPIfootball")),
             },
             "league_key": league_key,
-            "league": {
-                "id": cls.LEAGUE_IDS[league_key],
-                "name": cls.LEAGUE_NAMES[league_key],
-                "country": cls.LEAGUE_COUNTRIES[league_key],
-                "mark": cls.LEAGUE_MARKS[league_key],
-            },
+            "league": league,
+            "national_competition": competition_metadata,
             "fixture_date": fixture_date,
             "kickoff": kickoff.isoformat(),
             "status": status,

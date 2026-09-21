@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from .data import CHINA_TZ
+from .national_competitions import NATIONAL_COMPETITIONS, national_metadata, normalize_national_competition
 from .team_names import to_chinese_player_name, to_chinese_team_name
 
 
@@ -36,6 +37,7 @@ class DongqiudiProvider:
         "world_cup_qualifiers": "世预赛",
         "asian_qualifiers": "亚洲预选赛",
         "nations_league": "欧国联",
+        **{key: item.name for key, item in NATIONAL_COMPETITIONS.items()},
     }
     _SOURCE_BY_AREA = {"36": "bet365", "皇": "crown"}
     # 展示与模型输入一律使用中性名称，不落供应商明文品牌名。
@@ -429,6 +431,14 @@ class DongqiudiProvider:
     def normalize_league(cls, competition: dict[str, Any]) -> str | None:
         name = str(competition.get("name") or "").strip().casefold()
         area = str(competition.get("area_name") or "").strip().casefold()
+        national_key = normalize_national_competition(
+            name,
+            area=area,
+            gender=competition.get("gender") or competition.get("gender_name"),
+            age_group=competition.get("age_group") or competition.get("age_name"),
+        )
+        if national_key:
+            return national_key
         if "中超" in name:
             return "csl"
         if name in {"足协杯", "中国足协杯", "china fa cup", "chinese fa cup", "fa cup china"}:
@@ -466,13 +476,28 @@ class DongqiudiProvider:
         competition = item.get("competition") or {}
         home = item.get("team_A") or {}
         away = item.get("team_B") or {}
+        competition_metadata = national_metadata(league_key)
+        league = {
+            "id": _integer(competition.get("id")) or 0,
+            "name": cls.LEAGUE_NAMES[league_key],
+            "country": competition.get("area_name") or "中国",
+            "mark": league_key.upper(),
+        }
+        if competition_metadata is not None:
+            league.update(
+                {
+                    "logo": competition_metadata.get("logo_url"),
+                    "logo_source": competition_metadata.get("logo_source"),
+                }
+            )
         return {
             "id": f"dongqiudi-{item.get('match_id')}",
             "provider_id": _integer(item.get("match_id")),
             "external_ids": {"dongqiudi": str(item.get("match_id") or "")},
             "source": "dongqiudi",
             "league_key": league_key,
-            "league": {"id": _integer(competition.get("id")) or 0, "name": cls.LEAGUE_NAMES[league_key], "country": competition.get("area_name") or "中国", "mark": league_key.upper()},
+            "league": league,
+            "national_competition": competition_metadata,
             "fixture_date": kickoff.astimezone(CHINA_TZ).date().isoformat(),
             "kickoff": kickoff.isoformat(),
             "status": _status(item.get("status")),
