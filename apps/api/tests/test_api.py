@@ -971,7 +971,7 @@ def test_simulated_bankroll_and_empty_metrics_are_public() -> None:
     assert metrics_response.json()["sample_size"] == 0
 
 
-def test_decisions_endpoint_returns_latest_auditable_no_bet_row() -> None:
+def test_decisions_endpoint_returns_latest_auditable_no_bet_row(monkeypatch) -> None:
     fixture = seed_real_fixture("api-decisions", 129)
     fixture.update(
         {
@@ -1023,6 +1023,11 @@ def test_decisions_endpoint_returns_latest_auditable_no_bet_row() -> None:
         }
     )
     repository.save(current)
+
+    def fail_on_single_bet_read(*args, **kwargs):
+        raise AssertionError("decision endpoint must batch no-bet reads")
+
+    monkeypatch.setattr(repository, "bet_for_prediction", fail_on_single_bet_read)
 
     response = client.get(
         "/api/decisions",

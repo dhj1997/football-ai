@@ -284,7 +284,14 @@ class BankrollService:
             discard(fixture["id"], self.model_key, self.competition_id, prediction.get("id"))
         return self._place_portfolio_candidate(working_prediction, fixture)
 
-    def execution_for_prediction(self, prediction: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
+    def execution_for_prediction(
+        self,
+        prediction: dict[str, Any],
+        fixture: dict[str, Any],
+        *,
+        linked_bet: dict[str, Any] | None = None,
+        bet_lookup_complete: bool = False,
+    ) -> dict[str, Any]:
         """Describe portfolio execution without mutating the immutable prediction.
 
         The decision was frozen when the prediction was generated; this read
@@ -293,7 +300,11 @@ class BankrollService:
         """
 
         decision = prediction.get("decision") or {}
-        linked = self.repository.bet_for_prediction(prediction["id"])
+        linked = (
+            linked_bet
+            if bet_lookup_complete
+            else self.repository.bet_for_prediction(prediction["id"])
+        )
         if linked:
             return {
                 "status": "bet",
@@ -743,11 +754,23 @@ class DualBankrollService:
 
         return select_best_candidates(candidates)
 
-    def execution_for_prediction(self, prediction: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
+    def execution_for_prediction(
+        self,
+        prediction: dict[str, Any],
+        fixture: dict[str, Any],
+        *,
+        linked_bet: dict[str, Any] | None = None,
+        bet_lookup_complete: bool = False,
+    ) -> dict[str, Any]:
         model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"
         service = self.services.get(model_key)
         if service:
-            return service.execution_for_prediction(prediction, fixture)
+            return service.execution_for_prediction(
+                prediction,
+                fixture,
+                linked_bet=linked_bet,
+                bet_lookup_complete=bet_lookup_complete,
+            )
         return {
             "status": "insufficient_data",
             "reason_codes": ["risk_limit"],

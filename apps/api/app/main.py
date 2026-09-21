@@ -1476,11 +1476,19 @@ def prediction_decisions(
                 "risk_gate": linked_bet.get("risk_gate"),
             }
         elif decision.get("status") in {"bet", "no_bet", "insufficient_data"}:
-            execution = bankroll_service.execution_for_prediction(prediction, fixture) if fixture else {
-                "status": decision["status"],
-                "reason": decision.get("reason") or "暂无比赛缓存",
-                "bet_id": None,
-            }
+            if fixture:
+                execution = bankroll_service.execution_for_prediction(
+                    prediction,
+                    fixture,
+                    linked_bet=None,
+                    bet_lookup_complete=True,
+                )
+            else:
+                execution = {
+                    "status": decision["status"],
+                    "reason": decision.get("reason") or "暂无比赛缓存",
+                    "bet_id": None,
+                }
         else:
             execution = {
                 "status": "unknown",

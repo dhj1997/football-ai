@@ -18,6 +18,7 @@ import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-
 
 const apiBase = (process.env.API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
 const reportReadPaths = new Set([
+  "api/decisions",
   "api/backtest/three-leagues",
   "api/model-evaluation",
 ]);
