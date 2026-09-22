@@ -17,8 +17,14 @@ import type { DateFilter, FixtureLeagueFilter } from "@/lib/types";
 import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 const apiBase = (process.env.API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
+// These read-only reports scan settlement/prediction tables and can take
+// longer than the short 4s budget used by interactive fixture mutations.
 const reportReadPaths = new Set([
+  "api/bankroll",
+  "api/bets",
   "api/decisions",
+  "api/strategy-performance",
+  "api/metrics/predictions",
   "api/backtest/three-leagues",
   "api/model-evaluation",
 ]);
