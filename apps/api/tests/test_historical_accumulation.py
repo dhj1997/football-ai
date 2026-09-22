@@ -51,8 +51,8 @@ class _Provider:
             "provider": self.provider_name,
             "requested_model": self.model,
             "returned_model": self.model,
-            "prompt_version": "football-forecast-v5",
-            "evidence_version": "fixture-evidence-v3",
+            "prompt_version": "football-forecast-v6",
+            "evidence_version": "fixture-evidence-v4",
             "usage": None,
             "request_id": "accumulation-test",
         }

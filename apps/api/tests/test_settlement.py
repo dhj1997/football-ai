@@ -343,7 +343,7 @@ def test_score_correction_resettles_existing_evaluation(tmp_path, monkeypatch) -
             "ai": {
                 "status": "completed",
                 "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
-                "evidence_version": "fixture-evidence-v3",
+                "evidence_version": "fixture-evidence-v4",
             },
             "model_probabilities": {"home": 0.2, "draw": 0.3, "away": 0.5},
             "probabilities": {"home": 0.2, "draw": 0.3, "away": 0.5},

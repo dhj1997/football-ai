@@ -6,7 +6,7 @@ import uuid
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Mapping
 
 from .prediction import predict
 from .elo import compute_elo
@@ -812,6 +812,12 @@ def _model_input(
         },
         "player_impact": public_payload(context.get("player_impact")),
         "team_stats": public_payload(context.get("team_stats")),
+        "weather": public_payload(context.get("weather")),
+        "referee": public_payload(context.get("referee")),
+        "discipline": public_payload(context.get("discipline")),
+        "transfers": public_payload(context.get("transfers")),
+        "match_context": public_payload(context.get("match_context")),
+        "fatigue": _fatigue_evidence(context.get("recent_form"), fixture),
         "odds": _model_odds(context.get("odds")),
         "standings": standings,
         "data_completeness": quality,
@@ -821,6 +827,41 @@ def _model_input(
 
 
 CUP_LEAGUES = {"cfa_cup", "ucl", "acl"}
+
+
+def _fatigue_evidence(recent_form: Any, fixture: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Rest days per side derived from the same cutoff-safe recent-form rows."""
+
+    if not isinstance(recent_form, Mapping):
+        return None
+    kickoff = parse_timestamp(fixture.get("kickoff"))
+    if kickoff is None:
+        return None
+    sides: dict[str, Any] = {}
+    for side in ("home", "away"):
+        dates = [
+            parsed
+            for row in recent_form.get(side) or []
+            if isinstance(row, Mapping)
+            if (parsed := parse_timestamp(row.get("date"))) is not None and parsed <= kickoff
+        ]
+        if not dates:
+            sides[side] = None
+            continue
+        sides[side] = {
+            "days_since_last_match": round((kickoff - max(dates)).total_seconds() / 86400, 1),
+            "matches_last_14_days": sum(
+                1 for date in dates if (kickoff - date).total_seconds() <= 14 * 86400
+            ),
+        }
+    if all(value is None for value in sides.values()):
+        return None
+    return {
+        "home": sides["home"],
+        "away": sides["away"],
+        "note": "由截止时间前的近期比赛日期推导的休息天数与两周赛程密度",
+        "source": "recent_form",
+    }
 
 
 def _attach_match_context(fixture: dict[str, Any], context: dict[str, Any]) -> None:

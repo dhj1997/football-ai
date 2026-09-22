@@ -6,7 +6,7 @@ from app.database import PredictionRepository
 from app.dual_prediction_service import DualPredictionService
 from app.leakage_audit import FutureDataLeakageError
 from app.prediction_service import PredictionService, _data_completeness, _model_input
-from app.prompt_contract import DEFAULT_PROMPT_CONTRACT
+from app.prompt_contract import DEFAULT_PROMPT_CONTRACT, EVIDENCE_CONTRACT_VERSION
 import pytest
 
 
@@ -150,7 +150,7 @@ class FakeDeepSeek:
             "requested_model": self.model,
             "returned_model": self.model,
             "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
-            "evidence_version": "fixture-evidence-v3",
+            "evidence_version": "fixture-evidence-v4",
             "request_id": "request-1",
             "usage": {"total_tokens": 30},
         }
@@ -211,7 +211,7 @@ async def test_successful_ai_prediction_links_immutable_evidence() -> None:
     assert repository.snapshots[0]["payload"]["standings"]["home"]["rank"] == 1
     assert result["evidence_fields"]["standings"] is True
     assert result["ai"]["prompt_version"] == DEFAULT_PROMPT_CONTRACT.version
-    assert result["ai"]["evidence_version"] == "fixture-evidence-v3"
+    assert result["ai"]["evidence_version"] == EVIDENCE_CONTRACT_VERSION
     assert result["experiment"] == {
         "model_key": "deepseek",
         "strategy_id": "baseline",
@@ -747,3 +747,47 @@ def test_model_input_keeps_asian_odds_with_numeric_line() -> None:
 
     assert model_input["odds"]["asian_handicap"] == -0.5
     assert model_input["odds"]["asian_handicap_home_odd"] == 1.95
+
+
+def test_model_input_exposes_enriched_evidence_dimensions() -> None:
+    fixture = {
+        "id": "f1",
+        "league_key": "epl",
+        "kickoff": "2026-09-21T16:00:00+00:00",
+    }
+    context = {
+        "weather": {"temperature_c": 18.0, "condition": "小雨", "source": "open-meteo"},
+        "referee": {"name": "迈克尔·奥利弗", "source": "api-football"},
+        "discipline": {"home": {"yellow_cards": 3}, "away": None, "source": "api-football"},
+        "transfers": {"home": {"transfers_in": ["新援（2026-09-10，自 某队）"]}, "away": None},
+        "match_context": {"competition": "英格兰联赛杯", "is_cup": True},
+        "recent_form": {
+            "home": [{"date": "2026-09-18T00:00:00+00:00"}, {"date": "2026-09-11T00:00:00+00:00"}],
+            "away": [{"date": "2026-09-12T00:00:00+00:00"}],
+        },
+    }
+
+    model_input = _model_input(fixture, context, {"home": {}, "away": {}}, {"score": 1.0})
+
+    assert model_input["weather"]["condition"] == "小雨"
+    assert model_input["referee"]["name"] == "迈克尔·奥利弗"
+    assert model_input["discipline"]["home"]["yellow_cards"] == 3
+    assert model_input["transfers"]["home"]["transfers_in"]
+    assert model_input["match_context"]["is_cup"] is True
+    assert model_input["fatigue"]["home"]["days_since_last_match"] == 3.7
+    assert model_input["fatigue"]["home"]["matches_last_14_days"] == 2
+    assert model_input["fatigue"]["away"]["days_since_last_match"] == 9.7
+    assert model_input["fatigue"]["source"] == "recent_form"
+
+
+def test_model_input_fatigue_missing_without_recent_form() -> None:
+    model_input = _model_input(
+        {"id": "f1", "league_key": "epl", "kickoff": "2026-09-21T16:00:00+00:00"},
+        {},
+        {"home": {}, "away": {}},
+        {"score": 1.0},
+    )
+
+    assert model_input["fatigue"] is None
+    assert model_input["weather"] is None
+    assert model_input["referee"] is None

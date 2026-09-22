@@ -90,7 +90,7 @@ def test_evidence_snapshot_is_append_only_and_same_id_cannot_change(tmp_path) ->
         "fixture_id": "p0-fixture",
         "created_at": "2099-08-27T09:00:00+00:00",
         "captured_at": "2099-08-27T09:00:00+00:00",
-        "evidence_version": "fixture-evidence-v3",
+        "evidence_version": "fixture-evidence-v4",
         "content_hash": "a" * 64,
         "payload": {"context": {"source": "a"}},
     }
@@ -204,7 +204,7 @@ class _ModelProvider:
             "requested_model": self.model,
             "returned_model": self.model,
             "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
-            "evidence_version": "fixture-evidence-v3",
+            "evidence_version": "fixture-evidence-v4",
             "request_id": self.provider_name,
             "usage": None,
         }

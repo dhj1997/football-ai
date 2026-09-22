@@ -7,8 +7,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-PROMPT_CONTRACT_VERSION = "football-forecast-v5"
-EVIDENCE_CONTRACT_VERSION = "fixture-evidence-v3"
+PROMPT_CONTRACT_VERSION = "football-forecast-v6"
+EVIDENCE_CONTRACT_VERSION = "fixture-evidence-v4"
 
 
 class OutcomeProbabilities(BaseModel):
@@ -114,7 +114,9 @@ class PromptContract:
             "必须逐项分析关键可用球员、关键缺阵球员、预计替补差距以及进攻和防守影响。"
             "不得按伤停人数直接扣减球队整体实力；必须依据球员角色、预计分钟、贡献和替补差值。"
             "首发未确认只能作为不确定性，不得仅凭这一项直接输出不下注；应结合预计首发和预计分钟判断。"
-            "身价只能作为带来源和时效的弱证据，缺失时不得按0处理。所有面向用户的文本、球队名和"
+            "身价只能作为带来源和时效的弱证据，缺失时不得按0处理。天气、裁判、上场纪律、"
+            "近期转会、比赛背景和赛程密度同样只能作为带时效的弱证据，缺失时不得臆造，"
+            "也不得仅凭其中单项改变预测方向。所有面向用户的文本、球队名和"
             "球员名必须使用输入中的简体中文。返回内容必须严格符合给定JSON Schema，不要输出Markdown。"
         )
 
