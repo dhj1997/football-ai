@@ -86,37 +86,6 @@ _ITEMS = (
         logo_id=35,
     ),
     NationalCompetition(
-        "afc_u23_asian_cup",
-        "亚足联U23亚洲杯",
-        "AFC",
-        "tournament",
-        age_group="u23",
-        api_football_ids=(532,),
-        aliases=("afc u23 asian cup", "u23 asian cup", "亚足联u23亚洲杯", "u23亚洲杯"),
-        logo_id=532,
-    ),
-    NationalCompetition(
-        "afc_u23_qualifiers",
-        "亚足联U23亚洲杯预选赛",
-        "AFC",
-        "qualifier",
-        age_group="u23",
-        api_football_ids=(952,),
-        aliases=("afc u23 asian cup qualification", "u23 asian qualifiers", "u23亚洲杯预选赛", "u23亚洲预选赛"),
-        logo_id=952,
-    ),
-    NationalCompetition(
-        "asian_games_men",
-        "亚运男足",
-        "AFC",
-        "multi_sport",
-        age_group="u23",
-        api_football_ids=(803,),
-        thesportsdb_id=5501,
-        aliases=("asian games", "asian games soccer", "亚运男足", "亚运会男足", "亚运会足球"),
-        logo_id=803,
-    ),
-    NationalCompetition(
         "euro", "欧洲杯", "UEFA", "tournament", api_football_ids=(4,), aliases=("euro", "european championship", "uefa euro", "欧洲杯"), logo_id=4
     ),
     NationalCompetition(
