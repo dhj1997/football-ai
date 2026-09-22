@@ -16,3 +16,4 @@ __pycache__/
 
 .superpowers/
 .pytest_tmp
+.tmp/

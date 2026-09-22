@@ -258,6 +258,7 @@ def candidate_from_market_row(
         market=str(market_row.get("market") or ""),
         prediction=prediction,
         config=config,
+        probability_source=market_row.get("probability_source"),
     )
     age = odds_age_minutes(
         market_row.get("odds_updated_at")
@@ -333,9 +334,11 @@ def shrink_llm_probability(
     market: str,
     prediction: Mapping[str, Any],
     config: PortfolioConfig,
+    probability_source: str | None = None,
 ) -> tuple[float | None, dict[str, Any]]:
-    """Shrink an LLM 1X2 probability toward the bound, fresh market prior.
+    """Shrink an LLM probability toward the bound, fresh market prior.
 
+    Covers 1X2 outcomes and LLM-driven Asian-handicap cover probabilities.
     This helper only changes the scoring input. The persisted prediction and
     its frozen probability remain untouched. Missing, stale, or mismatched
     snapshot data disables shrinkage instead of inventing a prior.
@@ -351,7 +354,12 @@ def shrink_llm_probability(
     }
     if raw is None:
         return None, metadata
-    if market != "1x2" or model_key not in {"deepseek", "chatgpt", "gpt", "llm"}:
+    # Asian handicap rows mix Poisson settlement baselines with LLM forecasts;
+    # only forecast-driven rows carry an LLM probability worth shrinking.
+    if market == "asian_handicap" and probability_source != "model_asian_handicap_forecast":
+        return raw, metadata
+    selections = PROBABILITY_KEYS if market == "1x2" else ("home_handicap", "away_handicap") if market == "asian_handicap" else ()
+    if not selections or model_key not in {"deepseek", "chatgpt", "gpt", "llm"}:
         return raw, metadata
     assessment = prediction.get("market_assessment") or {}
     snapshot_id = prediction.get("odds_snapshot_id")
@@ -364,12 +372,12 @@ def shrink_llm_probability(
         return raw, metadata
     prior: dict[str, float] = {}
     for row in assessment.get("markets") or []:
-        if row.get("market") != "1x2" or row.get("selection") not in PROBABILITY_KEYS:
+        if row.get("market") != market or row.get("selection") not in selections:
             continue
         value = _probability(row.get("market_probability", row.get("de_vig_probability")))
         if value is not None:
             prior[str(row["selection"])] = value
-    if set(prior) != set(PROBABILITY_KEYS):
+    if set(prior) != set(selections):
         metadata["status"] = "unavailable"
         return raw, metadata
     keep = _number(config.llm_keep_weight)

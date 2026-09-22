@@ -9,7 +9,9 @@ from .prompt_contract import EVIDENCE_CONTRACT_VERSION
 from .prediction import asian_handicap_from_expected_goals
 
 
-MIN_EXPECTED_EDGE = 0.03
+# Aligned with PortfolioConfig.min_ev so the frozen decision layer never
+# claims "bet" for an EV the portfolio gate would reject anyway.
+MIN_EXPECTED_EDGE = 0.05
 MIN_FORECAST_CONFIDENCE = 0.60
 MIN_STAKE_FRACTION = 0.01
 MAX_STAKE_FRACTION = 0.02

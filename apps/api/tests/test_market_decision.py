@@ -13,7 +13,7 @@ def prediction(
         "probabilities": probabilities or {"home": 0.7, "draw": 0.2, "away": 0.1},
         "forecast_confidence": confidence,
         "asian_handicap": None,
-        "ai": {"status": "completed", "evidence_version": "fixture-evidence-v3"},
+        "ai": {"status": "completed", "evidence_version": "fixture-evidence-v4"},
         "model_recommendation": {
             "status": "bet",
             "market": "1x2",
@@ -83,15 +83,26 @@ def test_better_home_price_changes_deterministic_decision_when_evidence_is_ready
     assert result["decision"]["stake_fraction"] == 0.02
 
 
-def test_three_percent_edge_uses_the_ten_percent_stake_floor() -> None:
+def test_five_percent_edge_uses_the_minimum_stake_floor() -> None:
+    result = apply_market_decision(
+        prediction(),
+        context(fresh_odds(home=1.5)),
+    )
+
+    assert result["decision"]["status"] == "bet"
+    assert result["decision"]["expected_edge"] == pytest.approx(0.05)
+    assert result["decision"]["stake_fraction"] == 0.01
+
+
+def test_edge_below_the_unified_threshold_is_rejected() -> None:
     result = apply_market_decision(
         prediction(),
         context(fresh_odds(home=1.4714285714)),
     )
 
-    assert result["decision"]["status"] == "bet"
-    assert result["decision"]["expected_edge"] == pytest.approx(0.03)
-    assert result["decision"]["stake_fraction"] == 0.01
+    assert result["decision"]["status"] == "no_bet"
+    assert "negative_edge" in result["decision"]["reason_codes"]
+    assert result["decision"]["stake_fraction"] == 0.0
 
 
 def test_de_vig_probabilities_sum_to_one() -> None:

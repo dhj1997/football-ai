@@ -218,6 +218,54 @@ def test_llm_probability_shrinks_only_with_matching_fresh_market_snapshot() -> N
     assert metadata["status"] == "unavailable"
 
 
+def test_llm_asian_handicap_forecast_shrinks_toward_market() -> None:
+    prediction = {
+        "model_key": "chatgpt",
+        "odds_snapshot_id": "snapshot-1",
+        "market_assessment": {
+            "odds_snapshot_id": "snapshot-1",
+            "odds_status": "fresh",
+            "markets": [
+                {
+                    "market": "asian_handicap",
+                    "selection": "home_handicap",
+                    "market_probability": 0.50,
+                    "probability_source": "model_asian_handicap_forecast",
+                },
+                {
+                    "market": "asian_handicap",
+                    "selection": "away_handicap",
+                    "market_probability": 0.50,
+                    "probability_source": "model_asian_handicap_forecast",
+                },
+            ],
+        },
+    }
+    shrunk, metadata = shrink_llm_probability(
+        0.80,
+        selection="home_handicap",
+        market="asian_handicap",
+        prediction=prediction,
+        config=PortfolioConfig(),
+        probability_source="model_asian_handicap_forecast",
+    )
+    assert shrunk == pytest.approx(0.71)
+    assert metadata["status"] == "applied"
+    assert metadata["market_prior_probability"] == 0.5
+
+    # Poisson-driven handicap rows are not LLM probabilities: keep them raw.
+    unchanged, metadata = shrink_llm_probability(
+        0.80,
+        selection="home_handicap",
+        market="asian_handicap",
+        prediction=prediction,
+        config=PortfolioConfig(),
+        probability_source="poisson_baseline",
+    )
+    assert unchanged == 0.80
+    assert metadata["status"] == "not_applicable"
+
+
 def test_daily_and_league_limits_clamp_requested_stake() -> None:
     config = PortfolioConfig()
     daily = risk_gate(candidate(), 10_000, daily_exposure=480, requested_stake=50, config=config)
