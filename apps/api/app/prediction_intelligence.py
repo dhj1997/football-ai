@@ -1053,12 +1053,15 @@ def _average_clv(rows: Iterable[Mapping[str, Any]]) -> float | None:
     return round(sum(values) / len(values), 6) if values else None
 
 
-def _ece(rows: Iterable[Mapping[str, Any]]) -> float | None:
-    valid = []
-    for row in rows:
-        probabilities = normalize_probabilities(row.get("model_probabilities") or row.get("probabilities"))
-        if probabilities and row.get("actual_outcome") in PROBABILITY_KEYS:
-            valid.append((probabilities, row["actual_outcome"]))
+def binned_ece(pairs: Iterable[tuple[Mapping[str, float], str]]) -> float | None:
+    """Ten-bin one-vs-rest calibration error averaged over the three outcomes.
+
+    This is the repository's single ECE definition: bin each outcome's
+    predicted probability, weight each bin's ``|frequency - mean prediction|``
+    by its share of the sample, then average across outcomes. Per-row mean
+    absolute error must not be reported under this name.
+    """
+    valid = [(probabilities, actual) for probabilities, actual in pairs]
     if not valid:
         return None
     errors = []
@@ -1078,6 +1081,15 @@ def _ece(rows: Iterable[Mapping[str, Any]]) -> float | None:
             )
         )
     return round(sum(errors) / len(errors), 6)
+
+
+def _ece(rows: Iterable[Mapping[str, Any]]) -> float | None:
+    return binned_ece(
+        (probabilities, str(row["actual_outcome"]))
+        for row in rows
+        if (probabilities := normalize_probabilities(row.get("model_probabilities") or row.get("probabilities")))
+        and row.get("actual_outcome") in PROBABILITY_KEYS
+    )
 
 
 def split_time_ordered(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1175,13 +1187,11 @@ def evaluate_probabilities(
         return {"status": "insufficient_sample", "samples": 0, "brier": None, "log_loss": None, "ece": None, "rps": None, "clv": None}
     brier = []
     log_loss = []
-    ece = []
     rps = []
     for row, probabilities in valid:
         actual = row["actual_outcome"]
         brier.append(sum((probabilities[key] - (1.0 if key == actual else 0.0)) ** 2 for key in PROBABILITY_KEYS))
         log_loss.append(-math.log(max(1e-9, probabilities[actual])))
-        ece.append(sum(abs(probabilities[key] - (1.0 if key == actual else 0.0)) for key in PROBABILITY_KEYS) / 3)
         cumulative = 0.0
         actual_cumulative = 0.0
         rps_value = 0.0
@@ -1195,7 +1205,7 @@ def evaluate_probabilities(
         "samples": len(valid),
         "brier": round(sum(brier) / len(brier), 6),
         "log_loss": round(sum(log_loss) / len(log_loss), 6),
-        "ece": round(sum(ece) / len(ece), 6),
+        "ece": binned_ece((probabilities, row["actual_outcome"]) for row, probabilities in valid),
         "rps": round(sum(rps) / len(rps), 6),
         "clv": _average_clv(row for row, _ in valid),
     }

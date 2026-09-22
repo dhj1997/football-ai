@@ -744,7 +744,7 @@ class AutomationRunner:
         """
 
         from .model_platform import run_model_protocol
-        from .model_registry import ModelRecord, artifact_hash, dataset_fingerprint
+        from .model_registry import ModelRecord, artifact_hash, dataset_fingerprint, evaluate_promotion
         from .prediction_intelligence import build_backtest_rows
 
         settlements = self.repository.fixture_settlements(
@@ -770,12 +770,21 @@ class AutomationRunner:
         metrics = protocol.get("metrics") or {}
         test_samples = int((metrics.get("ensemble") or {}).get("samples") or 0)
         improvement = ((protocol.get("improvement") or {}).get("naive_baseline") or {}).get("brier_improvement")
-        promoted = (
-            protocol.get("status") == "ok"
-            and test_samples >= 30
-            and improvement is not None
-            and improvement > 0
+        # 晋升必须走注册表的指标/校准/稳定性/泄露四门禁，不再手工盖章。
+        champion_record = None
+        champion_reader = getattr(self.model_registry_service, "champion", None)
+        if callable(champion_reader):
+            champion_record = champion_reader("ensemble")
+        champion_metrics = (
+            ((champion_record.payload or {}).get("metrics") or {}).get("ensemble")
+            if champion_record is not None
+            else None
         )
+        verdict = evaluate_promotion(
+            dict(metrics.get("ensemble") or {}),
+            champion_metrics,
+        )
+        promoted = protocol.get("status") == "ok" and verdict["promoted"]
         record = ModelRecord(
             model_key="ensemble",
             model_version=version,
@@ -793,6 +802,7 @@ class AutomationRunner:
                 "splits": protocol.get("splits"),
                 "improvement": protocol.get("improvement"),
                 "temperature": protocol.get("temperature"),
+                "promotion_verdict": verdict,
                 "sample_status": "adequate" if promoted else "low_confidence",
             },
         )
@@ -802,7 +812,7 @@ class AutomationRunner:
                 "ensemble",
                 version,
                 "champion",
-                promotion_evidence={"promoted": True},
+                promotion_evidence=verdict,
             )
         return {
             "status": "promoted" if promoted else "registered_draft",
@@ -810,6 +820,7 @@ class AutomationRunner:
             "weights": weights,
             "test_samples": test_samples,
             "improvement": improvement,
+            "promotion_verdict": verdict,
             "item_count": 1,
         }
 

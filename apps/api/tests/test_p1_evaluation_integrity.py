@@ -38,7 +38,7 @@ def _prediction(prediction_id: str, model_key: str, fixture_id: str = "p1-fixtur
         "model_version": f"{model_key}:test",
         "model_key": model_key,
         "competition_id": "p1",
-        "prompt_version": "football-forecast-v5",
+        "prompt_version": "football-forecast-v6",
         "probabilities": probabilities,
         "model_probabilities": probabilities,
         "baseline": {"probabilities": {"home": 0.55, "draw": 0.25, "away": 0.20}},
@@ -46,7 +46,7 @@ def _prediction(prediction_id: str, model_key: str, fixture_id: str = "p1-fixtur
         "evidence_snapshot_id": "evidence-p1",
         "evidence_hash": "a" * 64,
         "odds_snapshot_id": "odds-p1",
-        "ai": {"status": "completed", "provider": model_key, "prompt_version": "football-forecast-v5"},
+        "ai": {"status": "completed", "provider": model_key, "prompt_version": "football-forecast-v6"},
         "market_assessment": {
             "markets": [
                 {"market": "1x2", "selection": "home", "market_probability": 0.50, "de_vig_probability": 0.50},

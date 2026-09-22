@@ -1043,16 +1043,18 @@ def models() -> dict:
         {"model_key": "calibrated_ensemble", "family": "Calibrated Ensemble", "model_version": None},
     ]
     records = model_registry_service.list()
+    # Champion per family is the newest production record, not whichever row
+    # a dict overwrite happens to keep last.
+    champions = {
+        model_key: record.as_dict()
+        for model_key in sorted({record.model_key for record in records if record.status in {"champion", "active"}})
+        if (record := model_registry_service.champion(model_key)) is not None
+    }
     return {
         "families": families,
         "records": [record.as_dict() for record in records],
         "record_count": len(records),
-        "champions": {
-            record.model_key: record.as_dict()
-            for record in {item.model_key: item for item in records if item.status in {"champion", "active"}}.values()
-        }
-        if records
-        else {},
+        "champions": champions,
     }
 
 

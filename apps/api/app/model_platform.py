@@ -383,6 +383,36 @@ def _ensemble_row_probabilities(row: Mapping[str, Any], weights: Mapping[str, fl
     return normalize_probabilities(probabilities)
 
 
+def _window_briers(
+    rows: list[Mapping[str, Any]],
+    probability_reader: Any,
+    *,
+    window_count: int = 3,
+) -> list[float]:
+    """Mean Brier per chronological test window for the stability gate."""
+
+    ordered = sorted(rows, key=lambda row: str(row.get("prediction_created_at") or row.get("settled_at") or ""))
+    if not ordered:
+        return []
+    size = max(1, math.ceil(len(ordered) / window_count))
+    result: list[float] = []
+    for start in range(0, len(ordered), size):
+        scores = []
+        for row in ordered[start : start + size]:
+            probabilities = normalize_probabilities(probability_reader(row))
+            actual = row.get("actual_outcome")
+            if probabilities and actual in PROBABILITY_KEYS:
+                scores.append(
+                    sum(
+                        (probabilities[key] - (1.0 if key == actual else 0.0)) ** 2
+                        for key in PROBABILITY_KEYS
+                    )
+                )
+        if scores:
+            result.append(round(sum(scores) / len(scores), 6))
+    return result
+
+
 def run_model_protocol(
     rows: Iterable[Mapping[str, Any]],
     model_keys: Iterable[str],
@@ -432,6 +462,13 @@ def run_model_protocol(
     naive_metrics = evaluate_probabilities(test, lambda row: naive_probabilities)
     ensemble_brier = ensemble_metrics.get("brier")
     naive_brier = naive_metrics.get("brier")
+    # Promotion-gate inputs: chronological Brier windows on the test split and
+    # an honest calibration status for the untemperatured ensemble.
+    ensemble_metrics["window_briers"] = _window_briers(
+        test,
+        lambda row: _ensemble_row_probabilities(row, weights),
+    )
+    ensemble_metrics.setdefault("calibration_status", "not_applicable")
     metrics["ensemble"] = ensemble_metrics
     metrics["naive_baseline"] = naive_metrics
     if temperature:

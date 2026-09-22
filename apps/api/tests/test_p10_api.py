@@ -2,6 +2,7 @@
 
 import os
 import sys
+import uuid
 
 if "app.main" not in sys.modules:
     os.environ.setdefault("DATABASE_URL", "sqlite:///test_football_ai_p10.db")
@@ -47,18 +48,21 @@ def test_model_status_transition_requires_admin() -> None:
 
 
 def test_model_status_transition_validates_lifecycle() -> None:
-    _registered_record("p10-v1")
+    # A per-run version keeps the lifecycle assertions immune to champion
+    # records left in the on-disk test database by earlier runs.
+    version = f"p10-{uuid.uuid4().hex[:8]}"
+    _registered_record(version)
 
     # Draft must be evaluated (candidate) before production.
     draft_block = client.post(
-        "/api/admin/models/poisson/p10-v1/status",
+        "/api/admin/models/poisson/" + version + "/status",
         headers=_ADMIN,
         json={"status": "champion"},
     )
     assert draft_block.status_code == 400
 
     candidate = client.post(
-        "/api/admin/models/poisson/p10-v1/status",
+        "/api/admin/models/poisson/" + version + "/status",
         headers=_ADMIN,
         json={"status": "candidate"},
     )
@@ -66,14 +70,14 @@ def test_model_status_transition_validates_lifecycle() -> None:
     assert candidate.json()["updated"]["status"] == "candidate"
 
     unevaluated = client.post(
-        "/api/admin/models/poisson/p10-v1/status",
+        "/api/admin/models/poisson/" + version + "/status",
         headers=_ADMIN,
         json={"status": "champion"},
     )
     assert unevaluated.status_code == 400
 
     promoted = client.post(
-        "/api/admin/models/poisson/p10-v1/status",
+        "/api/admin/models/poisson/" + version + "/status",
         headers=_ADMIN,
         json={"status": "champion", "promotion_evidence": {"promoted": True}},
     )
@@ -82,7 +86,7 @@ def test_model_status_transition_validates_lifecycle() -> None:
 
     # The public endpoint now reflects the champion record.
     models = client.get("/api/models").json()
-    assert models["champions"]["poisson"]["model_version"] == "p10-v1"
+    assert models["champions"]["poisson"]["model_version"] == version
 
 
 def test_model_status_transition_rejects_unknown_model() -> None:

@@ -16,6 +16,7 @@ from .prediction_intelligence import (
     ENSEMBLE_VERSION,
     FEATURE_VERSION,
     apply_temperature,
+    binned_ece,
     build_performance_profiles,
     evaluate_probabilities,
     fit_temperature,
@@ -287,7 +288,8 @@ def _metric_report(rows: list[dict[str, Any]], model_key: str) -> dict[str, Any]
 def _metric_statistics(rows: list[dict[str, Any]], model_key: str) -> dict[str, Any]:
     """Return mean, standard error, and a descriptive 95% CI per forecast metric."""
 
-    values: dict[str, list[float]] = {key: [] for key in ("brier", "log_loss", "rps", "ece")}
+    values: dict[str, list[float]] = {key: [] for key in ("brier", "log_loss", "rps")}
+    calibration_pairs: list[tuple[dict[str, float], str]] = []
     for row in rows:
         probabilities = normalize_probabilities((row.get("probabilities_by_model") or {}).get(model_key))
         actual = row.get("actual_outcome")
@@ -303,7 +305,7 @@ def _metric_statistics(rows: list[dict[str, Any]], model_key: str) -> dict[str, 
             actual_cumulative += 1.0 if actual == key else 0.0
             rps += (cumulative - actual_cumulative) ** 2
         values["rps"].append(rps / 2)
-        values["ece"].append(sum(abs(probabilities[key] - (1.0 if key == actual else 0.0)) for key in ("home", "draw", "away")) / 3)
+        calibration_pairs.append((probabilities, str(actual)))
 
     result: dict[str, Any] = {}
     for key, samples in values.items():
@@ -320,6 +322,13 @@ def _metric_statistics(rows: list[dict[str, Any]], model_key: str) -> dict[str, 
             "standard_error": round(standard_error, 6) if standard_error is not None else None,
             "confidence_interval_95": interval,
         }
+    # ECE is a dataset-level binned statistic, not a per-row mean: it shares
+    # the single repository definition and has no row-level standard error.
+    result["ece"] = {
+        "mean": binned_ece(calibration_pairs),
+        "standard_error": None,
+        "confidence_interval_95": None,
+    }
     return result
 
 
@@ -502,13 +511,34 @@ class ModelEvaluationService:
             if model in {"gpt", "deepseek"} and not evaluation_rows[model]:
                 model_reports[model]["reason"] = "historical model prediction unavailable"
         baseline_metrics = model_reports["baseline"]
+        baseline_rows_by_fixture = {
+            str(row.get("fixture_id") or ""): row for row in evaluation_rows["baseline"]
+        }
         for model, report in model_reports.items():
+            # Improvement must compare each model against the baseline on the
+            # SAME rows: models cover different fixture subsets, so comparing
+            # against the baseline's own full-sample metrics conflates model
+            # quality with sample composition.
+            if model == "baseline":
+                paired_baseline = baseline_metrics
+                paired_count = int(baseline_metrics.get("sample_count") or 0)
+            else:
+                paired_rows = [
+                    baseline_rows_by_fixture[fixture_id]
+                    for fixture_id in sorted(
+                        {str(row.get("fixture_id") or "") for row in evaluation_rows[model]}
+                    )
+                    if fixture_id in baseline_rows_by_fixture
+                ]
+                paired_baseline = _metric_report(paired_rows, "baseline") if paired_rows else baseline_metrics
+                paired_count = len(paired_rows)
             report["improvement"] = {
-                metric: round(float(baseline_metrics[metric]) - float(report[metric]), 6)
-                if baseline_metrics.get(metric) is not None and report.get(metric) is not None
+                metric: round(float(paired_baseline[metric]) - float(report[metric]), 6)
+                if paired_baseline.get(metric) is not None and report.get(metric) is not None
                 else None
                 for metric in ("brier", "log_loss", "rps", "ece")
             }
+            report["improvement_sample_count"] = paired_count
         model_test_fixture_ids = {
             model: sorted({str(row.get("fixture_id") or "") for row in evaluation_rows[model]})
             for model in MODEL_KEYS

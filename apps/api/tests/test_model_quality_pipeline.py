@@ -166,12 +166,22 @@ def _seed_two_model_settlements(
 ) -> None:
     rng = random.Random(5)
     start = datetime(2026, 1, 1, tzinfo=UTC)
+    # Outcomes are sampled from the sharp model's own stated distribution, so
+    # the seeded deepseek probabilities are calibrated by construction and the
+    # promotion gates (binned ECE, windowed Brier spread) judge real evidence,
+    # not hindsight. The distribution stays moderate: extreme probabilities
+    # carry per-row Brier variance that no honest window spread survives.
+    sharp_probabilities = {"home": 0.42, "draw": 0.29, "away": 0.29}
     for index in range(count):
-        actual = rng.choice(["home", "draw", "away"])
+        actual = rng.choices(
+            ("home", "draw", "away"),
+            weights=tuple(sharp_probabilities[key] for key in ("home", "draw", "away")),
+            k=1,
+        )[0]
         created = start + timedelta(hours=index * 6)
         for model_key, sharp in (("deepseek", True), ("chatgpt", False)):
             probs = (
-                {key: 0.6 if key == actual else 0.2 for key in ("home", "draw", "away")}
+                dict(sharp_probabilities)
                 if sharp
                 else {"home": 0.34, "draw": 0.33, "away": 0.33}
             )

@@ -184,6 +184,22 @@ def bootstrap_confidence_interval(
     }
 
 
+def _brier_by_fixture(rows: list[dict[str, Any]], probabilities_by_fixture: dict[str, Mapping[str, float]]) -> dict[str, float]:
+    """Per-fixture Brier scores so cross-model statistics stay row-paired."""
+
+    values: dict[str, float] = {}
+    for row in rows:
+        fixture_id = str(row.get("fixture_id") or "")
+        probabilities = probabilities_by_fixture.get(fixture_id)
+        outcome = row.get("actual_outcome")
+        if not fixture_id or not probabilities or outcome not in PROBABILITY_KEYS:
+            continue
+        values[fixture_id] = sum(
+            (probabilities[key] - (1.0 if key == outcome else 0.0)) ** 2 for key in PROBABILITY_KEYS
+        )
+    return values
+
+
 def _brier_per_row(rows: list[dict[str, Any]], probabilities_by_fixture: dict[str, Mapping[str, float]]) -> list[float]:
     values = []
     for row in rows:
@@ -462,6 +478,10 @@ def _run_windows(
     ensemble_briers: list[float] = []
     model_briers: dict[str, list[float]] = {key: [] for key in model_keys}
     baseline_briers: list[float] = []
+    # Fixture-keyed Briers keep the improvement statistic paired: comparing
+    # two independently sorted float lists would scramble which rows differ.
+    ensemble_briers_by_fixture: dict[str, float] = {}
+    baseline_briers_by_fixture: dict[str, float] = {}
     market_briers: list[float] = []
     market_row_count = 0
     for window in windows:
@@ -505,24 +525,26 @@ def _run_windows(
             }
         )
         ensemble_briers.extend(_brier_per_row(test, window_ensemble))
+        ensemble_briers_by_fixture.update(_brier_by_fixture(test, window_ensemble))
         for key in model_keys:
             model_briers[key].extend(_brier_per_row(test, {str(row.get("fixture_id") or ""): probs for row in test if (probs := _models_of(row).get(key))}))
         baseline_briers.extend(_brier_per_row(test, {str(row.get("fixture_id") or ""): naive}))
+        baseline_briers_by_fixture.update(_brier_by_fixture(test, {str(row.get("fixture_id") or ""): naive}))
         if market_evaluated:
             market_row_count += len(market_evaluated)
             market_briers.extend(_brier_per_row(market_evaluated, {str(row.get("fixture_id") or ""): row["market_normalized"] for row in market_evaluated}))
     aggregate_ensemble = bootstrap_confidence_interval(ensemble_briers, seed=seed)
     improvement: dict[str, Any] = {"naive_baseline": None}
     if ensemble_briers and baseline_briers:
+        paired_fixtures = sorted(set(ensemble_briers_by_fixture) & set(baseline_briers_by_fixture))
         improvements = [
-            baseline - ensemble
-            for ensemble, baseline in zip(
-                sorted(ensemble_briers), sorted(baseline_briers), strict=False
-            )
+            baseline_briers_by_fixture[fixture_id] - ensemble_briers_by_fixture[fixture_id]
+            for fixture_id in paired_fixtures
         ]
         improvement["naive_baseline"] = {
             "brier_improvement": round(sum(improvements) / len(improvements), 6) if improvements else None,
             "confidence_interval": bootstrap_confidence_interval(improvements, seed=seed + 1),
+            "paired_samples": len(improvements),
         }
     return {
         "status": "ok" if windows_report else "insufficient_sample",
