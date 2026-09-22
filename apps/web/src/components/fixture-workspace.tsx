@@ -623,6 +623,46 @@ function groupFixturesByLeague(items: Fixture[]): FixtureLeagueGroup[] {
   }, []);
 }
 
+const WEEKDAY_NAMES = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+function chinaTodayDate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+  }).format(new Date());
+}
+
+function fixtureDateKey(fixture: Fixture): string {
+  return fixture.fixture_date || fixture.kickoff.slice(0, 10);
+}
+
+function fixtureDateLabel(date: string): { label: string; badge: string | null } {
+  const parts = date.split("-").map(Number);
+  const weekday = WEEKDAY_NAMES[new Date(`${date}T00:00:00Z`).getUTCDay()] ?? "";
+  const label =
+    Number.isFinite(parts[1]) && Number.isFinite(parts[2])
+      ? `${parts[1]}月${parts[2]}日 ${weekday}`.trim()
+      : date;
+  const today = chinaTodayDate();
+  const tomorrow = new Date(`${today}T12:00:00Z`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const tomorrowKey = tomorrow.toISOString().slice(0, 10);
+  const badge = date === today ? "今天" : date === tomorrowKey ? "明天" : null;
+  return { label, badge };
+}
+
+function groupFixturesByDate(items: Fixture[]): { date: string; fixtures: Fixture[] }[] {
+  const buckets = new Map<string, Fixture[]>();
+  for (const fixture of items) {
+    const date = fixtureDateKey(fixture);
+    const bucket = buckets.get(date);
+    if (bucket) bucket.push(fixture);
+    else buckets.set(date, [fixture]);
+  }
+  return [...buckets.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, fixtures]) => ({ date, fixtures }));
+}
+
 function FixtureGroupCard({
   group,
   selectedFixtureId,
@@ -649,17 +689,39 @@ function FixtureGroupCard({
         </b>
       </header>
       <div className="divide-y divide-slate-800/60">
-        {group.fixtures.map((fixture) => (
-          <FixtureRow
-            key={fixture.id}
-            fixture={fixture}
-            selected={fixture.id === selectedFixtureId}
-            href={
-              onSelect ? undefined : `/matches/${encodeURIComponent(fixture.id)}`
-            }
-            onSelect={onSelect ? () => onSelect(fixture.id) : undefined}
-          />
-        ))}
+        {groupFixturesByDate(group.fixtures).map(({ date, fixtures }) => {
+          const { label, badge } = fixtureDateLabel(date);
+          return (
+            <div key={date}>
+              <div className="flex items-center gap-2 border-b border-slate-800/60 bg-slate-900/70 px-4 py-1.5">
+                {badge && (
+                  <span className="rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                    {badge}
+                  </span>
+                )}
+                <span className="text-[11px] font-semibold text-slate-300">
+                  {label}
+                </span>
+                <span className="ml-auto font-mono text-[10px] tabular-nums text-slate-500">
+                  {fixtures.length} 场
+                </span>
+              </div>
+              {fixtures.map((fixture) => (
+                <FixtureRow
+                  key={fixture.id}
+                  fixture={fixture}
+                  selected={fixture.id === selectedFixtureId}
+                  href={
+                    onSelect
+                      ? undefined
+                      : `/matches/${encodeURIComponent(fixture.id)}`
+                  }
+                  onSelect={onSelect ? () => onSelect(fixture.id) : undefined}
+                />
+              ))}
+            </div>
+          );
+        })}
       </div>
     </Card>
   );
