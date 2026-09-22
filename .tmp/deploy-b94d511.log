@@ -1,0 +1,144 @@
+[1/7] 打包本地代码（排除 .venv / node_modules / .next / .env / 数据库）
+[2/7] 上传到服务器
+Uploading football-ai-deploy-20260920-220711.tar.gz (861.4 KB) to i-bp1eqjmg6qtfa2lfzmpv:/tmp/football-ai-deploy-20260920-220711.tar.gz
+
+⠋ Preparing...
+⠙ Preparing...
+⠹ Preparing...
+⠸ Preparing...
+⠼ Preparing...
+⠴ Preparing...
+⠦ Preparing...
+⠧ Preparing...
+⠇ Preparing...
+⠏ Preparing...
+⠋ [###############---------------]  50% Uploading to OSS...
+⠙ [###############---------------]  50% Uploading to OSS...
+⠹ [###############---------------]  50% Uploading to OSS...
+⠸ [###############---------------]  50% Uploading to OSS...
+⠼ [###############---------------]  50% Uploading to OSS...
+⠴ [###############---------------]  50% Uploading to OSS...
+⠦ [###############---------------]  50% Uploading to OSS...
+⠧ [###############---------------]  50% Uploading to OSS...
+⠇ [###############---------------]  50% Uploading to OSS...
+⠏ [###############---------------]  50% Uploading to OSS...
+⠋ [###############---------------]  50% Uploading to OSS...
+⠙ [###############---------------]  50% Uploading to OSS...
+[KUpload complete: football-ai-deploy-20260920-220711.tar.gz → /tmp/football-ai-deploy-20260920-220711.tar.gz
+[3/7] 服务器端：MySQL 备份与恢复验证
+== readiness ==
+status: ready
+environment: production
+config_violations: []
+migration_dry_run: {'status': 'not_supported', 'reason': 'transactional DDL dry-run requires SQLite; run against a staging copy for other engines'}
+smoke: {'database_connectivity': 'pass', 'database_query': 'pass', 'competition_registry_loaded': 'pass', 'fixture_reader_available': 'pass', 'environment_contract': 'pass'}
+== db metadata (host=127.0.0.1 db=football_ai) ==
+size_mb=1135.2 tables=41
+== quiesce API writer ==
+== backup ==
+-rw-r--r-- 1 root root 123265959 Sep 20 22:07 /opt/football-ai/backups/db-20260920-220724.sql.gz
+== restore verification ==
+== fingerprint ==
+RESTORE_VERIFIED tables=41
+backup_file=/opt/football-ai/backups/db-20260920-220724.sql.gz
+== retention (keep 14 days) ==
+done
+== restart API writer ==
+[4/7] 服务器端：备份当前版本并解压覆盖
+extracted
+[5/7] 服务器端：安装后端依赖 + 构建前端
+/opt/football-ai/app/apps/api/.venv/bin/python: No module named pip
+pip 不可用，跳过依赖同步（依赖未变化时无影响）
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+╭ Warning ─────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│   Ignored build scripts: unrs-resolver@1.12.2.                               │
+│   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+│   to run scripts.                                                            │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Done in 1.2s using pnpm v10.33.2
+
+> football-ai-web@0.1.0 build /opt/football-ai/app/apps/web
+> next build
+
+▲ Next.js 16.3.5 (Turbopack)
+✓ Running next.config.ts took 330ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 8.9s
+  Running TypeScript ...
+  Finished TypeScript in 4.6s ...
+  Collecting page data using 1 worker ...
+  Generating static pages using 1 worker (0/14) ...
+  Generating static pages using 1 worker (3/14) 
+  Generating static pages using 1 worker (6/14) 
+  Generating static pages using 1 worker (10/14) 
+✓ Generating static pages using 1 worker (14/14) in 605ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /admin
+├ ƒ /api/admin/activation-status
+├ ƒ /api/admin/dongqiudi/sync
+├ ƒ /api/admin/evidence
+├ ƒ /api/admin/fixtures/[fixtureId]/dongqiudi-sync
+├ ƒ /api/admin/jobs
+├ ƒ /api/admin/jobs/[jobName]
+├ ƒ /api/admin/model-config
+├ ƒ /api/admin/predict
+├ ƒ /api/admin/sync
+├ ƒ /api/backend/[...path]
+├ ○ /icon.svg
+├ ƒ /matches/[fixtureId]
+├ ○ /performance
+├ ○ /standings
+└ ƒ /teams/[leagueKey]/[teamId]
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+[6/7] 重启服务
+● football-ai-api.service - Football AI FastAPI service
+     Loaded: loaded (/etc/systemd/system/football-ai-api.service; enabled; vendor preset: enabled)
+     Active: active (running) since Sun 2026-09-20 22:10:56 CST; 30ms ago
+   Main PID: 29138 (python)
+      Tasks: 1 (limit: 4094)
+     Memory: 2.4M
+        CPU: 9ms
+     CGroup: /system.slice/football-ai-api.service
+             └─29138 /opt/football-ai/app/apps/api/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Sep 20 22:10:56 iZbp1eqjmg6qtfa2lfzmpvZ systemd[1]: Started Football AI FastAPI service.
+
+● football-ai-web.service - Football AI Next.js service
+     Loaded: loaded (/etc/systemd/system/football-ai-web.service; enabled; vendor preset: enabled)
+     Active: active (running) since Sun 2026-09-20 22:10:56 CST; 264ms ago
+   Main PID: 29139 (node)
+      Tasks: 7 (limit: 4094)
+     Memory: 19.3M
+        CPU: 253ms
+     CGroup: /system.slice/football-ai-web.service
+             └─29139 /usr/local/bin/node /opt/football-ai/app/apps/web/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3200
+
+Sep 20 22:10:56 iZbp1eqjmg6qtfa2lfzmpvZ systemd[1]: Started Football AI Next.js service.
+[7/7] 健康检查
+curl: (7) Failed tntto 127.0.0.1 port 0 s:nect edcurl: (7) Failed t70after 0 ms: Connecnrdcurl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Connection refused
+{"status":"ok","database_backend":"mysql","provider_configured":true,"evidence_provider_configured":true,"evidence_sources":["thesportsdb-partial","dongqiudi"],"schedule_provider":"thesportsdb","dongq
+web:200
+部署完成：football-ai-deploy-20260920-220711.tar.gz（服务器备份 /opt/football-ai/backups/app-20260920-220711.tar.gz）
+curl: (7) Failed  00msetd
