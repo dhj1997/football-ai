@@ -78,8 +78,8 @@ for ATTEMPT in \$(seq 1 120); do
     printf '%s' \"\$HEALTH\" | head -c 200; echo
     break
   fi
-  if [ \"\$ATTEMPT\" -eq 30 ]; then
-    echo 'api health FAILED after 30 attempts' >&2
+  if [ \"\$ATTEMPT\" -eq 120 ]; then
+    echo 'api health FAILED after 120 attempts' >&2
     exit 1
   fi
   sleep 1
