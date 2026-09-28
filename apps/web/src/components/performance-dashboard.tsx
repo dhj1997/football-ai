@@ -814,7 +814,7 @@ function StrategyLeaderboard({
                     <th scope="row" className={rowHeadClasses}>
                       <b className="block text-xs font-semibold text-slate-100">
                         {item.model_key === "deepseek"
-                          ? "DeepSeek"
+                          ? "智谱GLM"
                           : item.model_key === "chatgpt"
                             ? "GPT-5.6 Sol"
                             : item.model_key}
@@ -1761,7 +1761,7 @@ function DualDisagreement({ decisions }: { decisions: DecisionAudit[] }) {
                     <td className={cellClasses}>{row.actual ? OUTCOME_LABELS[row.actual] : "未赛"}</td>
                     <td className={cellClasses}>
                       {[
-                        row.deepseekBet ? "DeepSeek" : null,
+                        row.deepseekBet ? "智谱GLM" : null,
                         row.chatgptBet ? "ChatGPT" : null,
                       ].filter(Boolean).join(" / ") || "—"}
                     </td>
@@ -1986,7 +1986,7 @@ function modelLabel(
   return key === "chatgpt"
     ? "GPT-5.6 Sol"
     : key === "deepseek"
-      ? "DeepSeek"
+      ? "智谱GLM"
       : key || "模型未知";
 }
 function executionLabel(value: DecisionAudit["execution_status"]) {

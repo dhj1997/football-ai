@@ -2,8 +2,9 @@
 
 Every deepseek prediction call walks an ordered list of free endpoints and
 uses the first one that answers: the AMD ``DeepSeek-V4.1-Flash`` alias
-first, then the runtime-editable primary provider (AMD ``DeepSeek-V4-Flash``
-today), then the 云桥 relay. Candidates get a short per-attempt timeout —
+first (only when the primary model itself is a DeepSeek-family model),
+then the runtime-editable primary provider (智谱 ``glm-5.3-flash`` today), then
+the 云桥 relay. Candidates get a short per-attempt timeout —
 the chain itself is the retry, so inner retries stay off. When every link
 fails, the combined errors surface to the existing ChatGPT fallback.
 """
@@ -73,7 +74,9 @@ class FreeLlmChainProvider:
 
         specs: list[tuple[str, str, str, str]] = []
         if self.primary.api_key and self.primary.base_url:
-            specs.append(("amd-v41", self.primary.base_url, "DeepSeek-V4.1-Flash", self.primary.api_key))
+            # V4.1 别名只在 DeepSeek 系主模型下有意义；GLM 等其他供应商端点没有该模型。
+            if self.primary.model.lower().startswith("deepseek"):
+                specs.append(("amd-v41", self.primary.base_url, "DeepSeek-V4.1-Flash", self.primary.api_key))
             specs.append(("primary", self.primary.base_url, self.primary.model, self.primary.api_key))
         if self.quya_api_key and self.quya_base_url:
             specs.append(("quya", self.quya_base_url, self.quya_model, self.quya_api_key))

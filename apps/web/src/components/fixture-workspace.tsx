@@ -3515,7 +3515,7 @@ export function DualProbabilityPanels({
               onKeyDown={(event) => handleTabKeyDown(event, key)}
             >
               <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                {key === "deepseek" ? "DeepSeek" : "GPT-5.6 Sol"}
+                {key === "deepseek" ? "智谱GLM" : "GPT-5.6 Sol"}
               </span>
               <strong className="font-display text-base font-bold text-slate-100">
                 {outcomeText(

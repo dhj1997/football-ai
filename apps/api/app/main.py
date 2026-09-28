@@ -135,7 +135,7 @@ from .temporal_backtest import (
 
 
 MODEL_LABELS = {
-    "deepseek": "DeepSeek",
+    "deepseek": "智谱GLM",
     "chatgpt": "GPT-5.6 Sol",
 }
 

@@ -898,7 +898,7 @@ export function getMockRuntimeConfig(): RuntimeConfigResponse {
     models: {
       deepseek: {
         key: "deepseek",
-        label: "DeepSeek",
+        label: "智谱GLM",
         model: "deepseek-chat",
         base_url: "https://api.deepseek.com",
         api_key_configured: true,

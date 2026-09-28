@@ -88,10 +88,10 @@ Copy-Item .env.example .env
 
 - `API_FOOTBALL_KEY`：可选的 API-Football 密钥，后续用于详细赛前证据。
 - `ESPN_BASE_URL`：ESPN 公共数据地址，默认 `https://site.api.espn.com`，用于积分榜、球队资料和 API-Football 失败时的比赛证据。
-- `API_DEEPSEEK_KEY`：DeepSeek 后端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
-- `DEEPSEEK_ENABLED`：是否启用 DeepSeek 参与当前预测、翻译和历史自动任务，临时停用时设为 `false`。
-- `DEEPSEEK_MODEL`：默认 `deepseek-v4-flash`。
-- `DEEPSEEK_BASE_URL`：默认 `https://api.deepseek.com`。
+- `API_DEEPSEEK_KEY`：DeepSeek 通道后端密钥（现为智谱 BigModel key），不得使用 `NEXT_PUBLIC_` 前缀。
+- `DEEPSEEK_ENABLED`：是否启用该通道参与当前预测、翻译和历史自动任务，临时停用时设为 `false`。
+- `DEEPSEEK_MODEL`：默认 `glm-5.3-flash`。
+- `DEEPSEEK_BASE_URL`：默认 `https://open.bigmodel.cn/api/coding/paas/v4`（智谱 OpenAI 兼容端点）。
 - `DEEPSEEK_TIMEOUT_SECONDS`、`DEEPSEEK_MAX_RETRIES`、`DEEPSEEK_MAX_TOKENS`：模型超时、重试和输出预算。
 - `API_CHATGPT_KEY`：GPT 服务端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
 - `CHATGPT_MODEL`、`CHATGPT_BASE_URL`：默认分别为 `gpt-5.6-sol` 和 `https://api.quya.org/v1`。

@@ -23,13 +23,15 @@ class Settings(BaseSettings):
     quya_llm_key: str = ""
     free_llm_quya_base_url: str = "https://api.quya.org/v1"
     free_llm_quya_model: str = "deepseek-v4-flash"
-    free_llm_candidate_timeout_seconds: float = 45.0
+    # 链路单次超时需覆盖 glm-5.3-flash 的推理耗时（实测完整契约约 145s）。
+    free_llm_candidate_timeout_seconds: float = 180.0
     free_llm_enabled: bool = True
     deepseek_enabled: bool = True
     deepseek_execution_mode: Literal["active", "shadow"] = "shadow"
-    deepseek_model: str = "deepseek-v4-flash"
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_timeout_seconds: float = 90
+    # deepseek 通道自 2026-09 起改走智谱 GLM（OpenAI 兼容端点），通道键名保留以兼容历史数据。
+    deepseek_model: str = "glm-5.3-flash"
+    deepseek_base_url: str = "https://open.bigmodel.cn/api/coding/paas/v4"
+    deepseek_timeout_seconds: float = 180
     deepseek_max_retries: int = 1
     deepseek_max_tokens: int = 3000
     api_chatgpt_key: str = ""

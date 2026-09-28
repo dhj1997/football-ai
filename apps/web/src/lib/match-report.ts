@@ -64,7 +64,7 @@ function modelRows(detail: FixtureDetail): ReportModelRow[] {
     .filter((entry): entry is [ModelKey, Prediction] => Boolean(entry[1]))
     .map(([key, prediction]) => ({
       key,
-      label: key === "deepseek" ? "DeepSeek" : "GPT-5.6 Sol",
+      label: key === "deepseek" ? "智谱GLM" : "GPT-5.6 Sol",
       outcome: predictionOutcome(prediction),
       probabilities: prediction.probabilities,
       confidence: prediction.forecast_confidence ?? Math.max(...Object.values(prediction.probabilities)),
