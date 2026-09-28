@@ -71,9 +71,9 @@ systemctl --no-pager --lines=3 status football-ai-api football-ai-web | head -30
 "
 
 echo "[7/7] 健康检查"
-"$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 60 -c "
+"$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 180 -c "
 set -e
-for ATTEMPT in \$(seq 1 30); do
+for ATTEMPT in \$(seq 1 120); do
   if HEALTH=\$(curl -fsS --max-time 3 http://127.0.0.1:8000/health); then
     printf '%s' \"\$HEALTH\" | head -c 200; echo
     break
