@@ -107,10 +107,10 @@ if [ -n "${2:-}" ] && [ -f "${2}" ]; then
   echo "reusing existing dump: $DUMP"
 else
   mkdir -p "$BACKUP_DIR"
-  mysqldump -h "$DBHOST" -P "$DBPORT" -u "$DBUSER" --single-transaction --quick --routines --triggers --events "$DB" > "$DUMP" 2>"$MYSQLDUMP_ERROR"
-  DUMP_RC=$?
-  if [ $DUMP_RC -ne 0 ]; then
+  # set -e 下用 if 捕获失败：否则错误信息与残缺 dump 都会被 trap 清理吞掉
+  if ! mysqldump -h "$DBHOST" -P "$DBPORT" -u "$DBUSER" --single-transaction --quick --routines --triggers --events "$DB" > "$DUMP" 2>"$MYSQLDUMP_ERROR"; then
     echo "mysqldump FAILED: $(head -c 200 "$MYSQLDUMP_ERROR")"
+    rm -f "$DUMP"
     exit 1
   fi
   gzip -f "$DUMP"

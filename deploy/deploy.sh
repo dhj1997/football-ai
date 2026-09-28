@@ -41,6 +41,8 @@ set -e
 mkdir -p /opt/football-ai/backups
 tar -czf /opt/football-ai/backups/app-${STAMP}.tar.gz -C /opt/football-ai \
   --exclude='app/apps/api/.venv' --exclude='app/apps/web/node_modules' --exclude='app/apps/web/.next' app
+# 应用备份与 db dump 同用 14 天保留期；不清理会持续占满磁盘
+find /opt/football-ai/backups -maxdepth 1 -name 'app-*.tar.gz' -mtime +14 -delete
 tar -xzf /tmp/${PKG} -C ${REMOTE_APP_DIR}
 chown -R football-ai:football-ai ${REMOTE_APP_DIR}
 rm -f /tmp/${PKG}
