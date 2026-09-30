@@ -4141,31 +4141,32 @@ class PredictionRepository:
                 clauses.append(f"{column} = :{parameter}")
                 parameters[parameter] = value
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        # 历史 payload 体量大且无界增长，必须流式读取：内存只保留每个分组最新一条。
+        groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         with self.engine.connect() as connection:
-            rows = connection.execute(
+            rows = connection.execution_options(stream_results=True).execute(
                 text(
                     "SELECT p.payload AS prediction_payload, f.payload AS fixture_payload "
                     "FROM predictions p LEFT JOIN fixtures f ON f.id = p.fixture_id"
                     f"{where} ORDER BY p.created_at DESC, p.id DESC"
                 ),
                 parameters,
-            ).mappings().all()
-        groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-        for row in rows:
-            prediction = json.loads(row["prediction_payload"])
-            if prompt_version and (prediction.get("ai") or {}).get("prompt_version") != prompt_version:
-                continue
-            key = (
-                str(prediction.get("fixture_id") or ""),
-                str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"),
-                str((prediction.get("experiment") or {}).get("strategy_id") or "baseline"),
-                str((prediction.get("experiment") or {}).get("strategy_version") or "v1"),
-            )
-            if key not in groups:
-                groups[key] = {
-                    "prediction": prediction,
-                    "fixture": json.loads(row["fixture_payload"]) if row.get("fixture_payload") else None,
-                }
+            ).mappings()
+            for row in rows:
+                prediction = json.loads(row["prediction_payload"])
+                if prompt_version and (prediction.get("ai") or {}).get("prompt_version") != prompt_version:
+                    continue
+                key = (
+                    str(prediction.get("fixture_id") or ""),
+                    str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"),
+                    str((prediction.get("experiment") or {}).get("strategy_id") or "baseline"),
+                    str((prediction.get("experiment") or {}).get("strategy_version") or "v1"),
+                )
+                if key not in groups:
+                    groups[key] = {
+                        "prediction": prediction,
+                        "fixture": json.loads(row["fixture_payload"]) if row.get("fixture_payload") else None,
+                    }
         return sorted(
             groups.values(),
             key=lambda item: (
