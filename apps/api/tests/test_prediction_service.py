@@ -34,6 +34,12 @@ class FakeRepository:
         self.feature_snapshots.append(snapshot)
         return snapshot
 
+    def feature_snapshot(self, snapshot_id: str) -> dict | None:
+        return next(
+            (snapshot for snapshot in self.feature_snapshots if snapshot.get("snapshot_id") == snapshot_id),
+            None,
+        )
+
     def save_leakage_audit(self, audit: dict) -> dict:
         self.leakage_audits.append(audit)
         return audit
@@ -306,7 +312,7 @@ async def test_current_prediction_builds_round4_and_round5_for_atomic_writer(
     )
 
     assert calls["round4"] == {
-        "feature_snapshot": result["feature_snapshot"],
+        "feature_snapshot": repository.feature_snapshot(result["feature_snapshot_id"]),
         "match_id": fixture["id"],
         "feature_snapshot_id": result["feature_snapshot_id"],
     }

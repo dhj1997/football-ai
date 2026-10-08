@@ -1032,7 +1032,6 @@ class AutomationRunner:
                 )
                 current_predictions: dict[str, dict[str, Any] | None] = {}
                 lineup_reprediction = False
-                odds_reprediction = False
                 if prediction_window is None and not force:
                     competition_id = getattr(self.prediction_service, "competition_id", None)
                     if model_keys:
@@ -1057,12 +1056,7 @@ class AutomationRunner:
                             self._should_predict(item, context, now, reason="lineup")
                             for item in current_predictions.values()
                         )
-                    odds_reprediction = any(
-                        self._should_predict(item, context, now, reason="odds")
-                        for item in current_predictions.values()
-                        if item is not None
-                    )
-                    if lineup_reprediction or odds_reprediction:
+                    if lineup_reprediction:
                         prediction_window = 0.0
                 if prediction_window is None:
                     continue
@@ -1070,8 +1064,6 @@ class AutomationRunner:
                 marker_prefix = (
                     "prediction_lineup"
                     if lineup_reprediction
-                    else "prediction_odds"
-                    if odds_reprediction
                     else f"prediction_{self._prediction_window_token(prediction_window)}"
                 )
                 if not current_predictions:
@@ -1097,8 +1089,8 @@ class AutomationRunner:
                             key for key in model_keys
                             if not refresh_state.get(f"{marker_prefix}_{key}_at")
                         ]
-                elif lineup_reprediction or odds_reprediction:
-                    event_reason = "lineup" if lineup_reprediction else "odds"
+                elif lineup_reprediction:
+                    event_reason = "lineup"
                     due_model_keys = [
                         key for key in (model_keys or ["default"])
                         if self._should_predict(current_predictions.get(key), context, now, reason=event_reason)

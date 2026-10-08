@@ -187,7 +187,9 @@ class PredictionService:
         baseline["created_at"] = cutoff.isoformat()
         model_input = _model_input(safe_fixture, safe_context, safe_standings, quality)
         model_input["feature_snapshot"] = public_payload(model_feature_manifest(feature_snapshot))
-        baseline["feature_snapshot"] = feature_snapshot
+        # 特征快照体量约 180KB/条且已在 feature_snapshots 表持久化，
+        # payload 只保留引用；读取方（泄漏审计、/api/features 等）均支持按 id 回表。
+        baseline["feature_snapshot_id"] = feature_snapshot.get("snapshot_id")
         balance_reader = getattr(self.repository, "current_balance", None)
         current_balance = (
             balance_reader(self.model_key, self.competition_id)
@@ -578,8 +580,14 @@ class PredictionService:
             if not leakage_audit_id:
                 raise ValueError("Production prediction leakage audit id is required")
             try:
+                # payload 已不内嵌特征快照，按引用回表取（与泄漏审计同一模式）
+                round4_snapshot = prediction.get("feature_snapshot")
+                if not round4_snapshot and prediction.get("feature_snapshot_id"):
+                    snapshot_reader = getattr(self.repository, "feature_snapshot", None)
+                    if callable(snapshot_reader):
+                        round4_snapshot = snapshot_reader(str(prediction["feature_snapshot_id"]))
                 round4_result = TransparentProbabilityEngine().calculate(
-                    prediction.get("feature_snapshot") or {},
+                    round4_snapshot or {},
                     match_id=str(prediction["fixture_id"]),
                     feature_snapshot_id=prediction.get("feature_snapshot_id"),
                 )

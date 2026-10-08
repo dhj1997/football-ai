@@ -774,7 +774,8 @@ async def test_analysis_repredicts_once_after_lineup_confirmation(tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_analysis_repredicts_once_after_odds_change(tmp_path) -> None:
+async def test_analysis_does_not_repredict_after_odds_change(tmp_path) -> None:
+    """赔率变动不再触发重预测：仅时间窗口和阵容确认驱动补预测。"""
     kickoff = datetime.now(UTC) + timedelta(minutes=20)
 
     class Repository:
@@ -843,7 +844,8 @@ async def test_analysis_repredicts_once_after_odds_change(tmp_path) -> None:
     first = await automation._analyze_upcoming()
     second = await automation._analyze_upcoming()
 
-    assert first["prediction_count"] == 1
+    assert first["prediction_count"] == 0
     assert second["prediction_count"] == 0
-    assert prediction.calls == 1
-    assert repository.fixture_data["evidence"]["automation_refresh"]["prediction_odds_chatgpt_at"]
+    assert prediction.calls == 0
+    refresh = repository.fixture_data["evidence"]["automation_refresh"]
+    assert "prediction_odds_chatgpt_at" not in refresh
