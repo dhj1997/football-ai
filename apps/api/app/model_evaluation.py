@@ -26,8 +26,8 @@ from .prediction_intelligence import (
 
 
 P6_VERSION = "p6-historical-evaluation-v1"
-MODEL_KEYS = ("baseline", "poisson", "gpt", "deepseek", "ensemble", "calibrated_ensemble")
-_P3_MODEL_KEYS = ("deepseek", "chatgpt", "poisson")
+MODEL_KEYS = ("baseline", "poisson", "gpt", "zhipu", "ensemble", "calibrated_ensemble")
+_P3_MODEL_KEYS = ("zhipu", "chatgpt", "poisson")
 _CAPTURE_KEYS = frozenset({"captured_at", "source_captured_at", "synced_at", "updated_at", "result_captured_at"})
 
 
@@ -230,8 +230,8 @@ def _fixture_rows(
         )
         model = _model_key(row)
         probabilities = normalize_probabilities(row.get("model_probabilities") or row.get("probabilities"))
-        if model in {"deepseek", "gpt", "chatgpt"} and probabilities:
-            item["models"]["deepseek" if model == "deepseek" else "gpt"] = probabilities
+        if model in {"zhipu", "gpt", "chatgpt"} and probabilities:
+            item["models"]["zhipu" if model == "zhipu" else "gpt"] = probabilities
         baseline = (row.get("baseline") or {}).get("probabilities") if isinstance(row.get("baseline"), Mapping) else None
         baseline = normalize_probabilities(baseline)
         if baseline:
@@ -496,7 +496,7 @@ class ModelEvaluationService:
             if models.get("poisson"):
                 evaluation_rows["baseline"].append({**row, "probabilities_by_model": {"baseline": models["poisson"]}})
                 evaluation_rows["poisson"].append({**row, "probabilities_by_model": {"poisson": models["poisson"]}})
-            for key in ("gpt", "deepseek"):
+            for key in ("gpt", "zhipu"):
                 if models.get(key):
                     evaluation_rows[key].append({**row, "probabilities_by_model": {key: models[key]}})
             if row.get("raw_ensemble_probabilities"):
@@ -508,7 +508,7 @@ class ModelEvaluationService:
         model_reports = {}
         for model in MODEL_KEYS:
             model_reports[model] = _metric_report(evaluation_rows[model], model)
-            if model in {"gpt", "deepseek"} and not evaluation_rows[model]:
+            if model in {"gpt", "zhipu"} and not evaluation_rows[model]:
                 model_reports[model]["reason"] = "historical model prediction unavailable"
         baseline_metrics = model_reports["baseline"]
         baseline_rows_by_fixture = {

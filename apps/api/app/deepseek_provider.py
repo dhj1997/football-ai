@@ -25,7 +25,7 @@ class DeepSeekProvider:
         max_retries: int = 1,
         max_tokens: int = 3000,
         transport: httpx.AsyncBaseTransport | None = None,
-        provider_name: str = "deepseek",
+        provider_name: str = "zhipu",
         contract: PromptContract = DEFAULT_PROMPT_CONTRACT,
     ) -> None:
         self.api_key = api_key
@@ -45,7 +45,7 @@ class DeepSeekProvider:
 
     async def assess(self, model_input: dict[str, Any]) -> dict[str, Any]:
         if not self.configured:
-            raise RuntimeError("API_DEEPSEEK_KEY is not configured")
+            raise RuntimeError("API_ZHIPU_KEY is not configured")
         payload = {
             "model": self.model,
             "messages": self.contract.messages(model_input),

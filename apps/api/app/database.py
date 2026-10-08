@@ -27,7 +27,7 @@ class PredictionRepository:
         self,
         database_url: str,
         competition_id: str = "legacy",
-        model_keys: tuple[str, ...] = ("deepseek",),
+        model_keys: tuple[str, ...] = ("zhipu",),
         initial_balance: float = 1000.0,
     ) -> None:
         self.database_url = self._normalize_url(database_url)
@@ -1071,8 +1071,8 @@ class PredictionRepository:
                     payload = json.loads(row[payload_column])
                 except (TypeError, json.JSONDecodeError):
                     payload = {}
-                model_version = str(payload.get("model_version") or "deepseek")
-                model_key = str((payload.get("ai") or {}).get("provider") or model_version.split(":", 1)[0] or "deepseek")
+                model_version = str(payload.get("model_version") or "zhipu")
+                model_key = str((payload.get("ai") or {}).get("provider") or model_version.split(":", 1)[0] or "zhipu")
                 competition_id = str(payload.get("competition_id") or "legacy")
                 connection.execute(
                     text(f"UPDATE {table} SET model_key = :model_key, competition_id = :competition_id WHERE id = :id"),
@@ -1370,7 +1370,7 @@ class PredictionRepository:
                 "created_at": prediction["created_at"],
                 "phase": prediction["phase"],
                 "model_version": prediction["model_version"],
-                "model_key": prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek",
+                "model_key": prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "zhipu",
                 "competition_id": prediction.get("competition_id") or self.competition_id,
                 "prompt_version": prediction.get("prompt_version") or (prediction.get("ai") or {}).get("prompt_version"),
                 "evidence_snapshot_id": prediction.get("evidence_snapshot_id"),
@@ -2101,7 +2101,7 @@ class PredictionRepository:
             revision.get("model_key")
             or (revision.get("ai") or {}).get("provider")
             or model_version.split(":", 1)[0]
-            or "deepseek"
+            or "zhipu"
         )
         competition_id = str(revision.get("competition_id") or self.competition_id)
         prediction_cutoff_at = str(
@@ -4088,7 +4088,7 @@ class PredictionRepository:
                 continue
             if str(item.get("phase") or "").casefold().startswith("live"):
                 continue
-            key = str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek")
+            key = str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "zhipu")
             groups.setdefault(key, []).append(item)
         return [
             max(group, key=lambda item: (str(item.get("created_at") or ""), str(item["id"])))
@@ -4185,7 +4185,7 @@ class PredictionRepository:
                         continue
                     key = (
                         str(prediction.get("fixture_id") or ""),
-                        str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"),
+                        str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "zhipu"),
                         str((prediction.get("experiment") or {}).get("strategy_id") or "baseline"),
                         str((prediction.get("experiment") or {}).get("strategy_version") or "v1"),
                     )
@@ -4278,7 +4278,7 @@ class PredictionRepository:
                 "id": str(row["id"]),
                 "fixture_id": str(row["fixture_id"]),
                 "created_at": str(row["created_at"]),
-                "model_key": str(row["model_key"] or payload.get("model_key") or (payload.get("ai") or {}).get("provider") or "deepseek"),
+                "model_key": str(row["model_key"] or payload.get("model_key") or (payload.get("ai") or {}).get("provider") or "zhipu"),
                 "competition_id": str(row["competition_id"] or payload.get("competition_id") or "legacy"),
                 "prompt_version": (payload.get("ai") or {}).get("prompt_version"),
                 "evidence_snapshot_id": payload.get("evidence_snapshot_id"),
@@ -4314,7 +4314,7 @@ class PredictionRepository:
             {
                 (
                     str(row["competition_id"] or json.loads(row["payload"]).get("competition_id") or "legacy"),
-                    str(row["model_key"] or json.loads(row["payload"]).get("model_key") or "deepseek"),
+                    str(row["model_key"] or json.loads(row["payload"]).get("model_key") or "zhipu"),
                 )
                 for row in deleted_bets
             }
@@ -5276,7 +5276,7 @@ class PredictionRepository:
             ).mappings().first()
             if existing:
                 return json.loads(existing["payload"])
-            model_key = bet.get("model_key") or "deepseek"
+            model_key = bet.get("model_key") or "zhipu"
             competition_id = bet.get("competition_id") or self.competition_id
             balance_before = self._current_balance(connection, model_key, competition_id)
             if stake > balance_before:
@@ -5666,7 +5666,7 @@ class PredictionRepository:
             if payload.get("status") == "settled":
                 return payload
             amount = round(float(return_amount), 2)
-            model_key = payload.get("model_key") or "deepseek"
+            model_key = payload.get("model_key") or "zhipu"
             competition_id = payload.get("competition_id") or self.competition_id
             balance_before = self._current_balance(connection, model_key, competition_id)
             balance_after = round(balance_before + amount, 2)
@@ -5759,7 +5759,7 @@ class PredictionRepository:
                 ),
                 {
                     **settlement,
-                    "model_key": settlement.get("model_key") or (settlement.get("model_version") or "deepseek").split(":", 1)[0],
+                    "model_key": settlement.get("model_key") or (settlement.get("model_version") or "zhipu").split(":", 1)[0],
                     "competition_id": settlement.get("competition_id") or self.competition_id,
                     "payload": json.dumps(settlement, ensure_ascii=False),
                 },

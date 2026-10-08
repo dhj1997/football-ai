@@ -210,7 +210,7 @@ async def test_successful_ai_prediction_links_immutable_evidence() -> None:
     result = await PredictionService(provider, repository).create(fixture, context)
 
     assert result["ai"]["status"] == "completed"
-    assert result["model_version"] == "deepseek:deepseek-v4-flash"
+    assert result["model_version"] == "zhipu:deepseek-v4-flash"
     assert result["probabilities"] == {"home": 0.56, "draw": 0.25, "away": 0.19}
     assert result["evidence_snapshot_id"] == repository.snapshots[0]["id"]
     assert result["evidence_hash"] == repository.snapshots[0]["content_hash"]
@@ -219,14 +219,14 @@ async def test_successful_ai_prediction_links_immutable_evidence() -> None:
     assert result["ai"]["prompt_version"] == DEFAULT_PROMPT_CONTRACT.version
     assert result["ai"]["evidence_version"] == EVIDENCE_CONTRACT_VERSION
     assert result["experiment"] == {
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "strategy_id": "baseline",
         "strategy_version": "v1",
         "strategy_name": "基准",
         "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
         "decision_policy_version": "football-sim-portfolio-v1",
         "ai_view_version": "football-ai-view-v1",
-        "execution_config_version": "deepseek:baseline:v1",
+        "execution_config_version": "zhipu:baseline:v1",
     }
     assert result["model_recommendation"]["status"] == "no_bet"
     assert result["recommendation"]["is_deterministic"] is True
@@ -452,8 +452,8 @@ async def test_real_dual_prediction_persists_two_revisions_and_one_round5_eviden
             }
         )
     services = {
-        "deepseek": PredictionService(
-            FakeDeepSeek(), repository, model_key="deepseek", competition_id="epl"
+        "zhipu": PredictionService(
+            FakeDeepSeek(), repository, model_key="zhipu", competition_id="epl"
         ),
         "chatgpt": PredictionService(
             FakeChatGPT(), repository, model_key="chatgpt", competition_id="epl"
@@ -462,14 +462,14 @@ async def test_real_dual_prediction_persists_two_revisions_and_one_round5_eviden
 
     results = await DualPredictionService(services, "epl").create(fixture, context)
 
-    assert {item["model_key"] for item in results} == {"deepseek", "chatgpt"}
+    assert {item["model_key"] for item in results} == {"zhipu", "chatgpt"}
     revisions = repository.prediction_revisions(fixture_id=fixture["id"])
     assert len(revisions) == 2
-    assert {row["model_key"] for row in revisions} == {"deepseek", "chatgpt"}
+    assert {row["model_key"] for row in revisions} == {"zhipu", "chatgpt"}
     snapshots = repository.market_snapshots(fixture["id"])
     assert len(snapshots) == 1
     audit = snapshots[0]["payload"]["audit"]
-    primary = next(row for row in revisions if row["model_key"] == "deepseek")
+    primary = next(row for row in revisions if row["model_key"] == "zhipu")
     assert audit["prediction_revision_id"] == (
         f"{primary['prediction_id']}:{primary['revision_number']}"
     )
@@ -479,10 +479,10 @@ async def test_real_dual_prediction_persists_two_revisions_and_one_round5_eviden
     assert primary["probability_calculation_version"] == (
         audit["probability_calculation_version"]
     )
-    assert primary["model_version"] == "deepseek:deepseek-v4-flash"
+    assert primary["model_version"] == "zhipu:deepseek-v4-flash"
     predictions = repository.predictions_for_fixture(fixture["id"])
     assert len(predictions) == 2
-    assert next(row for row in predictions if row["model_key"] == "deepseek")[
+    assert next(row for row in predictions if row["model_key"] == "zhipu")[
         "probabilities"
     ] == {"home": 0.56, "draw": 0.25, "away": 0.19}
     assert primary["probabilities"] != {"home": 0.56, "draw": 0.25, "away": 0.19}

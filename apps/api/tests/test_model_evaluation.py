@@ -19,7 +19,7 @@ def _rows(count: int = 40, league: str = "EPL") -> list[dict]:
         base = {"home": 0.50, "draw": 0.20, "away": 0.30}
         deepseek = {"home": 0.60, "draw": 0.15, "away": 0.25}
         gpt = {"home": 0.45, "draw": 0.25, "away": 0.30}
-        for model_key, probabilities in (("deepseek", deepseek), ("chatgpt", gpt)):
+        for model_key, probabilities in (("zhipu", deepseek), ("chatgpt", gpt)):
             rows.append(
                 {
                     "prediction_id": f"{model_key}-{index}",
@@ -73,7 +73,7 @@ def test_evaluation_uses_same_frozen_test_fixtures_and_validation_only_calibrati
     assert report["weights_fit_on"] == "train"
     assert report["calibration"]["fit_on"] == "validation"
     assert report["calibration"]["fit_as_of"] < report["test_prediction_range"]["start"]
-    assert set(result["model_comparison"]["EPL"]) == {"baseline", "poisson", "gpt", "deepseek", "ensemble", "calibrated_ensemble"}
+    assert set(result["model_comparison"]["EPL"]) == {"baseline", "poisson", "gpt", "zhipu", "ensemble", "calibrated_ensemble"}
     assert set(report["common_test_fixture_ids"]) == set(report["test_fixture_ids"])
     assert "confidence_interval_95" in report["models"]["ensemble"]["statistics"]["brier"]
     assert "full_ensemble" in report["ablation"]
@@ -84,9 +84,9 @@ def test_small_sample_is_explicitly_insufficient_and_model_absence_unavailable()
     result = ModelEvaluationService().evaluate(_rows(8, "CSL"))
     assert result["reports"]["CSL"]["sample_size_warning"] == "insufficient_sample"
     assert sample_confidence(29) == ("insufficient_sample", "insufficient_sample")
-    assert result["reports"]["CSL"]["models"]["deepseek"]["status"] == "insufficient_sample"
+    assert result["reports"]["CSL"]["models"]["zhipu"]["status"] == "insufficient_sample"
     unavailable = ModelEvaluationService().evaluate([row for row in _rows(8, "LAL") if row["model_key"] == "chatgpt"])
-    assert unavailable["reports"]["LAL"]["models"]["deepseek"]["status"] == "unavailable"
+    assert unavailable["reports"]["LAL"]["models"]["zhipu"]["status"] == "unavailable"
 
 
 def test_experiment_persistence_is_idempotent_and_does_not_touch_betting_tables(tmp_path) -> None:

@@ -20,7 +20,7 @@ from .model_evaluation import ModelEvaluationService, leakage_audit
 
 
 P7_4_VERSION = "p7.4-historical-oos-accumulation-v1"
-_MODEL_KEYS = ("poisson", "chatgpt", "deepseek")
+_MODEL_KEYS = ("poisson", "chatgpt", "zhipu")
 
 
 class HistoricalOOSAccumulationService:
@@ -93,7 +93,7 @@ class HistoricalOOSAccumulationService:
         generated_by_model = {
             "poisson": generated_poisson,
             "chatgpt": int(model_report["generated_by_model"].get("chatgpt", 0)),
-            "deepseek": int(model_report["generated_by_model"].get("deepseek", 0)),
+            "zhipu": int(model_report["generated_by_model"].get("zhipu", 0)),
         }
         newly_generated = sum(generated_by_model.values())
         current_counts = self._current_model_counts(after)
@@ -229,7 +229,7 @@ class HistoricalOOSAccumulationService:
             marker = str((row.get("historical_backfill") or {}).get("version") or "")
             if key == "poisson" and marker == P7_2_VERSION:
                 counts[key] += 1
-            elif key in {"chatgpt", "deepseek"} and marker == P7_3_VERSION:
+            elif key in {"chatgpt", "zhipu"} and marker == P7_3_VERSION:
                 counts[key] += 1
         return counts
 
@@ -274,7 +274,7 @@ class HistoricalOOSAccumulationService:
                 str(row.get("prediction_timestamp")),
             )
             valid_marker = (key == "poisson" and marker == P7_2_VERSION) or (
-                key in {"chatgpt", "deepseek"} and marker == P7_3_VERSION
+                key in {"chatgpt", "zhipu"} and marker == P7_3_VERSION
             )
             if league and key in _MODEL_KEYS and valid_marker and identity not in existing_keys:
                 result[league][key] += 1

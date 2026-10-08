@@ -416,7 +416,7 @@ def test_no_ml_guard_rejects_learned_and_nested_llm_numeric_paths() -> None:
     with pytest.raises(NoMLNumericPathError, match="LLM numeric"):
         assert_v2_numeric_path_allowed(
             {"assessment": {"probabilities": {"home": 0.5}}},
-            source="deepseek",
+            source="zhipu",
         )
 
 

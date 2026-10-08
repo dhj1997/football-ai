@@ -89,7 +89,7 @@ def test_baseline_devigs_market_odds_and_refuses_to_guess() -> None:
 
 
 def test_llm_adapter_passes_through_valid_contract() -> None:
-    result = LlmModelAdapter("deepseek").predict({"prediction_payload": llm_payload()})
+    result = LlmModelAdapter("zhipu").predict({"prediction_payload": llm_payload()})
 
     assert result.ok
     assert result.model_version == "deepseek:deepseek-v4-flash"
@@ -97,7 +97,7 @@ def test_llm_adapter_passes_through_valid_contract() -> None:
 
 
 def test_llm_schema_failure_is_explicit_and_never_borrows_another_model() -> None:
-    adapter = LlmModelAdapter("deepseek")
+    adapter = LlmModelAdapter("zhipu")
 
     missing = adapter.predict({})
     assert missing.readiness == "insufficient_evidence"
@@ -118,7 +118,7 @@ def test_ensemble_combines_members_with_declared_weights() -> None:
     context = {"expected_goals": {"home": 1.5, "away": 1.1}}
     ensemble = EnsembleModel(
         (PoissonModel(), DixonColesModel()),
-        weights={"poisson": 0.6, "dixon_coles": 0.4, "deepseek": 0.0},
+        weights={"poisson": 0.6, "dixon_coles": 0.4, "zhipu": 0.0},
     )
     result = ensemble.predict(context)
 
@@ -126,7 +126,7 @@ def test_ensemble_combines_members_with_declared_weights() -> None:
     assert result.provenance["members"] == {"poisson": PoissonModel.model_version, "dixon_coles": DixonColesModel.model_version}
     assert abs(sum(result.probabilities.values()) - 1.0) < 1e-5
     # The zero-weight absent member contributes nothing.
-    assert "deepseek" not in result.provenance["members"]
+    assert "zhipu" not in result.provenance["members"]
 
 
 def test_ensemble_without_any_member_is_not_ready() -> None:

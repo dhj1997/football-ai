@@ -66,7 +66,7 @@ def saved_prediction(prediction_id: str, fixture_id: str, edge: float, created_a
             "fixture_id": fixture_id,
             "created_at": created_at,
             "phase": "preliminary",
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": "legacy",
         }
     )
@@ -137,7 +137,7 @@ def test_legacy_two_percent_bet_is_refunded_and_resized(tmp_path) -> None:
             "home_team": "Home",
             "away_team": "Away",
             "model_version": prediction()["model_version"],
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": "legacy",
             "is_simulated": True,
         }
@@ -357,7 +357,7 @@ def test_execution_is_single_model_and_ignores_sibling_disagreement(tmp_path) ->
 
     repository = PredictionRepository(str(tmp_path / "single-model.db"))
     repository.initialize()
-    service = BankrollService(repository).configure("deepseek", "legacy")
+    service = BankrollService(repository).configure("zhipu", "legacy")
 
     sibling = prediction("sibling-1")
     sibling.update(
@@ -380,7 +380,7 @@ def test_execution_is_single_model_and_ignores_sibling_disagreement(tmp_path) ->
 def test_execution_read_view_is_frozen_while_gates_run_at_placement(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "gate-reasons.db"))
     repository.initialize()
-    service = BankrollService(repository).configure("deepseek", "legacy")
+    service = BankrollService(repository).configure("zhipu", "legacy")
 
     weak_odds = {**context()["odds"], "home": 1.3, "draw": 4.0, "away": 6.0}
     weak_fixture = {**fixture(), "evidence": {"odds": weak_odds}}
@@ -402,7 +402,7 @@ def test_fixed_stake_placement_still_respects_league_cap(tmp_path) -> None:
 
     repository = PredictionRepository(str(tmp_path / "league-cap.db"), initial_balance=3000.0)
     repository.initialize()
-    service = BankrollService(repository, initial_bankroll=3000.0).configure("deepseek", "legacy")
+    service = BankrollService(repository, initial_bankroll=3000.0).configure("zhipu", "legacy")
 
     first = service.place_for_prediction(
         prediction("p1"),
@@ -426,7 +426,7 @@ def test_poisson_fallback_probabilities_shrink_toward_market_prior(tmp_path) -> 
 
     repository = PredictionRepository(str(tmp_path / "shrink.db"))
     repository.initialize()
-    service = BankrollService(repository).configure("deepseek", "legacy")
+    service = BankrollService(repository).configure("zhipu", "legacy")
     poisson_view = prediction("poisson-view")
     poisson_view["baseline"] = {"probabilities": {"home": 0.25, "draw": 0.25, "away": 0.5}}
     poisson_view["decision"]["selection"] = "away"

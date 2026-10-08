@@ -279,7 +279,7 @@ def test_player_name_snapshot_is_upserted_with_provenance(tmp_path) -> None:
         "provider_player_id": "provider-1",
         "source_name_hash": "a" * 64,
         "chinese_name": "测试甲",
-        "name_source": "deepseek_transliteration",
+        "name_source": "zhipu_transliteration",
         "name_status": "machine_translated",
         "model": "deepseek-test",
         "created_at": "2026-08-27T01:00:00+00:00",

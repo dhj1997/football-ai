@@ -19,21 +19,21 @@ class Settings(BaseSettings):
     api_football_base_url: str = "https://v3.football.api-sports.io"
     # Deployment environment: local | test | staging | production (P15).
     environment: str = "local"
-    api_deepseek_key: str = ""
+    api_zhipu_key: str = ""
     quya_llm_key: str = ""
     free_llm_quya_base_url: str = "https://api.quya.org/v1"
     free_llm_quya_model: str = "deepseek-v4-flash"
     # 链路单次超时需覆盖 glm-5.3-flash 的推理耗时（实测完整契约约 145s）。
     free_llm_candidate_timeout_seconds: float = 180.0
     free_llm_enabled: bool = True
-    deepseek_enabled: bool = True
-    deepseek_execution_mode: Literal["active", "shadow"] = "shadow"
+    zhipu_enabled: bool = True
+    zhipu_execution_mode: Literal["active", "shadow"] = "active"
     # deepseek 通道自 2026-09 起改走智谱 GLM（OpenAI 兼容端点），通道键名保留以兼容历史数据。
-    deepseek_model: str = "glm-5.3-flash"
-    deepseek_base_url: str = "https://open.bigmodel.cn/api/coding/paas/v4"
-    deepseek_timeout_seconds: float = 180
-    deepseek_max_retries: int = 1
-    deepseek_max_tokens: int = 3000
+    zhipu_model: str = "glm-5.3-flash"
+    zhipu_base_url: str = "https://open.bigmodel.cn/api/coding/paas/v4"
+    zhipu_timeout_seconds: float = 180
+    zhipu_max_retries: int = 1
+    zhipu_max_tokens: int = 3000
     api_chatgpt_key: str = ""
     chatgpt_execution_mode: Literal["active", "shadow"] = "active"
     chatgpt_model: str = "gpt-5.6-sol"

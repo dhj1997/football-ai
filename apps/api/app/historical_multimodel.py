@@ -15,7 +15,7 @@ from .prediction_service import PredictionService
 
 
 P7_3_VERSION = "p7.3-historical-multimodel-v2"
-MODEL_ALIASES = {"gpt": "chatgpt", "chatgpt": "chatgpt", "deepseek": "deepseek"}
+MODEL_ALIASES = {"gpt": "chatgpt", "chatgpt": "chatgpt", "deepseek": "zhipu", "zhipu": "zhipu"}
 
 
 class _HistoricalWriteBarrier:
@@ -92,7 +92,7 @@ class HistoricalMultiModelBackfillService:
             if source_predictions is not None
             else self._eligible_predictions()
         )
-        models = ("poisson", "chatgpt", "deepseek")
+        models = ("poisson", "chatgpt", "zhipu")
         report: dict[str, Any] = {
             "run_id": f"{P7_3_VERSION}:{uuid.uuid4()}",
             "version": P7_3_VERSION,
@@ -127,7 +127,7 @@ class HistoricalMultiModelBackfillService:
             report["feature_snapshots_missing"] += item["feature_snapshots_missing"]
             report["evidence_snapshots_missing"] += item["evidence_snapshots_missing"]
             report["leakage_violations"] += item["leakage_violations"]
-            if set(item["models_ready"]) == {"chatgpt", "deepseek", "poisson"}:
+            if set(item["models_ready"]) == {"chatgpt", "zhipu", "poisson"}:
                 report["ensemble_ready_fixtures"] += 1
         report["finished_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
         saver = getattr(self.repository, "save_historical_backfill_run", None)

@@ -188,8 +188,8 @@ export function getMockFixtures(date: DateFilter, league: FixtureLeagueFilter): 
   });
 }
 
-function createSamplePrediction(fixture: Fixture, modelKey: "deepseek" | "chatgpt"): Prediction {
-  const isDeepSeek = modelKey === "deepseek";
+function createSamplePrediction(fixture: Fixture, modelKey: "zhipu" | "chatgpt"): Prediction {
+  const isDeepSeek = modelKey === "zhipu";
   return {
     id: `pred-${modelKey}-${fixture.id}`,
     fixture_id: fixture.id,
@@ -236,7 +236,7 @@ export function getMockFixtureDetail(id: string): FixtureDetail {
   const fixture = RAW_FIXTURES.find((f) => f.id === id) ?? RAW_FIXTURES[0];
   const nowIso = new Date().toISOString();
 
-  const dsPred = createSamplePrediction(fixture, "deepseek");
+  const dsPred = createSamplePrediction(fixture, "zhipu");
   const gptPred = createSamplePrediction(fixture, "chatgpt");
 
   const betSample: SimulatedBet = {
@@ -256,7 +256,7 @@ export function getMockFixtureDetail(id: string): FixtureDetail {
     home_team: fixture.home_team.name,
     away_team: fixture.away_team.name,
     model_version: dsPred.model_version,
-    model_key: "deepseek",
+    model_key: "zhipu",
     competition_id: fixture.league_key,
     reason: "模型优势率超过阈值",
     is_simulated: true,
@@ -616,7 +616,7 @@ export function getMockBets(): { items: SimulatedBet[]; count: number; is_simula
       home_team: "托特纳姆热刺",
       away_team: "纽卡斯尔联",
       model_version: "deepseek-v3.2",
-      model_key: "deepseek",
+      model_key: "zhipu",
       competition_id: "epl",
       reason: "胜平负模型优势突破门限",
       is_simulated: true,
@@ -672,7 +672,7 @@ export function getMockDecisions(): { items: DecisionAudit[]; count: number; is_
       home_team: "阿森纳",
       away_team: "曼彻斯特城",
       created_at: new Date().toISOString(),
-      model_key: "deepseek",
+      model_key: "zhipu",
       model_version: "deepseek-v3.2",
       strategy_id: "strat-v3",
       strategy_version: "3.2.0",
@@ -737,7 +737,7 @@ export function getMockStrategyPerformance(): {
     items: [
       {
         rank: 1,
-        model_key: "deepseek",
+        model_key: "zhipu",
         strategy_id: "deepseek-pinnacle",
         strategy_version: "1.0",
         strategy_name: "DeepSeek 价值发现",
@@ -897,7 +897,7 @@ export function getMockRuntimeConfig(): RuntimeConfigResponse {
   return {
     models: {
       deepseek: {
-        key: "deepseek",
+        key: "zhipu",
         label: "智谱GLM",
         model: "deepseek-chat",
         base_url: "https://api.deepseek.com",

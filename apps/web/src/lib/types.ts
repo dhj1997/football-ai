@@ -44,7 +44,7 @@ export type FixtureLeagueKey =
   | "africa_qualifiers"
   | "nations_league";
 export type FixtureLeagueFilter = "all" | FixtureLeagueKey;
-export type ModelKey = "deepseek" | "chatgpt";
+export type ModelKey = "zhipu" | "chatgpt";
 
 export interface ModelEvaluationMetric {
   status: string;

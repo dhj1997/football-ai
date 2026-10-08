@@ -10,13 +10,13 @@ TEST_DATABASE.unlink(missing_ok=True)
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DATABASE}"
 os.environ["USE_DEMO_DATA"] = "false"
 os.environ["DEEPSEEK_ENABLED"] = "true"
-os.environ["API_DEEPSEEK_KEY"] = ""
+os.environ["API_ZHIPU_KEY"] = ""
 os.environ["API_CHATGPT_KEY"] = ""
 
 from fastapi.testclient import TestClient
 
 from app.data import CHINA_TZ, demo_context, demo_fixtures, unavailable_context
-from app.main import app, deepseek_provider, evidence_provider, player_name_service, repository, schedule_provider, schedule_sync, settings
+from app.main import app, zhipu_provider, evidence_provider, player_name_service, repository, schedule_provider, schedule_sync, settings
 from app.prediction import predict
 from app.prompt_contract import DEFAULT_PROMPT_CONTRACT
 import app.main as main_module
@@ -179,27 +179,27 @@ def test_match_probability_adds_cutoff_safe_round5_market_layers(monkeypatch) ->
 
 def test_runtime_model_config_requires_admin_and_updates_in_process() -> None:
     assert client.get("/api/admin/model-config").status_code == 401
-    original_model = deepseek_provider.model
+    original_model = zhipu_provider.model
     original_min_edge = settings.portfolio_min_edge
     try:
         response = client.put(
             "/api/admin/model-config",
             headers={"x-admin-key": "dev-admin-key"},
-            json={"models": {"deepseek": {"model": "deepseek-test-model"}}, "portfolio": {"min_edge": 0.12}},
+            json={"models": {"zhipu": {"model": "deepseek-test-model"}}, "portfolio": {"min_edge": 0.12}},
         )
         assert response.status_code == 200
         payload = response.json()
-        assert payload["models"]["deepseek"]["model"] == "deepseek-test-model"
-        assert payload["models"]["deepseek"]["execution_mode"] == settings.deepseek_execution_mode
+        assert payload["models"]["zhipu"]["model"] == "deepseek-test-model"
+        assert payload["models"]["zhipu"]["execution_mode"] == settings.zhipu_execution_mode
         assert payload["models"]["chatgpt"]["execution_mode"] == settings.chatgpt_execution_mode
         assert payload["portfolio"]["min_edge"] == 0.12
-        assert deepseek_provider.model == "deepseek-test-model"
+        assert zhipu_provider.model == "deepseek-test-model"
         assert settings.portfolio_min_edge == 0.12
     finally:
         client.put(
             "/api/admin/model-config",
             headers={"x-admin-key": "dev-admin-key"},
-            json={"models": {"deepseek": {"model": original_model}}, "portfolio": {"min_edge": original_min_edge}},
+            json={"models": {"zhipu": {"model": original_model}}, "portfolio": {"min_edge": original_min_edge}},
         )
 
 
@@ -319,9 +319,9 @@ def test_fixture_list_supports_yesterday_and_upcoming_with_compact_summary(monke
     prediction.update(
         {
             "id": "api-date-window-prediction",
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": repository.competition_id,
-            "ai": {"status": "completed", "provider": "deepseek", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
+            "ai": {"status": "completed", "provider": "zhipu", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
         }
     )
     repository.save(prediction)
@@ -410,7 +410,7 @@ def test_global_ensemble_returns_real_current_fixture_summaries(monkeypatch) -> 
             assert fixture_id == "ensemble-current"
             return [
                 {
-                    "model_key": "deepseek",
+                    "model_key": "zhipu",
                     "league_key": "epl",
                     "created_at": datetime.now(UTC).isoformat(),
                     "model_probabilities": {"home": 0.5, "draw": 0.3, "away": 0.2},
@@ -432,7 +432,7 @@ def test_global_ensemble_returns_real_current_fixture_summaries(monkeypatch) -> 
     assert payload["count"] == 1
     assert payload["is_simulated"] is False
     assert payload["items"][0]["fixture_id"] == "ensemble-current"
-    assert payload["items"][0]["available_members"] == ["deepseek", "poisson"]
+    assert payload["items"][0]["available_members"] == ["poisson", "zhipu"]
     assert payload["items"][0]["weights_source"] == "defaults"
     assert payload["empty_reason"] is None
 
@@ -839,7 +839,7 @@ def test_fixture_detail_does_not_sync_missing_evidence(monkeypatch) -> None:
     assert response.json()["context"]["synced_at"] is None
     assert repository.fixture(fixture["id"]).get("evidence") is None
     assert response.json()["prediction"] is None
-    assert repository.latest(fixture["id"], "deepseek", response.json()["competition_id"]) is None
+    assert repository.latest(fixture["id"], "zhipu", response.json()["competition_id"]) is None
 
 
 def test_fixture_detail_keeps_incomplete_cached_evidence_without_refresh(monkeypatch) -> None:
@@ -942,11 +942,11 @@ def test_fixture_detail_never_falls_back_to_legacy_prediction_bet() -> None:
             "id": "current-only-v3",
             "fixture_id": fixture["id"],
             "created_at": "2026-08-27T02:00:00+00:00",
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": repository.competition_id,
             "ai": {
                 "status": "completed",
-                "provider": "deepseek",
+                "provider": "zhipu",
                 "requested_model": "test",
                 "returned_model": "test",
                 "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
@@ -979,7 +979,7 @@ def test_fixture_detail_never_falls_back_to_legacy_prediction_bet() -> None:
             "away_team": fixture["away_team"]["name"],
             "model_version": legacy["model_version"],
             "is_simulated": True,
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": repository.competition_id,
         }
     )
@@ -988,11 +988,11 @@ def test_fixture_detail_never_falls_back_to_legacy_prediction_bet() -> None:
 
     assert response.status_code == 200
     detail = response.json()
-    assert detail["predictions"]["deepseek"]["id"] == current["id"]
-    assert detail["predictions"]["deepseek"]["decision"]["status"] == "no_bet"
-    assert detail["predictions"]["deepseek"]["execution"]["status"] == "no_bet"
-    assert detail["predictions"]["deepseek"]["execution"]["reason_codes"]
-    assert detail["bets"]["deepseek"] is None
+    assert detail["predictions"]["zhipu"]["id"] == current["id"]
+    assert detail["predictions"]["zhipu"]["decision"]["status"] == "no_bet"
+    assert detail["predictions"]["zhipu"]["execution"]["status"] == "no_bet"
+    assert detail["predictions"]["zhipu"]["execution"]["reason_codes"]
+    assert detail["bets"]["zhipu"] is None
     assert detail["bet"] is None
 
 
@@ -1035,11 +1035,11 @@ def test_decisions_endpoint_returns_latest_auditable_no_bet_row(monkeypatch) -> 
         {
             "id": "decision-current",
             "created_at": "2099-08-27T01:00:00+00:00",
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": repository.competition_id,
             "ai": {
                 "status": "completed",
-                "provider": "deepseek",
+                "provider": "zhipu",
                 "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
             },
             "model_recommendation": {"status": "no_bet", "market": "no_bet", "selection": "none"},
@@ -1056,7 +1056,7 @@ def test_decisions_endpoint_returns_latest_auditable_no_bet_row(monkeypatch) -> 
                 "reason": "优势不足，保留观察",
             },
             "experiment": {
-                "model_key": "deepseek",
+                "model_key": "zhipu",
                 "strategy_id": "baseline",
                 "strategy_version": "v1",
                 "strategy_name": "基准",
@@ -1072,7 +1072,7 @@ def test_decisions_endpoint_returns_latest_auditable_no_bet_row(monkeypatch) -> 
 
     response = client.get(
         "/api/decisions",
-        params={"model": "deepseek", "fixture_date": "2099-08-27"},
+        params={"model": "zhipu", "fixture_date": "2099-08-27"},
     )
 
     assert response.status_code == 200
@@ -1109,11 +1109,11 @@ def test_decisions_endpoint_flags_a_simulation_bet_when_current_candidate_change
         {
             "id": "decision-mismatch",
             "created_at": "2099-08-28T01:00:00+00:00",
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": repository.competition_id,
-            "ai": {"status": "completed", "provider": "deepseek", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
+            "ai": {"status": "completed", "provider": "zhipu", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
             "decision": {"status": "no_bet", "market": "no_bet", "selection": "none", "reason": "当前不下注"},
-            "experiment": {"model_key": "deepseek", "strategy_id": "baseline", "strategy_version": "v1", "strategy_name": "基准"},
+            "experiment": {"model_key": "zhipu", "strategy_id": "baseline", "strategy_version": "v1", "strategy_name": "基准"},
         }
     )
     repository.save(current)
@@ -1135,7 +1135,7 @@ def test_decisions_endpoint_flags_a_simulation_bet_when_current_candidate_change
             "away_team": fixture["away_team"]["name"],
             "model_version": current["model_version"],
             "is_simulated": True,
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": repository.competition_id,
         }
     )
@@ -1147,7 +1147,7 @@ def test_decisions_endpoint_flags_a_simulation_bet_when_current_candidate_change
 
     response = client.get(
         "/api/decisions",
-        params={"model": "deepseek", "fixture_date": "2099-08-28"},
+        params={"model": "zhipu", "fixture_date": "2099-08-28"},
     )
 
     assert response.status_code == 200
@@ -1161,7 +1161,7 @@ def test_strategy_performance_returns_independent_model_rows() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["ranking"] == "ROI_THEN_PNL"
-    assert {item["model_key"] for item in payload["items"]} == {"deepseek", "chatgpt"}
+    assert {item["model_key"] for item in payload["items"]} == {"zhipu", "chatgpt"}
     assert all(item["strategy_id"] == "baseline" for item in payload["items"])
     assert all(item["gate_mode"] == "SHADOW_ONLY" for item in payload["items"])
 

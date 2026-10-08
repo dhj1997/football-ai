@@ -27,7 +27,7 @@ def settlement_rows(count: int = 200, *, league_key: str = "epl", with_odds: boo
             "league_key": league_key,
             "prediction_created_at": (start + timedelta(hours=index * 6)).isoformat(),
             "settled_at": (start + timedelta(hours=index * 6 + 30)).isoformat(),
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "model_version": "deepseek:deepseek-v4-flash",
             "actual_outcome": actual,
             "model_probabilities": {key: 0.55 if key == actual else 0.225 for key in ("home", "draw", "away")},

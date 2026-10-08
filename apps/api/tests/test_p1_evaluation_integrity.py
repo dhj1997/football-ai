@@ -146,11 +146,11 @@ def test_calibration_zero_samples_returns_null_ece() -> None:
 
 
 def test_settlement_persists_clv_and_uses_pure_model_metrics(tmp_path) -> None:
-    repository = PredictionRepository(str(tmp_path / "settlement-clv.db"), "p1", ("deepseek", "chatgpt"))
+    repository = PredictionRepository(str(tmp_path / "settlement-clv.db"), "p1", ("zhipu", "chatgpt"))
     repository.initialize()
     fixture = _fixture()
     repository.replace_fixtures("2099-08-27", "2099-08-27", [fixture], "2099-08-27T00:00:00+00:00")
-    prediction = _prediction("p1-prediction", "deepseek")
+    prediction = _prediction("p1-prediction", "zhipu")
     repository.save(prediction)
     repository.save_odds_snapshot(_odds_snapshot("odds-p1", "2099-08-27T17:00:00+00:00", 1.8))
     repository.place_bet(
@@ -169,7 +169,7 @@ def test_settlement_persists_clv_and_uses_pure_model_metrics(tmp_path) -> None:
             "home_team": "主队",
             "away_team": "客队",
             "model_version": prediction["model_version"],
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": "p1",
             "bookmaker": "Test Book",
             "odds_snapshot_id": "odds-p1",
@@ -188,18 +188,18 @@ def test_settlement_persists_clv_and_uses_pure_model_metrics(tmp_path) -> None:
 
 
 def test_metrics_report_paired_models_and_poisson_baseline(tmp_path) -> None:
-    repository = PredictionRepository(str(tmp_path / "paired.db"), "p1", ("deepseek", "chatgpt"))
+    repository = PredictionRepository(str(tmp_path / "paired.db"), "p1", ("zhipu", "chatgpt"))
     repository.initialize()
     fixture = _fixture()
     repository.replace_fixtures("2099-08-27", "2099-08-27", [fixture], "2099-08-27T00:00:00+00:00")
-    repository.save(_prediction("p1-deepseek", "deepseek"))
+    repository.save(_prediction("p1-deepseek", "zhipu"))
     repository.save(_prediction("p1-chatgpt", "chatgpt"))
     report = SettlementService(repository, "p1").settle_fixture(fixture)
     metrics = SettlementService(repository, "p1").metrics()
 
     assert report["settled_count"] == 2
     assert metrics["paired_samples"] == 1
-    assert {"deepseek", "chatgpt", "gpt", "poisson", "market"}.issubset(metrics["models"])
+    assert {"zhipu", "chatgpt", "gpt", "poisson", "market"}.issubset(metrics["models"])
     assert metrics["models"]["poisson"]["samples"] == 1
     assert metrics["models"]["market"]["samples"] == 1
     assert metrics["models"]["market"]["ece"] is None

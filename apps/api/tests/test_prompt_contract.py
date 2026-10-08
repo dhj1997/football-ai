@@ -54,7 +54,7 @@ async def test_both_models_receive_identical_contract_schema_and_evidence() -> N
     captured: dict[str, dict] = {}
 
     def deepseek_handler(request: httpx.Request) -> httpx.Response:
-        captured["deepseek"] = json.loads(request.content)
+        captured["zhipu"] = json.loads(request.content)
         return httpx.Response(200, json={"model": "deepseek-test", "choices": [{"message": {"content": forecast_content()}}]})
 
     def chatgpt_handler(request: httpx.Request) -> httpx.Response:
@@ -70,7 +70,7 @@ async def test_both_models_receive_identical_contract_schema_and_evidence() -> N
     chatgpt = ChatGptProvider("key", "gpt-test", "https://gpt.test", transport=httpx.MockTransport(chatgpt_handler))
 
     deep_result, gpt_result = await deepseek.assess(evidence), await chatgpt.assess(evidence)
-    deep_messages = captured["deepseek"]["messages"]
+    deep_messages = captured["zhipu"]["messages"]
     gpt_messages = captured["chatgpt"]["input"]
     user_payload = json.loads(deep_messages[1]["content"])
 

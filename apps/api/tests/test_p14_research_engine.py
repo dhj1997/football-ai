@@ -34,7 +34,7 @@ def settlement_rows(count: int = 300, *, seed: int = 11, predict_after_settle: b
                 "league_key": "epl",
                 "prediction_created_at": created.isoformat(),
                 "settled_at": settled.isoformat(),
-                "model_key": "deepseek",
+                "model_key": "zhipu",
                 "model_version": "deepseek:deepseek-v4-flash",
                 "actual_outcome": actual,
                 "model_probabilities": {key: 0.55 if key == actual else 0.225 for key in ("home", "draw", "away")},
@@ -60,7 +60,7 @@ def paired_llm_poisson_rows(count: int) -> list[dict]:
                 "prediction_id": f"paired-p-{index}",
                 "prediction_created_at": created.isoformat(),
                 "settled_at": (created + timedelta(hours=30)).isoformat(),
-                "model_key": "deepseek",
+                "model_key": "zhipu",
                 "actual_outcome": actual,
                 "model_probabilities": {"home": 0.6, "draw": 0.1, "away": 0.3},
                 "baseline": {"probabilities": {"home": 0.4, "draw": 0.2, "away": 0.4}},
@@ -112,8 +112,8 @@ def test_llm_poisson_comparison_requires_paired_samples_and_keeps_strategy_hones
 
     assert comparison["status"] == "ok"
     assert comparison["sample_size"] == 30
-    assert comparison["models"]["deepseek"]["paired_samples"] == 30
-    assert comparison["models"]["deepseek"]["strategy"]["status"] == "unavailable"
+    assert comparison["models"]["zhipu"]["paired_samples"] == 30
+    assert comparison["models"]["zhipu"]["strategy"]["status"] == "unavailable"
 
 
 @pytest.mark.parametrize(

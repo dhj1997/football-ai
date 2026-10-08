@@ -807,7 +807,7 @@ function QuickResearchPanel({
               </div>
               <span className="inline-flex items-center rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 font-mono text-xs font-semibold text-blue-300">
                 {primaryPrediction?.model_version ||
-                  (primaryPrediction?.model_key === "deepseek"
+                  (primaryPrediction?.model_key === "zhipu"
                     ? "DeepSeek V3"
                     : primaryPrediction?.model_key === "chatgpt"
                       ? "GPT-5.6 Sol"
@@ -3411,7 +3411,7 @@ export function DualProbabilityPanels({
   predicting?: boolean;
 }) {
   const entries: Array<[ModelKey, Prediction]> = (
-    ["chatgpt", "deepseek"] as ModelKey[]
+    ["chatgpt", "zhipu"] as ModelKey[]
   )
     .map((key) => [key, detail.predictions?.[key] ?? null] as const)
     .filter((item): item is [ModelKey, Prediction] => Boolean(item[1]));
@@ -3515,7 +3515,7 @@ export function DualProbabilityPanels({
               onKeyDown={(event) => handleTabKeyDown(event, key)}
             >
               <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                {key === "deepseek" ? "智谱GLM" : "GPT-5.6 Sol"}
+                {key === "zhipu" ? "智谱GLM" : "GPT-5.6 Sol"}
               </span>
               <strong className="font-display text-base font-bold text-slate-100">
                 {outcomeText(

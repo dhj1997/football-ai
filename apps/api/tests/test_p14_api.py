@@ -6,7 +6,7 @@ import sys
 if "app.main" not in sys.modules:
     os.environ.setdefault("DATABASE_URL", "sqlite:///test_football_ai_p14.db")
     os.environ.setdefault("USE_DEMO_DATA", "false")
-    os.environ.setdefault("API_DEEPSEEK_KEY", "")
+    os.environ.setdefault("API_ZHIPU_KEY", "")
     os.environ.setdefault("API_CHATGPT_KEY", "")
 
 from datetime import UTC, datetime, timedelta
@@ -37,7 +37,7 @@ def _seed_settlements(count: int = 300) -> None:
                 "league_key": "epl",
                 "season": "2026",
                 "model_version": "deepseek:deepseek-v4-flash",
-                "model_key": "deepseek",
+                "model_key": "zhipu",
                 "settled_at": (created + timedelta(hours=30)).isoformat(),
                 "prediction_created_at": created.isoformat(),
                 "actual_outcome": actual,

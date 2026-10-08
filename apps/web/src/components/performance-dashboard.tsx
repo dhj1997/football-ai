@@ -813,7 +813,7 @@ function StrategyLeaderboard({
                     </td>
                     <th scope="row" className={rowHeadClasses}>
                       <b className="block text-xs font-semibold text-slate-100">
-                        {item.model_key === "deepseek"
+                        {item.model_key === "zhipu"
                           ? "智谱GLM"
                           : item.model_key === "chatgpt"
                             ? "GPT-5.6 Sol"
@@ -1137,7 +1137,7 @@ function ModelComparisonStrip({
         meta="点击模型名切换复盘账户 · 盈亏不会混算"
       />
       <div className="grid gap-3 md:grid-cols-2">
-        {(["deepseek", "chatgpt"] as ModelKey[]).map((key) => {
+        {(["zhipu", "chatgpt"] as ModelKey[]).map((key) => {
           const account = accounts[key];
           const profitable = Boolean(account && account.net_profit > 0);
           return (
@@ -1653,13 +1653,13 @@ function DualDisagreement({ decisions }: { decisions: DecisionAudit[] }) {
   for (const row of decisions) {
     if (!row.model_probabilities) continue;
     const modelKey = String(row.model_key ?? "unknown");
-    if (modelKey !== "deepseek" && modelKey !== "chatgpt") continue;
+    if (modelKey !== "zhipu" && modelKey !== "chatgpt") continue;
     const bucket = groups.get(row.fixture_id) ?? new Map<string, DecisionAudit>();
     bucket.set(modelKey, row);
     groups.set(row.fixture_id, bucket);
   }
   const pairs = [...groups.values()].filter(
-    (bucket) => bucket.has("deepseek") && bucket.has("chatgpt"),
+    (bucket) => bucket.has("zhipu") && bucket.has("chatgpt"),
   );
   let agree = 0;
   let disagree = 0;
@@ -1677,7 +1677,7 @@ function DualDisagreement({ decisions }: { decisions: DecisionAudit[] }) {
     chatgptBet: DecisionAudit | null;
   }> = [];
   for (const bucket of pairs) {
-    const deepseekRow = bucket.get("deepseek")!;
+    const deepseekRow = bucket.get("zhipu")!;
     const chatgptRow = bucket.get("chatgpt")!;
     const deepseekPick = dualOutcome(deepseekRow.model_probabilities);
     const chatgptPick = dualOutcome(chatgptRow.model_probabilities);
@@ -1985,7 +1985,7 @@ function modelLabel(
   const key = value || version?.split(":", 1)[0];
   return key === "chatgpt"
     ? "GPT-5.6 Sol"
-    : key === "deepseek"
+    : key === "zhipu"
       ? "智谱GLM"
       : key || "模型未知";
 }

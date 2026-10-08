@@ -88,11 +88,11 @@ async def test_disabled_chain_uses_primary_directly() -> None:
 
     async def fake_assess(model_input):
         called["count"] += 1
-        return {"provider": "deepseek"}
+        return {"provider": "zhipu"}
 
     chain.primary.assess = fake_assess
     result = await chain.assess({})
-    assert called["count"] == 1 and result["provider"] == "deepseek"
+    assert called["count"] == 1 and result["provider"] == "zhipu"
     assert chain._candidates()[0][1].max_retries == 0  # 链内重试关闭，避免挂起候选双倍等待
 
 

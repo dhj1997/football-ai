@@ -54,7 +54,7 @@ def _requires_llm_poisson_comparison(hypothesis: Mapping[str, Any]) -> bool:
         str(hypothesis.get(key) or "")
         for key in ("statement", "selection_rule")
     ).casefold()
-    return "poisson" in text and ("llm" in text or "deepseek" in text or "chatgpt" in text)
+    return "poisson" in text and ("llm" in text or "zhipu" in text or "chatgpt" in text)
 
 
 def filter_settlement_rows_by_source(

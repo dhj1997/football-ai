@@ -251,7 +251,7 @@ def candidate_from_market_row(
     price = _odds(market_row.get("price", market_row.get("odds")))
     if raw_model_probability is None or market_probability is None or price is None:
         return None
-    model_key = str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek")
+    model_key = str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "zhipu")
     model_probability, shrinkage = shrink_llm_probability(
         raw_model_probability,
         selection=str(market_row.get("selection") or ""),
@@ -359,7 +359,7 @@ def shrink_llm_probability(
     if market == "asian_handicap" and probability_source != "model_asian_handicap_forecast":
         return raw, metadata
     selections = PROBABILITY_KEYS if market == "1x2" else ("home_handicap", "away_handicap") if market == "asian_handicap" else ()
-    if not selections or model_key not in {"deepseek", "chatgpt", "gpt", "llm"}:
+    if not selections or model_key not in {"zhipu", "chatgpt", "gpt", "llm"}:
         return raw, metadata
     assessment = prediction.get("market_assessment") or {}
     snapshot_id = prediction.get("odds_snapshot_id")

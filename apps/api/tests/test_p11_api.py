@@ -6,7 +6,7 @@ import sys
 if "app.main" not in sys.modules:
     os.environ.setdefault("DATABASE_URL", "sqlite:///test_football_ai_p11.db")
     os.environ.setdefault("USE_DEMO_DATA", "false")
-    os.environ.setdefault("API_DEEPSEEK_KEY", "")
+    os.environ.setdefault("API_ZHIPU_KEY", "")
     os.environ.setdefault("API_CHATGPT_KEY", "")
 
 from datetime import UTC, datetime, timedelta

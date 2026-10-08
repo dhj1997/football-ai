@@ -135,7 +135,7 @@ from .temporal_backtest import (
 
 
 MODEL_LABELS = {
-    "deepseek": "智谱GLM",
+    "zhipu": "智谱GLM",
     "chatgpt": "GPT-5.6 Sol",
 }
 
@@ -167,7 +167,7 @@ class RuntimePortfolioConfigUpdate(BaseModel):
 class RuntimeConfigUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    models: dict[Literal["deepseek", "chatgpt"], RuntimeModelConfigUpdate] = Field(default_factory=dict)
+    models: dict[Literal["zhipu", "chatgpt"], RuntimeModelConfigUpdate] = Field(default_factory=dict)
     portfolio: RuntimePortfolioConfigUpdate | None = None
 
 
@@ -260,7 +260,7 @@ def _invalidate_fixture_detail_cache(fixture_id: str | None = None) -> None:
 repository = PredictionRepository(
     settings.database_url,
     settings.simulation_competition_id,
-    ("deepseek", "chatgpt"),
+    ("zhipu", "chatgpt"),
     settings.simulation_initial_bankroll,
 )
 repository.initialize()
@@ -297,16 +297,16 @@ schedule_sync = ScheduleSyncService(
     settings.schedule_lookahead_days,
     supplemental_providers=[provider],
 )
-deepseek_provider = DeepSeekProvider(
-    settings.api_deepseek_key,
-    settings.deepseek_model,
-    settings.deepseek_base_url,
-    settings.deepseek_timeout_seconds,
-    settings.deepseek_max_retries,
-    settings.deepseek_max_tokens,
+zhipu_provider = DeepSeekProvider(
+    settings.api_zhipu_key,
+    settings.zhipu_model,
+    settings.zhipu_base_url,
+    settings.zhipu_timeout_seconds,
+    settings.zhipu_max_retries,
+    settings.zhipu_max_tokens,
 )
-deepseek_chain_provider = FreeLlmChainProvider(
-    deepseek_provider,
+zhipu_chain_provider = FreeLlmChainProvider(
+    zhipu_provider,
     quya_base_url=settings.free_llm_quya_base_url,
     quya_model=settings.free_llm_quya_model,
     quya_api_key=settings.quya_llm_key,
@@ -325,33 +325,33 @@ chatgpt_provider = ChatGptProvider(
     settings.chatgpt_model,
     settings.chatgpt_base_url,
     settings.chatgpt_timeout_seconds,
-    settings.deepseek_max_retries,
-    settings.deepseek_max_tokens,
+    settings.zhipu_max_retries,
+    settings.zhipu_max_tokens,
     fallback_model=settings.chatgpt_fallback_model,
 )
 player_name_provider = FallbackPlayerNameProvider(
     ([DeepSeekPlayerNameProvider(
-            settings.api_deepseek_key,
-            settings.deepseek_model,
-            settings.deepseek_base_url,
-            settings.deepseek_timeout_seconds,
-            settings.deepseek_max_retries,
-            settings.deepseek_max_tokens,
-        )] if settings.deepseek_enabled else [])
+            settings.api_zhipu_key,
+            settings.zhipu_model,
+            settings.zhipu_base_url,
+            settings.zhipu_timeout_seconds,
+            settings.zhipu_max_retries,
+            settings.zhipu_max_tokens,
+        )] if settings.zhipu_enabled else [])
     + [ChatGptPlayerNameProvider(
             settings.api_chatgpt_key,
             settings.chatgpt_model,
             settings.chatgpt_base_url,
             settings.chatgpt_timeout_seconds,
-            settings.deepseek_max_retries,
-            settings.deepseek_max_tokens,
+            settings.zhipu_max_retries,
+            settings.zhipu_max_tokens,
         )]
 )
 player_name_service = PlayerNameService(player_name_provider, repository)
-deepseek_prediction_service = PredictionService(
-    deepseek_chain_provider,
+zhipu_prediction_service = PredictionService(
+    zhipu_chain_provider,
     repository,
-    "deepseek",
+    "zhipu",
     settings.simulation_competition_id,
     player_value_service,
     settings.simulation_initial_bankroll,
@@ -368,7 +368,7 @@ chatgpt_prediction_service = PredictionService(
 )
 model_registry_service = ModelRegistry(repository)
 active_prediction_services = {
-    **({"deepseek": deepseek_prediction_service} if settings.deepseek_enabled else {}),
+    **({"zhipu": zhipu_prediction_service} if settings.zhipu_enabled else {}),
     "chatgpt": chatgpt_prediction_service,
 }
 prediction_service = DualPredictionService(
@@ -378,7 +378,7 @@ prediction_service = DualPredictionService(
     model_registry_service,
 )
 active_bankroll_services = {
-    **({"deepseek": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("deepseek", settings.simulation_competition_id, execution_mode=settings.deepseek_execution_mode)} if settings.deepseek_enabled else {}),
+    **({"zhipu": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("zhipu", settings.simulation_competition_id, execution_mode=settings.zhipu_execution_mode)} if settings.zhipu_enabled else {}),
     "chatgpt": BankrollService(repository, PortfolioConfig.from_settings(settings), settings.simulation_initial_bankroll).configure("chatgpt", settings.simulation_competition_id, execution_mode=settings.chatgpt_execution_mode),
 }
 bankroll_service = DualBankrollService(
@@ -399,7 +399,7 @@ model_evaluation_service = ModelEvaluationService(repository)
 historical_accumulation_service = HistoricalOOSAccumulationService(
     repository,
     {
-        **({"deepseek": deepseek_provider} if settings.deepseek_enabled else {}),
+        **({"zhipu": zhipu_provider} if settings.zhipu_enabled else {}),
         "chatgpt": chatgpt_provider,
     },
 )
@@ -456,7 +456,7 @@ def _masked_api_key(value: str) -> str | None:
 
 def _runtime_model_config() -> dict:
     providers = {
-        "deepseek": deepseek_provider,
+        "zhipu": zhipu_provider,
         "chatgpt": chatgpt_provider,
     }
     return {
@@ -468,7 +468,7 @@ def _runtime_model_config() -> dict:
             "api_key_configured": bool(provider.api_key),
             "api_key_hint": _masked_api_key(provider.api_key),
             "provider_ready": provider.configured,
-            "enabled": settings.deepseek_enabled if key == "deepseek" else True,
+            "enabled": settings.zhipu_enabled if key == "zhipu" else True,
             "execution_mode": getattr(bankroll_service.services.get(key), "execution_mode", "disabled"),
         }
         for key, provider in providers.items()
@@ -497,10 +497,10 @@ def _runtime_config_payload() -> dict:
 
 
 def _update_model_provider(model_key: str, patch: RuntimeModelConfigUpdate) -> None:
-    provider = deepseek_provider if model_key == "deepseek" else chatgpt_provider
-    model_setting = "deepseek_model" if model_key == "deepseek" else "chatgpt_model"
-    base_url_setting = "deepseek_base_url" if model_key == "deepseek" else "chatgpt_base_url"
-    key_setting = "api_deepseek_key" if model_key == "deepseek" else "api_chatgpt_key"
+    provider = zhipu_provider if model_key == "zhipu" else chatgpt_provider
+    model_setting = "zhipu_model" if model_key == "zhipu" else "chatgpt_model"
+    base_url_setting = "zhipu_base_url" if model_key == "zhipu" else "chatgpt_base_url"
+    key_setting = "api_zhipu_key" if model_key == "zhipu" else "api_chatgpt_key"
     name_source = f"{model_key}_transliteration"
     name_providers = [item for item in player_name_provider.providers if getattr(item, "source_name", "") == name_source]
     if patch.model is not None:
@@ -856,10 +856,10 @@ def health() -> dict:
         "mode": mode,
         "last_synced_at": sync["synced_at"] if sync else None,
         "standings_provider_configured": league_provider.configured,
-        "deepseek_configured": settings.deepseek_enabled and deepseek_provider.configured,
-        "deepseek_enabled": settings.deepseek_enabled,
-        "deepseek_execution_mode": settings.deepseek_execution_mode,
-        "deepseek_model": settings.deepseek_model,
+        "zhipu_configured": settings.zhipu_enabled and zhipu_provider.configured,
+        "zhipu_enabled": settings.zhipu_enabled,
+        "zhipu_execution_mode": settings.zhipu_execution_mode,
+        "zhipu_model": settings.zhipu_model,
         "chatgpt_configured": chatgpt_provider.configured,
         "chatgpt_execution_mode": settings.chatgpt_execution_mode,
         "chatgpt_model": settings.chatgpt_model,
@@ -1037,7 +1037,7 @@ def models() -> dict:
         {"model_key": "elo", "family": "Elo", "model_version": ELO_PRIOR_VERSION},
         {"model_key": "poisson", "family": "Poisson", "model_version": POISSON_V2_VERSION},
         {"model_key": "dixon_coles", "family": "Dixon-Coles", "model_version": DIXON_COLES_VERSION},
-        {"model_key": "deepseek", "family": "LLM", "model_version": f"deepseek:{deepseek_provider.model}"},
+        {"model_key": "zhipu", "family": "LLM", "model_version": f"zhipu:{zhipu_provider.model}"},
         {"model_key": "chatgpt", "family": "LLM", "model_version": f"chatgpt:{chatgpt_provider.model}"},
         {"model_key": "ensemble", "family": "Ensemble", "model_version": None},
         {"model_key": "calibrated_ensemble", "family": "Calibrated Ensemble", "model_version": None},
@@ -1329,7 +1329,7 @@ async def fixture_detail(fixture_id: str) -> dict:
         )
         for key in prediction_service.model_keys
     }
-    prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
+    prediction = predictions.get("zhipu") or next((item for item in predictions.values() if item), None)
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
     _restore_dongqiudi_odds_capture_time(fixture, context)
     localize_evidence_players(context)
@@ -1380,7 +1380,7 @@ async def fixture_detail(fixture_id: str) -> dict:
             # 决策在预测生成时已持久化并随版本冻结；只有缺失决策快照的
             # 历史行才回填，避免每次打开页面用实时数据重算。
             predictions[key] = apply_market_decision(item, context)
-    prediction = predictions.get("deepseek") or next((item for item in predictions.values() if item), None)
+    prediction = predictions.get("zhipu") or next((item for item in predictions.values() if item), None)
     model_bets = {}
     for key, item in predictions.items():
         linked_bet = repository.bet_for_prediction(item["id"]) if item else None
@@ -1393,7 +1393,7 @@ async def fixture_detail(fixture_id: str) -> dict:
         "match_preview": match_preview,
         "prediction": prediction,
         "predictions": predictions,
-        "bet": model_bets.get("deepseek") or next((item for item in model_bets.values() if item), None),
+        "bet": model_bets.get("zhipu") or next((item for item in model_bets.values() if item), None),
         "bets": model_bets,
         "competition_id": settings.simulation_competition_id,
         "capabilities": {
@@ -1401,7 +1401,7 @@ async def fixture_detail(fixture_id: str) -> dict:
             "dongqiudi_sync": dongqiudi_provider.configured and bool((fixture.get("external_ids") or {}).get("dongqiudi") or str(fixture.get("id") or "").startswith("dongqiudi-")),
             "dongqiudi_last_synced_at": (fixture.get("dongqiudi_sync") or {}).get("last_synced_at"),
             "evidence_sources": list(MATCH_EVIDENCE_SOURCES),
-            "deepseek": settings.deepseek_enabled and deepseek_provider.configured,
+            "zhipu": settings.zhipu_enabled and zhipu_provider.configured,
             "chatgpt": chatgpt_provider.configured,
         },
         "evidence_error": evidence_error,
@@ -1438,7 +1438,7 @@ def bankroll() -> dict:
 def simulated_bets(
     status: Literal["all", "placed", "settled"] = "all",
     fixture_date: str | None = None,
-    model: Literal["all", "deepseek", "chatgpt"] = "all",
+    model: Literal["all", "zhipu", "chatgpt"] = "all",
 ) -> dict:
     """Return the simulated bet ledger; no real-money execution exists."""
 
@@ -1455,7 +1455,7 @@ def simulated_bets(
 def paper_executions(
     status: Literal["all", "PENDING", "EXECUTED", "CANCELLED", "REJECTED", "SETTLED"] = "all",
     fixture_date: str | None = None,
-    model: Literal["all", "deepseek", "chatgpt"] = "all",
+    model: Literal["all", "zhipu", "chatgpt"] = "all",
 ) -> dict:
     """Return the append-only paper execution ledger; no real execution exists."""
 
@@ -1474,7 +1474,7 @@ def prediction_decisions(
     league: Literal["all", "epl", "laliga", "csl", "cfa_cup", "ucl", "acl"] = "all",
     fixture_date: str | None = None,
     model_version: str | None = None,
-    model: Literal["all", "deepseek", "chatgpt"] = "all",
+    model: Literal["all", "zhipu", "chatgpt"] = "all",
 ) -> dict:
     """Return one auditable decision row per latest fixture/model prediction."""
 
@@ -1591,7 +1591,7 @@ def prediction_metrics(
     start_date: str | None = None,
     end_date: str | None = None,
     model_version: str | None = None,
-    model: Literal["all", "deepseek", "chatgpt"] = "all",
+    model: Literal["all", "zhipu", "chatgpt"] = "all",
 ) -> dict:
     """Return filterable correctness and Brier score metrics."""
 
@@ -1911,7 +1911,7 @@ def _ensemble_payload(
     learned_weights: dict | None,
 ) -> dict:
     base_predictions = {
-        str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek"): item.get("model_probabilities") or item.get("probabilities") or {}
+        str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "zhipu"): item.get("model_probabilities") or item.get("probabilities") or {}
         for item in predictions
     }
     baseline = next(
@@ -2751,7 +2751,7 @@ async def run_automation_job(job_name: str, force: bool = False) -> dict:
 async def probe_free_llm() -> dict:
     """Probe every free-LLM chain link with a tiny chat request."""
 
-    candidates = deepseek_chain_provider._candidates()
+    candidates = zhipu_chain_provider._candidates()
     report = await probe_chain(candidates)
     return {"items": report, "count": len(report)}
 
@@ -2992,7 +2992,7 @@ async def run_prediction(fixture_id: str) -> dict:
     return public_payload({
         "predictions": results,
         "bets": bets,
-        "prediction": next((item for item in results if item.get("model_key") == "deepseek"), results[0] if results else None),
+        "prediction": next((item for item in results if item.get("model_key") == "zhipu"), results[0] if results else None),
     })
 
 

@@ -33,7 +33,7 @@ def candidate(
     fixture_id: str = "fixture-1",
     prediction_id: str = "prediction-1",
     league_key: str = "epl",
-    model_key: str = "deepseek",
+    model_key: str = "zhipu",
     correlation_group: str | None = None,
     edge: float = 0.10,
     ev: float = 0.20,
@@ -110,7 +110,7 @@ def test_account_snapshot_uses_one_ledger_and_active_status_set() -> None:
 def test_candidate_tie_break_is_deterministic_by_model_and_prediction_id() -> None:
     selected = select_best_candidates(
         [
-            candidate(model_key="deepseek", prediction_id="z-prediction", correlation_group="deep-group", score=0.8),
+            candidate(model_key="zhipu", prediction_id="z-prediction", correlation_group="deep-group", score=0.8),
             candidate(model_key="chatgpt", prediction_id="a-prediction", correlation_group="gpt-group", score=0.8),
         ]
     )
@@ -182,7 +182,7 @@ def test_risk_gate_hard_caps_legacy_single_bet_configuration_at_two_percent() ->
 
 def test_llm_probability_shrinks_only_with_matching_fresh_market_snapshot() -> None:
     prediction = {
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "odds_snapshot_id": "snapshot-1",
         "model_probabilities": {"home": 0.90, "draw": 0.05, "away": 0.05},
         "market_assessment": {
@@ -305,9 +305,9 @@ def test_clv_is_calculated_from_frozen_bet_and_closing_price() -> None:
 
 
 def test_p2_bankroll_freezes_execution_and_uses_fallback_stake(tmp_path) -> None:
-    repository = PredictionRepository(str(tmp_path / "p2.db"), "p2", ("deepseek",))
+    repository = PredictionRepository(str(tmp_path / "p2.db"), "p2", ("zhipu",))
     repository.initialize()
-    service = BankrollService(repository, PortfolioConfig()).configure("deepseek", "p2")
+    service = BankrollService(repository, PortfolioConfig()).configure("zhipu", "p2")
     fixture = {
         "id": "fixture-1",
         "fixture_date": "2099-08-27",
@@ -320,7 +320,7 @@ def test_p2_bankroll_freezes_execution_and_uses_fallback_stake(tmp_path) -> None
     prediction = {
         "id": "prediction-1",
         "fixture_id": "fixture-1",
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "model_version": "deepseek:test",
         "probabilities": {"home": 0.6, "draw": 0.25, "away": 0.15},
         "forecast_confidence": 0.8,
@@ -363,7 +363,7 @@ def test_build_candidates_exposes_edge_and_ev_separately() -> None:
     fixture = {"id": "f1", "fixture_date": "2099-08-27", "league_key": "epl", "status": "scheduled"}
     prediction = {
         "id": "p1",
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "data_completeness": 0.9,
         "forecast_confidence": 0.8,
         "ai": {"status": "completed"},
@@ -412,7 +412,7 @@ def test_build_candidates_assigns_priority_for_priority_league_and_team() -> Non
     }
     prediction = {
         "id": "p1",
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "data_completeness": 0.9,
         "forecast_confidence": 0.8,
         "ai": {"status": "completed"},
@@ -443,7 +443,7 @@ def test_build_candidates_assigns_no_priority_without_match() -> None:
     }
     prediction = {
         "id": "p2",
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "data_completeness": 0.9,
         "forecast_confidence": 0.8,
         "ai": {"status": "completed"},

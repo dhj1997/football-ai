@@ -18,7 +18,7 @@ def prediction() -> dict:
         "data_completeness": 0.75,
         "ai": {
             "status": "completed",
-            "provider": "deepseek",
+            "provider": "zhipu",
             "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
         },
         "decision": {
@@ -191,7 +191,7 @@ def test_financial_metrics_include_settled_bet_without_evaluation(tmp_path) -> N
     repository = PredictionRepository(
         str(tmp_path / "ledger-metrics.db"),
         "p1",
-        ("deepseek",),
+        ("zhipu",),
         initial_balance=5000.0,
     )
     repository.initialize()
@@ -200,7 +200,7 @@ def test_financial_metrics_include_settled_bet_without_evaluation(tmp_path) -> N
         {
             "id": "orphan-ledger-prediction",
             "fixture_id": "orphan-ledger-fixture",
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": "p1",
         }
     )
@@ -220,7 +220,7 @@ def test_financial_metrics_include_settled_bet_without_evaluation(tmp_path) -> N
             "league_key": "epl",
             "season": "2026",
             "model_version": orphan_prediction["model_version"],
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "competition_id": "p1",
         }
     )
@@ -238,7 +238,7 @@ def test_financial_metrics_include_settled_bet_without_evaluation(tmp_path) -> N
         season="2026",
         start_date="2026-08-01",
         end_date="2026-08-31",
-        model_key="deepseek",
+        model_key="zhipu",
     )
 
     assert report["sample_size"] == 0
@@ -247,9 +247,9 @@ def test_financial_metrics_include_settled_bet_without_evaluation(tmp_path) -> N
     assert report["portfolio"]["realized_pnl"] == -100.0
     assert report["portfolio"]["roi"] == -1.0
     assert report["portfolio"]["max_drawdown"] == 0.02
-    assert service.metrics(league_key="laliga", model_key="deepseek")["portfolio"]["bets"] == 0
-    assert service.metrics(start_date="2026-09-01", model_key="deepseek")["portfolio"]["bets"] == 0
-    assert service.metrics(season="2025", model_key="deepseek")["portfolio"]["bets"] == 0
+    assert service.metrics(league_key="laliga", model_key="zhipu")["portfolio"]["bets"] == 0
+    assert service.metrics(start_date="2026-09-01", model_key="zhipu")["portfolio"]["bets"] == 0
+    assert service.metrics(season="2025", model_key="zhipu")["portfolio"]["bets"] == 0
 
 
 def test_metrics_expose_forecast_market_portfolio_layers_and_quality_gate(tmp_path) -> None:
@@ -257,7 +257,7 @@ def test_metrics_expose_forecast_market_portfolio_layers_and_quality_gate(tmp_pa
     repository.initialize()
     item = prediction()
     item["experiment"] = {
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "strategy_id": "baseline",
         "strategy_version": "v1",
         "strategy_name": "基准",
@@ -337,7 +337,7 @@ def test_score_correction_resettles_existing_evaluation(tmp_path, monkeypatch) -
             "fixture_id": "fixture-corr",
             "created_at": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
             "phase": "preliminary",
-            "model_key": "deepseek",
+            "model_key": "zhipu",
             "model_version": "deepseek:test",
             "competition_id": "dual-model-v1",
             "ai": {

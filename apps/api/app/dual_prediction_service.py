@@ -139,7 +139,7 @@ class DualPredictionService:
         if leakage_errors:
             raise leakage_errors[0]
         base_predictions = {
-            str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "deepseek"): item.get("model_probabilities") or item.get("probabilities") or {}
+            str(item.get("model_key") or (item.get("ai") or {}).get("provider") or "zhipu"): item.get("model_probabilities") or item.get("probabilities") or {}
             for item in predictions
         }
         baseline = next(

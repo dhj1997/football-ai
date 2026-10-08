@@ -7,7 +7,7 @@ import uuid
 if "app.main" not in sys.modules:
     os.environ.setdefault("DATABASE_URL", "sqlite:///test_football_ai_p10.db")
     os.environ.setdefault("USE_DEMO_DATA", "false")
-    os.environ.setdefault("API_DEEPSEEK_KEY", "")
+    os.environ.setdefault("API_ZHIPU_KEY", "")
     os.environ.setdefault("API_CHATGPT_KEY", "")
 
 from fastapi.testclient import TestClient
@@ -38,7 +38,7 @@ def test_models_endpoint_exposes_families_and_records() -> None:
     assert response.status_code == 200
     payload = response.json()
     family_keys = {item["model_key"] for item in payload["families"]}
-    assert {"baseline", "elo", "poisson", "dixon_coles", "deepseek", "chatgpt", "ensemble", "calibrated_ensemble"} <= family_keys
+    assert {"baseline", "elo", "poisson", "dixon_coles", "zhipu", "chatgpt", "ensemble", "calibrated_ensemble"} <= family_keys
     assert isinstance(payload["records"], list)
     assert "record_count" in payload
 

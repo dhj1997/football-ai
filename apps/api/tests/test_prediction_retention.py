@@ -14,7 +14,7 @@ def prediction(
     prompt_version: str,
     *,
     fixture_id: str = "fixture-1",
-    model_key: str = "deepseek",
+    model_key: str = "zhipu",
     competition_id: str = "retention-test",
 ) -> dict:
     return {
@@ -79,7 +79,7 @@ def repository(tmp_path) -> PredictionRepository:
     result = PredictionRepository(
         str(tmp_path / "retention.db"),
         competition_id="retention-test",
-        model_keys=("deepseek", "chatgpt"),
+        model_keys=("zhipu", "chatgpt"),
     )
     result.initialize()
     return result
@@ -131,7 +131,7 @@ def test_prune_preserves_old_dependencies_and_ledger(tmp_path) -> None:
     current_bet = repo.bet_for_prediction("current")
     assert current_bet["balance_before"] == 1027.0
     assert current_bet["balance_after_placement"] == 1007.0
-    assert repo.current_balance("deepseek", "retention-test") == 1007.0
+    assert repo.current_balance("zhipu", "retention-test") == 1007.0
     assert repo.prediction_retention_preview(CURRENT_VERSION)["history_count"] == 1
     assert repo.prune_prediction_history(CURRENT_VERSION)["history_count"] == 1
 
@@ -149,7 +149,7 @@ def test_latest_current_ignores_newer_legacy_without_deleting_history(tmp_path) 
             {"id": newest_legacy["evidence_snapshot_id"]},
         )
 
-    assert repo.latest_current("fixture-1", CURRENT_VERSION, "deepseek", "retention-test")["id"] == "current-2"
+    assert repo.latest_current("fixture-1", CURRENT_VERSION, "zhipu", "retention-test")["id"] == "current-2"
     preview = repo.prediction_retention_preview(CURRENT_VERSION)
     assert preview["history_count"] == 2
     assert preview["delete_counts"]["evidence_snapshots"] == 0
@@ -180,7 +180,7 @@ def test_prune_never_calls_ledger_rebuild(tmp_path, monkeypatch) -> None:
     result = repo.prune_prediction_history(CURRENT_VERSION)
 
     assert result["balances"] == []
-    assert repo.latest("fixture-1", "deepseek", "retention-test")["id"] == "current"
+    assert repo.latest("fixture-1", "zhipu", "retention-test")["id"] == "current"
     assert repo.bet_for_prediction("old") is not None
     assert repo.evidence_snapshot("snapshot-old") is not None
 
@@ -202,7 +202,7 @@ def test_operational_discard_removes_old_open_bet_and_restores_balance(tmp_path)
 
     result = repo.discard_open_fixture_bets(
         "fixture-1",
-        "deepseek",
+        "zhipu",
         "retention-test",
         keep_prediction_id=current["id"],
     )
@@ -211,8 +211,8 @@ def test_operational_discard_removes_old_open_bet_and_restores_balance(tmp_path)
     assert repo.bet_for_prediction("pre-lineup") is None
     assert repo.prediction("pre-lineup") is not None
     assert repo.evidence_snapshot("snapshot-pre-lineup") is not None
-    assert repo.bets(status="placed", model_key="deepseek", competition_id="retention-test") == []
-    assert repo.current_balance("deepseek", "retention-test") == 1000.0
+    assert repo.bets(status="placed", model_key="zhipu", competition_id="retention-test") == []
+    assert repo.current_balance("zhipu", "retention-test") == 1000.0
 
 
 def test_retention_preserves_orphan_bet_left_by_a_concurrent_prediction(tmp_path) -> None:
@@ -228,7 +228,7 @@ def test_retention_preserves_orphan_bet_left_by_a_concurrent_prediction(tmp_path
     assert result["delete_counts"]["bets"] == 0
     assert result["delete_counts"]["bankroll_transactions"] == 0
     assert len(repo.bets()) == 1
-    assert repo.current_balance("deepseek", "retention-test") == 980.0
+    assert repo.current_balance("zhipu", "retention-test") == 980.0
 
 
 def test_scoped_prune_preserves_other_fixture_bets(tmp_path) -> None:
@@ -250,7 +250,7 @@ def test_scoped_prune_preserves_other_fixture_bets(tmp_path) -> None:
         CURRENT_VERSION,
         competition_id="retention-test",
         fixture_id="fixture-1",
-        model_key="deepseek",
+        model_key="zhipu",
     )
 
     assert repo.bet_for_prediction("other-current") is not None

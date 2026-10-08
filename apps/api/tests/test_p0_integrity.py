@@ -38,7 +38,7 @@ def _prediction(prediction_id: str = "p0-prediction", fixture_id: str = "p0-fixt
         "created_at": "2099-08-27T01:00:00+00:00",
         "phase": "preliminary",
         "model_version": "test:model-v1",
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "competition_id": "legacy",
         "prompt_version": DEFAULT_PROMPT_CONTRACT.version,
         "probabilities": {"home": 0.5, "draw": 0.3, "away": 0.2},
@@ -47,7 +47,7 @@ def _prediction(prediction_id: str = "p0-prediction", fixture_id: str = "p0-fixt
         "evidence_snapshot_id": "evidence-p0",
         "evidence_hash": "a" * 64,
         "odds_snapshot_id": "odds-p0",
-        "ai": {"status": "completed", "provider": "deepseek", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
+        "ai": {"status": "completed", "provider": "zhipu", "prompt_version": DEFAULT_PROMPT_CONTRACT.version},
         "decision": {"status": "no_bet", "market": "no_bet", "selection": "none"},
     }
 
@@ -147,7 +147,7 @@ def test_prediction_freeze_allows_lifecycle_only_updates(tmp_path) -> None:
     updated = repository.update_prediction("p0-prediction", {"status": "settled", "metadata": {"source": "test"}})
 
     assert updated["status"] == "settled"
-    saved = repository.latest("p0-fixture", "deepseek", "legacy")
+    saved = repository.latest("p0-fixture", "zhipu", "legacy")
     assert saved["model_probabilities"] == {"home": 0.6, "draw": 0.25, "away": 0.15}
     assert saved["evidence_snapshot_id"] == "evidence-p0"
     assert saved["odds_snapshot_id"] == "odds-p0"
@@ -159,11 +159,11 @@ def test_settlement_does_not_modify_prediction_or_snapshots(tmp_path) -> None:
     fixture = _fixture(status="finished")
     repository.replace_fixtures("2099-08-27", "2099-08-27", [fixture], "2099-08-27T00:00:00+00:00")
     repository.save(_prediction())
-    before = deepcopy(repository.latest("p0-fixture", "deepseek", "legacy"))
+    before = deepcopy(repository.latest("p0-fixture", "zhipu", "legacy"))
 
     SettlementService(repository).settle_fixture(fixture)
 
-    after = repository.latest("p0-fixture", "deepseek", "legacy")
+    after = repository.latest("p0-fixture", "zhipu", "legacy")
     assert after == before
 
 
@@ -211,7 +211,7 @@ class _ModelProvider:
 
 
 def test_dual_models_share_one_evidence_and_odds_snapshot(tmp_path) -> None:
-    repository = PredictionRepository(str(tmp_path / "dual-p0.db"), "dual", ("deepseek", "chatgpt"))
+    repository = PredictionRepository(str(tmp_path / "dual-p0.db"), "dual", ("zhipu", "chatgpt"))
     repository.initialize()
     fixture = _fixture()
     context = demo_context(fixture["id"])
@@ -222,7 +222,7 @@ def test_dual_models_share_one_evidence_and_odds_snapshot(tmp_path) -> None:
             key,
             "dual",
         )
-        for key in ("deepseek", "chatgpt")
+        for key in ("zhipu", "chatgpt")
     }
 
     results = asyncio.run(DualPredictionService(services, "dual").create(fixture, context))

@@ -70,8 +70,8 @@ def _repository(tmp_path, count: int = 4) -> PredictionRepository:
 def test_accumulation_is_idempotent_and_never_writes_production(tmp_path) -> None:
     repository = _repository(tmp_path)
     chatgpt = _Provider("chatgpt")
-    deepseek = _Provider("deepseek")
-    service = HistoricalOOSAccumulationService(repository, {"chatgpt": chatgpt, "deepseek": deepseek})
+    deepseek = _Provider("zhipu")
+    service = HistoricalOOSAccumulationService(repository, {"chatgpt": chatgpt, "zhipu": deepseek})
 
     first = asyncio.run(service.run())
     first_calls = (chatgpt.calls, deepseek.calls)
@@ -79,7 +79,7 @@ def test_accumulation_is_idempotent_and_never_writes_production(tmp_path) -> Non
 
     assert first["eligible_fixtures"] == 3
     assert first["newly_generated_predictions"] == 9
-    assert first["generated_by_model"] == {"poisson": 3, "chatgpt": 3, "deepseek": 3}
+    assert first["generated_by_model"] == {"poisson": 3, "chatgpt": 3, "zhipu": 3}
     assert second["newly_generated_predictions"] == 0
     assert second["already_existing_predictions"] == 9
     assert (chatgpt.calls, deepseek.calls) == first_calls
@@ -95,16 +95,16 @@ def test_accumulation_is_idempotent_and_never_writes_production(tmp_path) -> Non
 
 def test_accumulation_retries_missing_deepseek_without_poisson_fallback(tmp_path) -> None:
     repository = _repository(tmp_path)
-    deepseek = _Provider("deepseek", fail=True)
+    deepseek = _Provider("zhipu", fail=True)
     result = asyncio.run(
-        HistoricalOOSAccumulationService(repository, {"deepseek": deepseek}).run()
+        HistoricalOOSAccumulationService(repository, {"zhipu": deepseek}).run()
     )
 
     assert result["model_failures"] == 3
-    assert result["model_failures_by_model"]["deepseek"] == 3
-    assert result["generated_by_model"]["deepseek"] == 0
+    assert result["model_failures_by_model"]["zhipu"] == 3
+    assert result["generated_by_model"]["zhipu"] == 0
     assert deepseek.calls == 3
-    assert not [row for row in repository.historical_predictions(limit=100) if row["model_key"] == "deepseek"]
+    assert not [row for row in repository.historical_predictions(limit=100) if row["model_key"] == "zhipu"]
     assert len([row for row in repository.historical_predictions(limit=100) if row["model_key"] == "poisson"]) == 3
 
 

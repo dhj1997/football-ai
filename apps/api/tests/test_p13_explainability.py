@@ -15,7 +15,7 @@ def prediction_payload(**overrides) -> dict:
         "id": "pred-1",
         "fixture_id": "sportsdb-1",
         "created_at": "2026-09-01T10:00:00+00:00",
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "model_version": "deepseek:deepseek-v4-flash",
         "probabilities": {"home": 0.5, "draw": 0.3, "away": 0.2},
     }
@@ -49,18 +49,18 @@ def evidence() -> dict:
 
 def test_model_disagreement_is_computed_from_actual_outputs() -> None:
     outputs = {
-        "deepseek": {"home": 0.6, "draw": 0.25, "away": 0.15},
+        "zhipu": {"home": 0.6, "draw": 0.25, "away": 0.15},
         "chatgpt": {"home": 0.3, "draw": 0.3, "away": 0.4},
     }
     result = model_disagreement(outputs)
 
     assert result["model_count"] == 2
     assert result["per_outcome_spread"]["home"] == 0.3
-    assert result["most_divergent_pair"] == {"model_a": "chatgpt", "model_b": "deepseek"}
+    assert result["most_divergent_pair"] == {"model_a": "chatgpt", "model_b": "zhipu"}
     assert 0 < result["disagreement_score"] < 1
 
-    assert model_disagreement({"deepseek": {"home": 0.5, "draw": 0.3, "away": 0.2}}) is None
-    assert model_disagreement({"deepseek": None}) is None
+    assert model_disagreement({"zhipu": {"home": 0.5, "draw": 0.3, "away": 0.2}}) is None
+    assert model_disagreement({"zhipu": None}) is None
 
 
 def test_graph_links_every_reason_to_refs_and_provenance() -> None:
@@ -69,7 +69,7 @@ def test_graph_links_every_reason_to_refs_and_provenance() -> None:
         feature_snapshot=feature_snapshot(),
         evidence=evidence(),
         model_outputs={
-            "deepseek": {"home": 0.5, "draw": 0.3, "away": 0.2},
+            "zhipu": {"home": 0.5, "draw": 0.3, "away": 0.2},
             "poisson": {"home": 0.45, "draw": 0.3, "away": 0.25},
         },
     )
@@ -102,7 +102,7 @@ def test_explanation_confidence_is_separate_from_prediction_confidence() -> None
         feature_snapshot=feature_snapshot(),
         evidence=evidence(),
         model_outputs={
-            "deepseek": {"home": 0.5, "draw": 0.3, "away": 0.2},
+            "zhipu": {"home": 0.5, "draw": 0.3, "away": 0.2},
             "chatgpt": {"home": 0.5, "draw": 0.3, "away": 0.2},
         },
     )
@@ -144,7 +144,7 @@ def test_explanation_is_read_only_over_the_prediction() -> None:
     evidence_payload = evidence()
     evidence_original = dict(evidence_payload)
 
-    build_explanation_graph(prediction, feature_snapshot=feature_snapshot(), evidence=evidence_payload, model_outputs={"deepseek": {"home": 0.5, "draw": 0.3, "away": 0.2}})
+    build_explanation_graph(prediction, feature_snapshot=feature_snapshot(), evidence=evidence_payload, model_outputs={"zhipu": {"home": 0.5, "draw": 0.3, "away": 0.2}})
 
     assert prediction == original
     assert evidence_payload == evidence_original

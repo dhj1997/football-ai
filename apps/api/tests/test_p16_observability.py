@@ -30,7 +30,7 @@ def settlement_rows(count: int = 60, *, leaky: bool = False) -> list[dict]:
                 "fixture_id": f"f{index}",
                 "prediction_id": f"p{index}",
                 "league_key": "epl",
-                "model_key": "deepseek",
+                "model_key": "zhipu",
                 "prediction_created_at": created.isoformat(),
                 "settled_at": (created + timedelta(minutes=-1 if leaky else 60)).isoformat(),
             }

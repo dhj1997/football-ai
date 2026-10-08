@@ -26,7 +26,7 @@
 - 不可变证据快照、内容哈希、提示词版本、模型版本和预测版本持久化
 - 两个独立的模拟账户（`SIMULATION_INITIAL_BANKROLL` 默认 5000，历史 1000 账户首次升级时自动补足差额）；后端按最高正优势市场计算 1%-2% 单注仓位，每日敞口上限 10%、单联赛 4%、总敞口 10%，回撤 30% 熔断，且每个模型每个联赛每天最多执行两场，不借款且不连接真实投注平台
 - LLM 赛果与让球概率在组合层先向去水市场先验收缩（保留权重 0.7，ADR-015）再计算优势与 EV；执行门槛为概率优势 5% 且 EV 5%，疑似数据异常（优势超 60%）直接拦截
-- DeepSeek 默认 `shadow` 影子模式（只生成预测与观察，不执行模拟下注），GPT-5.6 Sol 默认 `active`；切换由 `DEEPSEEK_EXECUTION_MODE` / `CHATGPT_EXECUTION_MODE` 控制
+- 智谱GLM 通道默认 `active` 执行模拟下注，GPT-5.6 Sol 默认 `active`；切换由 `ZHIPU_EXECUTION_MODE` / `CHATGPT_EXECUTION_MODE` 控制
 - 逐笔模拟下注、资金流水、已实现权益曲线、赛后盈亏、ROI、命中率、Brier、Log Loss、RPS、数据完整度和最大回撤
 - DotaScope 风格策略评估：每个模型使用独立基准策略实验版本，绩效页区分预测质量、市场对照、组合表现，并展示样本门禁和逐场 `bet/no_bet` 决策审计
 - 亚洲盘全赢、半赢、走水、半输、全输分类汇总
@@ -88,11 +88,12 @@ Copy-Item .env.example .env
 
 - `API_FOOTBALL_KEY`：可选的 API-Football 密钥，后续用于详细赛前证据。
 - `ESPN_BASE_URL`：ESPN 公共数据地址，默认 `https://site.api.espn.com`，用于积分榜、球队资料和 API-Football 失败时的比赛证据。
-- `API_DEEPSEEK_KEY`：DeepSeek 通道后端密钥（现为智谱 BigModel key），不得使用 `NEXT_PUBLIC_` 前缀。
-- `DEEPSEEK_ENABLED`：是否启用该通道参与当前预测、翻译和历史自动任务，临时停用时设为 `false`。
-- `DEEPSEEK_MODEL`：默认 `glm-5.3-flash`。
-- `DEEPSEEK_BASE_URL`：默认 `https://open.bigmodel.cn/api/coding/paas/v4`（智谱 OpenAI 兼容端点）。
-- `DEEPSEEK_TIMEOUT_SECONDS`、`DEEPSEEK_MAX_RETRIES`、`DEEPSEEK_MAX_TOKENS`：模型超时、重试和输出预算。
+- `API_ZHIPU_KEY`：智谱 GLM 通道后端密钥（BigModel key），不得使用 `NEXT_PUBLIC_` 前缀。
+- `ZHIPU_ENABLED`：是否启用该通道参与当前预测、翻译和历史自动任务，临时停用时设为 `false`。
+- `ZHIPU_EXECUTION_MODE`：`active` 执行模拟下注（默认），`shadow` 只预测观察。
+- `ZHIPU_MODEL`：默认 `glm-5.3-flash`。
+- `ZHIPU_BASE_URL`：默认 `https://open.bigmodel.cn/api/coding/paas/v4`（智谱 OpenAI 兼容端点）。
+- `ZHIPU_TIMEOUT_SECONDS`、`ZHIPU_MAX_RETRIES`、`ZHIPU_MAX_TOKENS`：模型超时、重试和输出预算。
 - `API_CHATGPT_KEY`：GPT 服务端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
 - `CHATGPT_MODEL`、`CHATGPT_BASE_URL`：默认分别为 `gpt-5.6-sol` 和 `https://api.quya.org/v1`。
 - `SIMULATION_COMPETITION_ID`：当前双模型模拟竞赛标识；更换标识可开始一轮新的独立模拟对比，旧记录继续保留。

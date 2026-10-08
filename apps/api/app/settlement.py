@@ -237,7 +237,7 @@ class SettlementService:
                         "league_key": fixture["league_key"],
                         "season": season,
                         "model_version": prediction["model_version"],
-                        "model_key": prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek",
+                        "model_key": prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "zhipu",
                         "competition_id": prediction.get("competition_id") or self.competition_id,
                         "settled_at": settled_at,
                         "actual_outcome": actual,
@@ -682,7 +682,7 @@ def _model_reports(
 ) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        key = str(row.get("model_key") or (row.get("experiment") or {}).get("model_key") or "deepseek")
+        key = str(row.get("model_key") or (row.get("experiment") or {}).get("model_key") or "zhipu")
         groups.setdefault(key, []).append(row)
     reports: dict[str, Any] = {}
     for key, group in groups.items():
@@ -700,7 +700,7 @@ def _model_reports(
             "rps_improvement": _improvement(paired_market_report["rps"], model_report["rps"]),
         }
     if rows and not reports:
-        reports["deepseek"] = model_metrics
+        reports["zhipu"] = model_metrics
     if "chatgpt" in reports:
         reports["gpt"] = reports["chatgpt"]
     poisson_rows = _dedupe_fixture_rows(
@@ -737,7 +737,7 @@ def _model_reports(
 def _paired_sample_count(rows: list[dict[str, Any]]) -> int:
     grouped: dict[str, set[str]] = {}
     for row in rows:
-        key = str(row.get("model_key") or (row.get("experiment") or {}).get("model_key") or "deepseek")
+        key = str(row.get("model_key") or (row.get("experiment") or {}).get("model_key") or "zhipu")
         if set(_forecast_probabilities(row) or {}) >= {"home", "draw", "away"}:
             grouped.setdefault(key, set()).add(str(row.get("fixture_id") or ""))
     if not grouped:
@@ -748,12 +748,12 @@ def _paired_sample_count(rows: list[dict[str, Any]]) -> int:
 def _paired_model_comparison(rows: list[dict[str, Any]]) -> dict[str, Any]:
     grouped: dict[str, dict[str, dict[str, Any]]] = {}
     for row in rows:
-        key = str(row.get("model_key") or (row.get("experiment") or {}).get("model_key") or "deepseek")
+        key = str(row.get("model_key") or (row.get("experiment") or {}).get("model_key") or "zhipu")
         probabilities = _forecast_probabilities(row)
         fixture_id = str(row.get("fixture_id") or "")
         if fixture_id and set(probabilities or {}) >= {"home", "draw", "away"}:
             grouped.setdefault(key, {})[fixture_id] = row
-    left = grouped.get("deepseek", {})
+    left = grouped.get("zhipu", {})
     right = grouped.get("chatgpt", {})
     paired_ids = sorted(set(left) & set(right))
     differences = [
@@ -762,7 +762,7 @@ def _paired_model_comparison(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for fixture_id in paired_ids
     ]
     return {
-        "models": ["deepseek", "chatgpt"],
+        "models": ["zhipu", "chatgpt"],
         "paired_samples": len(paired_ids),
         "mean_brier_difference": round(sum(differences) / len(differences), 4) if differences else None,
     }

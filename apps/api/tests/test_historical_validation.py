@@ -70,7 +70,7 @@ def _settlement(index: int) -> dict:
         "settled_at": timestamp,
         "fixture_date": timestamp[:10],
         "league_key": "epl",
-        "model_key": "deepseek",
+        "model_key": "zhipu",
         "model_version": "deepseek:test",
         "model_probabilities": {"home": 0.6, "draw": 0.25, "away": 0.15},
         "baseline": {"probabilities": {"home": 0.5, "draw": 0.3, "away": 0.2}},
@@ -140,7 +140,7 @@ def test_performance_profiles_use_only_settled_rows_at_or_before_as_of() -> None
     old = _settlement(1)
     future = {**_settlement(2), "prediction_created_at": "2026-01-01T00:00:00+00:00", "settled_at": "2026-01-02T00:00:00+00:00"}
     profiles = build_performance_profiles([old, future], as_of="2025-12-31T23:59:59+00:00")
-    assert profiles["deepseek|global"]["sample_size"] == 1
+    assert profiles["zhipu|global"]["sample_size"] == 1
 
 
 def test_historical_snapshot_filters_future_data_and_is_reproducible() -> None:

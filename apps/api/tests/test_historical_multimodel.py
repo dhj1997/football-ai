@@ -91,10 +91,10 @@ def test_multimodel_backfill_reuses_p72_snapshots_and_enters_p6(tmp_path) -> Non
     asyncio.run(HistoricalPredictionBackfillService(repository).run())
 
     chatgpt = _FakeProvider("chatgpt")
-    deepseek = _FakeProvider("deepseek")
+    deepseek = _FakeProvider("zhipu")
     service = HistoricalMultiModelBackfillService(
         repository,
-        {"chatgpt": chatgpt, "deepseek": deepseek},
+        {"chatgpt": chatgpt, "zhipu": deepseek},
     )
     first = asyncio.run(service.run())
     second = asyncio.run(service.run())
@@ -102,14 +102,14 @@ def test_multimodel_backfill_reuses_p72_snapshots_and_enters_p6(tmp_path) -> Non
     assert first["eligible_fixtures"] == 3
     assert first["generated_by_model"]["poisson"] == 3
     assert first["generated_by_model"]["chatgpt"] == 3
-    assert first["generated_by_model"]["deepseek"] == 3
+    assert first["generated_by_model"]["zhipu"] == 3
     assert first["ensemble_ready_fixtures"] == 3
     assert second["generated_by_model"]["chatgpt"] == 0
     assert second["reused_by_model"]["chatgpt"] == 3
-    assert second["reused_by_model"]["deepseek"] == 3
+    assert second["reused_by_model"]["zhipu"] == 3
     rows = repository.historical_predictions(limit=100)
     assert len(rows) == 9
-    assert {row["model_key"] for row in rows} == {"poisson", "chatgpt", "deepseek"}
+    assert {row["model_key"] for row in rows} == {"poisson", "chatgpt", "zhipu"}
     assert all(row["historical_backfill"]["version"] == P7_3_VERSION for row in rows if row["model_key"] != "poisson")
     for fixture_id in {row["fixture_id"] for row in rows}:
         fixture_rows = [row for row in rows if row["fixture_id"] == fixture_id]
@@ -129,7 +129,7 @@ def test_multimodel_backfill_reuses_p72_snapshots_and_enters_p6(tmp_path) -> Non
     evaluation = ModelEvaluationService(HistoricalEvaluationRepository(repository)).evaluate(evaluation_rows)
     models = evaluation["reports"]["GLOBAL"]["models"]
     assert models["gpt"]["sample_count"] > 0
-    assert models["deepseek"]["sample_count"] > 0
+    assert models["zhipu"]["sample_count"] > 0
     assert models["ensemble"]["sample_count"] > 0
     assert evaluation["leakage_audit"]["violations"] == 0
 
@@ -143,10 +143,10 @@ def test_multimodel_provider_failure_is_recorded_without_fallback_prediction(tmp
     result = asyncio.run(
         HistoricalMultiModelBackfillService(
             repository,
-            {"deepseek": _FakeProvider("deepseek", fail=True)},
+            {"zhipu": _FakeProvider("zhipu", fail=True)},
         ).run()
     )
 
-    assert result["failed_by_model"]["deepseek"] == 3
+    assert result["failed_by_model"]["zhipu"] == 3
     assert result["errors"]
-    assert not [row for row in repository.historical_predictions(limit=100) if row["model_key"] == "deepseek"]
+    assert not [row for row in repository.historical_predictions(limit=100) if row["model_key"] == "zhipu"]

@@ -179,7 +179,7 @@ def _seed_two_model_settlements(
             k=1,
         )[0]
         created = start + timedelta(hours=index * 6)
-        for model_key, sharp in (("deepseek", True), ("chatgpt", False)):
+        for model_key, sharp in (("zhipu", True), ("chatgpt", False)):
             probs = (
                 dict(sharp_probabilities)
                 if sharp
@@ -286,7 +286,7 @@ def test_ensemble_learning_promotes_with_adequate_sample(tmp_path) -> None:
 
     assert result["status"] == "promoted"
     assert result["test_samples"] >= 30
-    assert result["weights"]["deepseek"] > result["weights"]["chatgpt"]
+    assert result["weights"]["zhipu"] > result["weights"]["chatgpt"]
     champion = ModelRegistry(repository).champion("ensemble")
     assert champion is not None and champion.status == "champion"
     assert champion.payload["weights"] == result["weights"]

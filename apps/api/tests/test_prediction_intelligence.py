@@ -43,7 +43,7 @@ def _evidence() -> dict:
     }
 
 
-def _evaluation_row(index: int, model_key: str = "deepseek") -> dict:
+def _evaluation_row(index: int, model_key: str = "zhipu") -> dict:
     created = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=index)
     return {
         "fixture_id": f"fixture-{index}",
@@ -155,36 +155,36 @@ def test_player_impact_requires_all_point_in_time_dependencies(
 def test_weighted_ensemble_matches_documented_weighted_average() -> None:
     result = weighted_ensemble(
         {
-            "deepseek": {"home": 0.60, "draw": 0.20, "away": 0.20},
+            "zhipu": {"home": 0.60, "draw": 0.20, "away": 0.20},
             "chatgpt": {"home": 0.70, "draw": 0.20, "away": 0.10},
             "poisson": {"home": 0.50, "draw": 0.30, "away": 0.20},
         },
-        weights={"deepseek": 0.4, "chatgpt": 0.4, "poisson": 0.2},
+        weights={"zhipu": 0.4, "chatgpt": 0.4, "poisson": 0.2},
     )
 
     assert result["ensemble_probabilities"]["home"] == pytest.approx(0.62)
-    assert result["weights"] == {"deepseek": 0.4, "chatgpt": 0.4, "poisson": 0.2}
+    assert result["weights"] == {"zhipu": 0.4, "chatgpt": 0.4, "poisson": 0.2}
 
 
 def test_league_profile_falls_back_to_global_and_low_sample_shrinks() -> None:
     rows = [_evaluation_row(index) for index in range(30)]
     profiles = build_performance_profiles(rows)
     resolved = resolve_model_weights(
-        ["deepseek"],
+        ["zhipu"],
         profiles=profiles,
         league_key="laliga",
     )
-    assert profiles["deepseek|global"]["sample_size"] == 30
-    assert resolved["deepseek"] > 0
+    assert profiles["zhipu|global"]["sample_size"] == 30
+    assert resolved["zhipu"] > 0
 
     low_sample = {
-        "deepseek|global": {
+        "zhipu|global": {
             "sample_size": 1,
             "raw_weight": 100.0,
             "drift_factor": 1.0,
         }
     }
-    assert resolve_model_weights(["deepseek"], profiles=low_sample)["deepseek"] < 100.0
+    assert resolve_model_weights(["zhipu"], profiles=low_sample)["zhipu"] < 100.0
 
 
 def test_temperature_calibration_uses_only_calibration_slice() -> None:

@@ -16,7 +16,7 @@ FORBIDDEN_MARKERS = frozenset(
         "temperature-fitting", "temperature_fitting", "stacking", "meta-model",
     }
 )
-LLM_PROVIDERS = frozenset({"deepseek", "chatgpt", "gpt", "llm", "openai"})
+LLM_PROVIDERS = frozenset({"zhipu", "deepseek", "chatgpt", "gpt", "llm", "openai"})
 NUMERIC_FIELDS = frozenset(
     {"probabilities", "model_probabilities", "expected_goals", "stake", "stake_fraction", "weights"}
 )

@@ -235,7 +235,7 @@ def test_elo_ratings_prefers_clubeelo_over_local(tmp_path) -> None:
     repository = PredictionRepository(str(tmp_path / "elo-merge.db"), "dual-model-v1")
     repository.initialize()
     sync_ratings(repository, SAMPLE_ELO_CSV, localize=lambda name: name)
-    service = PredictionService(None, repository, "deepseek", "dual-model-v1")
+    service = PredictionService(None, repository, "zhipu", "dual-model-v1")
 
     ratings = service._elo_ratings()
 
@@ -276,7 +276,7 @@ def test_elo_ratings_labels_local_completed_match_fallback(tmp_path) -> None:
         }
     )
 
-    ratings = PredictionService(None, repository, "deepseek", "dual-model-v1")._elo_ratings(
+    ratings = PredictionService(None, repository, "zhipu", "dual-model-v1")._elo_ratings(
         "2026-09-20T12:00:00+00:00"
     )
 

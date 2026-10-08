@@ -49,7 +49,7 @@ class PredictionService:
     ) -> None:
         self.model_provider = model_provider
         self.repository = repository
-        self.model_key = model_key or getattr(model_provider, "provider_name", "deepseek")
+        self.model_key = model_key or getattr(model_provider, "provider_name", "zhipu")
         self.competition_id = competition_id
         self.player_value_service = player_value_service
         self.player_stats_service = player_stats_service
@@ -274,7 +274,7 @@ class PredictionService:
         }
         baseline["model_probabilities"] = deepcopy(baseline["probabilities"])
         provider_name = response.get("provider") or getattr(
-            self.model_provider, "provider_name", "deepseek"
+            self.model_provider, "provider_name", "zhipu"
         )
         baseline["model_version"] = f"{provider_name}:{response['returned_model']}"
         baseline["forecast_confidence"] = float(assessment["forecast_confidence"])

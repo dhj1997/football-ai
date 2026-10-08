@@ -107,7 +107,7 @@ class FreeLlmChainProvider:
             return await self.primary.assess(model_input)
         candidates = self._candidates()
         if not candidates:
-            raise RuntimeError("free-llm 链没有可用端点：API_DEEPSEEK_KEY 与 QUYA_LLM_KEY 均未配置")
+            raise RuntimeError("free-llm 链没有可用端点：API_ZHIPU_KEY 与 QUYA_LLM_KEY 均未配置")
         errors: list[str] = []
         for label, provider in candidates:
             try:

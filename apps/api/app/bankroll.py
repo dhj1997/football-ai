@@ -121,7 +121,7 @@ class BankrollService:
         self.repository = repository
         self.portfolio_config = portfolio_config or PortfolioConfig()
         self.initial_bankroll = max(0.0, float(initial_bankroll))
-        self.model_key = "deepseek"
+        self.model_key = "zhipu"
         self.competition_id = "legacy"
         self.uncapped = False
         self.execution_mode = "active"
@@ -705,7 +705,7 @@ class DualBankrollService:
         self.competition_id = competition_id
 
     def place_for_prediction(self, prediction: dict[str, Any], fixture: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
-        model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"
+        model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "zhipu"
         service = self.services.get(model_key)
         return service.place_for_prediction(prediction, fixture, context) if service else None
 
@@ -719,7 +719,7 @@ class DualBankrollService:
         by_prediction_id = {str(prediction.get("id")): prediction for prediction in predictions}
         candidate_entries: list[tuple[Any, BankrollService, dict[str, Any]]] = []
         for prediction in predictions:
-            model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"
+            model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "zhipu"
             service = self.services.get(model_key)
             if service is None or getattr(service, "execution_mode", "active") != "active":
                 continue
@@ -740,7 +740,7 @@ class DualBankrollService:
             # not create an automatic bet when the configured AI model failed.
             if (prediction.get("ai") or {}).get("status") != "completed":
                 continue
-            baseline_service = self.services.get(str(prediction.get("model_key") or "deepseek"))
+            baseline_service = self.services.get(str(prediction.get("model_key") or "zhipu"))
             if baseline_service is None or getattr(baseline_service, "execution_mode", "active") != "active":
                 continue
             poisson = baseline_service.candidate_for_poisson(prediction, fixture, context)
@@ -789,7 +789,7 @@ class DualBankrollService:
         linked_bet: dict[str, Any] | None = None,
         bet_lookup_complete: bool = False,
     ) -> dict[str, Any]:
-        model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"
+        model_key = prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "zhipu"
         service = self.services.get(model_key)
         if service:
             return service.execution_for_prediction(
@@ -807,7 +807,7 @@ class DualBankrollService:
 
     def summary(self) -> dict[str, Any]:
         accounts = {key: service.summary() for key, service in self.services.items()}
-        primary = accounts.get("deepseek") or next(iter(accounts.values()), {})
+        primary = accounts.get("zhipu") or next(iter(accounts.values()), {})
         return {
             **primary,
             "competition_id": self.competition_id,

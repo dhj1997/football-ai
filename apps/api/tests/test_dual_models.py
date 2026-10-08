@@ -62,7 +62,7 @@ def prediction(model_key: str, prediction_id: str) -> dict:
             "market": "1x2",
             "selection": "home",
             "model_confidence": 0.8,
-            "stake_fraction": 0.5 if model_key == "deepseek" else 0.25,
+            "stake_fraction": 0.5 if model_key == "zhipu" else 0.25,
             "reason": "测试执行",
             "reason_codes": [],
         },
@@ -97,7 +97,7 @@ def test_prediction_services_run_for_both_models() -> None:
     started: list[str] = []
     service = DualPredictionService(
         {
-            "deepseek": FakePredictionService("deepseek", started),
+            "zhipu": FakePredictionService("zhipu", started),
             "chatgpt": FakePredictionService("chatgpt", started),
         },
         "dual",
@@ -105,8 +105,8 @@ def test_prediction_services_run_for_both_models() -> None:
 
     results = asyncio.run(service.create(fixture(), {}))
 
-    assert {item["model_key"] for item in results} == {"deepseek", "chatgpt"}
-    assert set(started) == {"deepseek", "chatgpt"}
+    assert {item["model_key"] for item in results} == {"zhipu", "chatgpt"}
+    assert set(started) == {"zhipu", "chatgpt"}
 
 
 def test_dual_service_delegates_shared_context_preparation_to_primary() -> None:
@@ -121,7 +121,7 @@ def test_dual_service_delegates_shared_context_preparation_to_primary() -> None:
 
     service = DualPredictionService(
         {
-            "deepseek": PreparingService("deepseek", started),
+            "zhipu": PreparingService("zhipu", started),
             "chatgpt": PreparingService("chatgpt", started),
         },
         "dual",
@@ -140,7 +140,7 @@ def test_dual_service_delegates_shared_context_preparation_to_primary() -> None:
     assert result is context
     assert context["prepared_fixture"] == "dual-fixture"
     assert context["prediction_timestamp"] == "2099-08-27T10:00:00+00:00"
-    assert started == ["player-names", "prepare:deepseek"]
+    assert started == ["player-names", "prepare:zhipu"]
 
 
 def test_dual_models_assign_one_production_evidence_owner() -> None:
@@ -163,7 +163,7 @@ def test_dual_models_assign_one_production_evidence_owner() -> None:
     started: list[str] = []
     service = DualPredictionService(
         {
-            "deepseek": Service("deepseek", started),
+            "zhipu": Service("zhipu", started),
             "chatgpt": Service("chatgpt", started),
         },
         "dual",
@@ -172,14 +172,14 @@ def test_dual_models_assign_one_production_evidence_owner() -> None:
     results = asyncio.run(service.create(fixture(), {}))
 
     assert len(results) == 2
-    assert ownership == {"deepseek": True, "chatgpt": False}
+    assert ownership == {"zhipu": True, "chatgpt": False}
 
 
 def test_player_names_are_resolved_once_before_both_models() -> None:
     started: list[str] = []
     service = DualPredictionService(
         {
-            "deepseek": FakePredictionService("deepseek", started),
+            "zhipu": FakePredictionService("zhipu", started),
             "chatgpt": FakePredictionService("chatgpt", started),
         },
         "dual",
@@ -209,10 +209,10 @@ def test_live_ensemble_uses_registry_weights_and_keeps_poisson_baseline() -> Non
     class Registry:
         def champion(self, model_key: str) -> SimpleNamespace:
             assert model_key == "ensemble"
-            return SimpleNamespace(payload={"weights": {"deepseek": 0.1, "chatgpt": 0.2, "poisson": 0.7}})
+            return SimpleNamespace(payload={"weights": {"zhipu": 0.1, "chatgpt": 0.2, "poisson": 0.7}})
 
     service = DualPredictionService(
-        {"deepseek": Service("deepseek"), "chatgpt": Service("chatgpt")},
+        {"zhipu": Service("zhipu"), "chatgpt": Service("chatgpt")},
         "dual",
         model_registry_service=Registry(),
     )
@@ -253,7 +253,7 @@ def test_ensemble_annotation_does_not_mutate_saved_pre_match_prediction() -> Non
 
     repository = Repository()
     service = DualPredictionService(
-        {"deepseek": Service("deepseek", repository), "chatgpt": Service("chatgpt", repository)},
+        {"zhipu": Service("zhipu", repository), "chatgpt": Service("chatgpt", repository)},
         "dual",
     )
 
@@ -264,7 +264,7 @@ def test_ensemble_annotation_does_not_mutate_saved_pre_match_prediction() -> Non
 
 
 def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_path) -> None:
-    repository = PredictionRepository(str(tmp_path / "dual.db"), "dual", ("deepseek", "chatgpt"))
+    repository = PredictionRepository(str(tmp_path / "dual.db"), "dual", ("zhipu", "chatgpt"))
     repository.initialize()
     context = {
         "odds": {
@@ -276,14 +276,14 @@ def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_pat
     }
     services = {
         model_key: BankrollService(repository, PortfolioConfig()).configure(model_key, "dual")
-        for model_key in ("deepseek", "chatgpt")
+        for model_key in ("zhipu", "chatgpt")
     }
     dual = DualBankrollService(services, "dual")
-    deepseek_prediction = prediction("deepseek", "prediction-deepseek")
+    deepseek_prediction = prediction("zhipu", "prediction-deepseek")
     chatgpt_prediction = prediction("chatgpt", "prediction-chatgpt")
 
     def fixed_candidate(self, item, _fixture, _context):
-        score = {"deepseek": 0.80, "chatgpt": 0.90}[self.model_key]
+        score = {"zhipu": 0.80, "chatgpt": 0.90}[self.model_key]
         return candidate(self.model_key, item["id"], score)
 
     def forbidden_placement(self, *_args):
@@ -305,18 +305,18 @@ def test_bankroll_service_global_selection_creates_one_bet_and_execution(tmp_pat
     assert bets[0]["model_key"] == "chatgpt"
     assert bets[0]["candidate_score"] == 0.90
     assert len(repository.bet_executions(competition_id="dual")) == 1
-    assert repository.current_balance("deepseek", "dual") == 1000.0
+    assert repository.current_balance("zhipu", "dual") == 1000.0
     assert repository.current_balance("chatgpt", "dual") == 990.0
 
     selected = dual.select_portfolio_candidates(
-        [candidate("deepseek", "prediction-deepseek", 0.8), candidate("chatgpt", "prediction-chatgpt", 0.9), candidate("poisson", "prediction-poisson", 0.7)]
+        [candidate("zhipu", "prediction-deepseek", 0.8), candidate("chatgpt", "prediction-chatgpt", 0.9), candidate("poisson", "prediction-poisson", 0.7)]
     )
     assert len(selected) == 1
     assert selected[0].model_key == "chatgpt"
 
 
 def test_shadow_model_cannot_displace_or_create_simulated_bet(tmp_path) -> None:
-    repository = PredictionRepository(str(tmp_path / "shadow.db"), "dual", ("deepseek", "chatgpt"))
+    repository = PredictionRepository(str(tmp_path / "shadow.db"), "dual", ("zhipu", "chatgpt"))
     repository.initialize()
     context = {
         "odds": {
@@ -327,7 +327,7 @@ def test_shadow_model_cannot_displace_or_create_simulated_bet(tmp_path) -> None:
         }
     }
     deepseek = BankrollService(repository, PortfolioConfig()).configure(
-        "deepseek",
+        "zhipu",
         "dual",
         execution_mode="shadow",
     )
@@ -336,23 +336,23 @@ def test_shadow_model_cannot_displace_or_create_simulated_bet(tmp_path) -> None:
         "dual",
         execution_mode="active",
     )
-    services = {"deepseek": deepseek, "chatgpt": chatgpt}
+    services = {"zhipu": deepseek, "chatgpt": chatgpt}
     dual = DualBankrollService(services, "dual")
-    deepseek_prediction = prediction("deepseek", "prediction-deepseek-shadow")
+    deepseek_prediction = prediction("zhipu", "prediction-deepseek-shadow")
     chatgpt_prediction = prediction("chatgpt", "prediction-chatgpt-active")
 
     def fixed_candidate(self, item, _fixture, _context):
-        score = {"deepseek": 0.99, "chatgpt": 0.90}[self.model_key]
+        score = {"zhipu": 0.99, "chatgpt": 0.90}[self.model_key]
         return candidate(self.model_key, item["id"], score)
 
     for service in services.values():
         service.candidate_for_prediction = MethodType(fixed_candidate, service)
 
-    deepseek_transactions_before = repository.bankroll_transactions("deepseek", "dual")
+    deepseek_transactions_before = repository.bankroll_transactions("zhipu", "dual")
     assert deepseek.place_for_candidate(
         deepseek_prediction,
         fixture(),
-        candidate("deepseek", deepseek_prediction["id"], 0.99),
+        candidate("zhipu", deepseek_prediction["id"], 0.99),
     ) is None
 
     bets = dual.place_for_predictions(
@@ -362,10 +362,10 @@ def test_shadow_model_cannot_displace_or_create_simulated_bet(tmp_path) -> None:
     )
 
     assert [bet["model_key"] for bet in bets] == ["chatgpt"]
-    assert repository.bets(model_key="deepseek", competition_id="dual") == []
-    assert repository.bankroll_transactions("deepseek", "dual") == deepseek_transactions_before
+    assert repository.bets(model_key="zhipu", competition_id="dual") == []
+    assert repository.bankroll_transactions("zhipu", "dual") == deepseek_transactions_before
     assert all(
-        execution["model_key"] != "deepseek"
+        execution["model_key"] != "zhipu"
         for execution in repository.bet_executions(competition_id="dual")
     )
     assert deepseek.execution_for_prediction(

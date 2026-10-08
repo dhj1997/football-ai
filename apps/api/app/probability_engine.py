@@ -331,7 +331,7 @@ class TransparentProbabilityEngine:
                 fallbacks.append({"feature": name, "side": side, "reason": row.get("missing_reason") or "feature_missing"})
                 return None
             source = str(row.get("source") or "").casefold()
-            if any(marker in source for marker in ("deepseek", "chatgpt", "openai", "llm", "learned", "fitted", "odds", "market")):
+            if any(marker in source for marker in ("zhipu", "deepseek", "chatgpt", "openai", "llm", "learned", "fitted", "odds", "market")):
                 raise NoMLNumericPathError(f"Round 4 feature source rejected: {source}")
             if name in {"attack_strength", "defense_strength"} and not self.config.raw_strength_min <= value <= self.config.raw_strength_max:
                 fallbacks.append({"feature": name, "side": side, "reason": "feature_value_out_of_range"})

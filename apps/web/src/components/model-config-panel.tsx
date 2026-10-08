@@ -6,7 +6,7 @@ import { ErrorState, LoadingState, SectionHeader, StatusBadge } from "@/componen
 import { fetchRuntimeConfig, updateRuntimeConfig } from "@/lib/api";
 import type { ModelKey, RuntimeConfigResponse } from "@/lib/types";
 
-const modelKeys: ModelKey[] = ["deepseek", "chatgpt"];
+const modelKeys: ModelKey[] = ["zhipu", "chatgpt"];
 
 type ConfigDraft = {
   models: Record<ModelKey, { model: string; base_url: string; api_key: string }>;

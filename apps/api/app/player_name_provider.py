@@ -28,7 +28,7 @@ class PlayerNameTranslationBatch(BaseModel):
 class DeepSeekPlayerNameProvider:
     """Translate unresolved names through the already configured model service."""
 
-    source_name = "deepseek_transliteration"
+    source_name = "zhipu_transliteration"
 
     def __init__(
         self,
