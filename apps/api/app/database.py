@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import bindparam, create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.pool import StaticPool
@@ -4127,46 +4127,73 @@ class PredictionRepository:
     ) -> list[dict[str, Any]]:
         """Return the newest prediction per fixture/model with its cached fixture."""
 
-        clauses: list[str] = ["LOWER(p.phase) NOT LIKE 'live%'"]
-        parameters: dict[str, Any] = {}
-        for column, value in (
-            ("p.competition_id", competition_id),
-            ("p.model_key", model_key),
-            ("p.model_version", model_version),
-            ("f.fixture_date", fixture_date),
-            ("f.league_key", league_key),
-        ):
-            if value:
-                parameter = column.split(".")[-1]
-                clauses.append(f"{column} = :{parameter}")
-                parameters[parameter] = value
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        # 历史 payload 体量大且无界增长，必须流式读取：内存只保留每个分组最新一条。
-        groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        def build_where(model_alias: str, fixture_alias: str, params: dict[str, Any]) -> str:
+            clauses: list[str] = [f"LOWER({model_alias}.phase) NOT LIKE 'live%'"]
+            for column, value in (
+                (f"{model_alias}.competition_id", competition_id),
+                (f"{model_alias}.model_key", model_key),
+                (f"{model_alias}.model_version", model_version),
+                (f"{fixture_alias}.fixture_date", fixture_date),
+                (f"{fixture_alias}.league_key", league_key),
+            ):
+                if value:
+                    parameter = column.split(".")[-1]
+                    clauses.append(f"{column} = :{parameter}")
+                    params[parameter] = value
+            return f" WHERE {' AND '.join(clauses)}"
+
+        # payload 平均 186KB 且逐月累积，禁止整表载入：先按小列挑出每组最新 id
+        # （prompt_version 列与 payload ai.prompt_version 全表一致，2026-09-30 校验），
+        # 再只为选中的行取 payload。strategy 维度当前仅 baseline/v1，列分组与其等价。
+        group_params: dict[str, Any] = {}
+        group_where = build_where("p2", "f2", group_params)
+        outer_params: dict[str, Any] = {}
+        outer_where = build_where("p", "f", outer_params)
         with self.engine.connect() as connection:
-            rows = connection.execution_options(stream_results=True).execute(
-                text(
-                    "SELECT p.payload AS prediction_payload, f.payload AS fixture_payload "
-                    "FROM predictions p LEFT JOIN fixtures f ON f.id = p.fixture_id"
-                    f"{where} ORDER BY p.created_at DESC, p.id DESC"
-                ),
-                parameters,
-            ).mappings()
-            for row in rows:
-                prediction = json.loads(row["prediction_payload"])
-                if prompt_version and (prediction.get("ai") or {}).get("prompt_version") != prompt_version:
-                    continue
-                key = (
-                    str(prediction.get("fixture_id") or ""),
-                    str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"),
-                    str((prediction.get("experiment") or {}).get("strategy_id") or "baseline"),
-                    str((prediction.get("experiment") or {}).get("strategy_version") or "v1"),
+            picked_ids = [
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT p.id FROM predictions p "
+                        "LEFT JOIN fixtures f ON f.id = p.fixture_id "
+                        "JOIN ("
+                        "SELECT p2.fixture_id, p2.model_key, MAX(p2.created_at) AS max_created "
+                        "FROM predictions p2 LEFT JOIN fixtures f2 ON f2.id = p2.fixture_id"
+                        f"{group_where} "
+                        "GROUP BY p2.fixture_id, p2.model_key"
+                        ") g ON p.fixture_id = g.fixture_id AND p.model_key = g.model_key "
+                        "AND p.created_at = g.max_created"
+                        f"{outer_where} ORDER BY p.created_at DESC, p.id DESC"
+                    ),
+                    {**group_params, **outer_params},
                 )
-                if key not in groups:
-                    groups[key] = {
-                        "prediction": prediction,
-                        "fixture": json.loads(row["fixture_payload"]) if row.get("fixture_payload") else None,
-                    }
+            ]
+            groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+            for chunk_start in range(0, len(picked_ids), 500):
+                chunk = picked_ids[chunk_start : chunk_start + 500]
+                rows = connection.execute(
+                    text(
+                        "SELECT p.payload AS prediction_payload, f.payload AS fixture_payload "
+                        "FROM predictions p LEFT JOIN fixtures f ON f.id = p.fixture_id "
+                        "WHERE p.id IN :ids ORDER BY p.created_at DESC, p.id DESC"
+                    ).bindparams(bindparam("ids", expanding=True)),
+                    {"ids": chunk},
+                ).mappings()
+                for row in rows:
+                    prediction = json.loads(row["prediction_payload"])
+                    if prompt_version and (prediction.get("ai") or {}).get("prompt_version") != prompt_version:
+                        continue
+                    key = (
+                        str(prediction.get("fixture_id") or ""),
+                        str(prediction.get("model_key") or (prediction.get("ai") or {}).get("provider") or "deepseek"),
+                        str((prediction.get("experiment") or {}).get("strategy_id") or "baseline"),
+                        str((prediction.get("experiment") or {}).get("strategy_version") or "v1"),
+                    )
+                    if key not in groups:
+                        groups[key] = {
+                            "prediction": prediction,
+                            "fixture": json.loads(row["fixture_payload"]) if row.get("fixture_payload") else None,
+                        }
         return sorted(
             groups.values(),
             key=lambda item: (
