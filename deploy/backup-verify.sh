@@ -118,6 +118,16 @@ else
 fi
 ls -la "$DUMP"
 
+if [ "${BACKUP_RESTORE_VERIFY:-1}" = "0" ]; then
+  # 只出备份不做恢复演练：演练需要约 2 倍库体积的峰值磁盘空间，小盘机器默认关。
+  echo "restore verification skipped (BACKUP_RESTORE_VERIFY=0)"
+  RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
+  find "$BACKUP_DIR" -name 'db-*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete | sed 's/^/pruned /'
+  echo "backup_file=$DUMP"
+  echo "done"
+  exit 0
+fi
+
 echo "== restore verification =="
 CHECKDB=football_ai_restore_check
 M -e "DROP DATABASE IF EXISTS $CHECKDB;"

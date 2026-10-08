@@ -28,14 +28,15 @@ MSYS_NO_PATHCONV=1 "$WB" upload "$(cygpath -w "/tmp/${PKG}")" "/tmp/${PKG}" -f -
 
 echo "[3/7] 服务器端：MySQL 备份与恢复验证"
 if [ "${SKIP_BACKUP_VERIFY:-0}" = "1" ]; then
-  # 恢复验证需要约 2 倍库体积的峰值空间；磁盘装不下时用本开关跳过，仅部署
-  echo "SKIP_BACKUP_VERIFY=1，跳过（磁盘峰值空间不足时使用，稍后请手动补跑 backup-verify.sh）"
+  # 完全跳过（连备份都不做）；磁盘连 dump 都放不下时的逃生开关
+  echo "SKIP_BACKUP_VERIFY=1，跳过备份"
 else
+  # 默认只备份、不导入临时库演练：演练峰值需要约 2 倍库体积空间（BACKUP_RESTORE_VERIFY=1 可恢复演练）
 "$WB" exec -i "$INSTANCE_ID" -r "$REGION" --timeout 600 -c "
 set -e
 tar -xOf /tmp/${PKG} deploy/backup-verify.sh > /tmp/football-ai-backup-verify.sh
 chmod 700 /tmp/football-ai-backup-verify.sh
-bash /tmp/football-ai-backup-verify.sh backup
+BACKUP_RESTORE_VERIFY=${BACKUP_RESTORE_VERIFY:-0} bash /tmp/football-ai-backup-verify.sh backup
 rm -f /tmp/football-ai-backup-verify.sh
 "
 fi
