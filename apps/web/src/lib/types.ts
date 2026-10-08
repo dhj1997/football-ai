@@ -751,7 +751,7 @@ export interface FixtureDetail {
     evidence_sync: boolean;
     dongqiudi_sync?: boolean;
     dongqiudi_last_synced_at?: string | null;
-    deepseek?: boolean;
+    zhipu?: boolean;
     chatgpt?: boolean;
   };
   evidence_error?: string | null;

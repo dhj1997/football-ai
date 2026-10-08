@@ -750,7 +750,7 @@ function QuickResearchPanel({
   const report = readyDetail ? deriveMatchReport(readyDetail) : null;
   const primaryPrediction =
     readyDetail?.prediction ??
-    readyDetail?.predictions?.deepseek ??
+    readyDetail?.predictions?.zhipu ??
     readyDetail?.predictions?.chatgpt ??
     null;
   const dualPredictions = readyDetail?.predictions;
@@ -912,8 +912,8 @@ function QuickResearchPanel({
                   </div>
                 )}
 
-                {/* 双模型并列对比（若同时包含 deepseek 和 chatgpt） */}
-                {dualPredictions?.chatgpt && dualPredictions?.deepseek && (
+                {/* 双模型并列对比（若同时包含智谱GLM和chatgpt） */}
+                {dualPredictions?.chatgpt && dualPredictions?.zhipu && (
                   <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-800/80 pt-2.5">
                     <div className="rounded bg-pitch-950/70 p-2.5 border border-slate-800/60">
                       <span className="font-semibold text-sky-400 block mb-0.5">GPT-5.6 Sol</span>
@@ -924,7 +924,7 @@ function QuickResearchPanel({
                     <div className="rounded bg-pitch-950/70 p-2.5 border border-slate-800/60">
                       <span className="font-semibold text-purple-400 block mb-0.5">DeepSeek V3</span>
                       <span className="font-mono text-slate-200 text-xs">
-                        {outcomeText(dualPredictions.deepseek.predicted_outcome ?? dualPredictions.deepseek.forecast?.predicted_outcome)} · 主{Math.round(dualPredictions.deepseek.probabilities.home * 100)}% 平{Math.round(dualPredictions.deepseek.probabilities.draw * 100)}% 客{Math.round(dualPredictions.deepseek.probabilities.away * 100)}%
+                        {outcomeText(dualPredictions.zhipu.predicted_outcome ?? dualPredictions.zhipu.forecast?.predicted_outcome)} · 主{Math.round(dualPredictions.zhipu.probabilities.home * 100)}% 平{Math.round(dualPredictions.zhipu.probabilities.draw * 100)}% 客{Math.round(dualPredictions.zhipu.probabilities.away * 100)}%
                       </span>
                     </div>
                   </div>

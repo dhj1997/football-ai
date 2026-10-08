@@ -16,7 +16,7 @@ type ConfigDraft = {
 function draftFromConfig(config: RuntimeConfigResponse): ConfigDraft {
   return {
     models: {
-      deepseek: { model: config.models.deepseek.model, base_url: config.models.deepseek.base_url, api_key: "" },
+      zhipu: { model: config.models.zhipu.model, base_url: config.models.zhipu.base_url, api_key: "" },
       chatgpt: { model: config.models.chatgpt.model, base_url: config.models.chatgpt.base_url, api_key: "" },
     },
     portfolio: { ...config.portfolio },

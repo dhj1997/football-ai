@@ -380,19 +380,19 @@ export function getMockFixtureDetail(id: string): FixtureDetail {
     context,
     prediction: dsPred,
     predictions: {
-      deepseek: dsPred,
+      zhipu: dsPred,
       chatgpt: gptPred,
     },
     bet: betSample,
     bets: {
-      deepseek: betSample,
+      zhipu: betSample,
       chatgpt: null,
     },
     capabilities: {
       evidence_sync: true,
       dongqiudi_sync: true,
       dongqiudi_last_synced_at: nowIso,
-      deepseek: true,
+      zhipu: true,
       chatgpt: true,
     },
   };
@@ -871,7 +871,7 @@ export function getMockModelEvaluation(): ModelEvaluationResponse {
         sample_count: 180,
         confidence: "高",
         models: {
-          deepseek: { status: "active", sample_count: 90, brier: 0.182, log_loss: 0.538, rps: 0.168, ece: 0.042, clv: 0.038, confidence: "高" },
+          zhipu: { status: "active", sample_count: 90, brier: 0.182, log_loss: 0.538, rps: 0.168, ece: 0.042, clv: 0.038, confidence: "高" },
           chatgpt: { status: "active", sample_count: 90, brier: 0.194, log_loss: 0.561, rps: 0.178, ece: 0.051, clv: 0.029, confidence: "高" },
         },
       },
@@ -880,7 +880,7 @@ export function getMockModelEvaluation(): ModelEvaluationResponse {
         sample_count: 175,
         confidence: "高",
         models: {
-          deepseek: { status: "active", sample_count: 88, brier: 0.187, log_loss: 0.545, rps: 0.172, ece: 0.046, clv: 0.035, confidence: "高" },
+          zhipu: { status: "active", sample_count: 88, brier: 0.187, log_loss: 0.545, rps: 0.172, ece: 0.046, clv: 0.035, confidence: "高" },
           chatgpt: { status: "active", sample_count: 87, brier: 0.201, log_loss: 0.572, rps: 0.183, ece: 0.055, clv: 0.026, confidence: "高" },
         },
       },
@@ -896,7 +896,7 @@ export function getMockModelEvaluation(): ModelEvaluationResponse {
 export function getMockRuntimeConfig(): RuntimeConfigResponse {
   return {
     models: {
-      deepseek: {
+      zhipu: {
         key: "zhipu",
         label: "智谱GLM",
         model: "deepseek-chat",
