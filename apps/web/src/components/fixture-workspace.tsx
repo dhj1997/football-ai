@@ -39,7 +39,7 @@ import {
   formatHandicapSide,
 } from "@/lib/handicap";
 import { to_chinese_player_name } from "@/lib/player-names";
-import { canCreatePrediction, deriveMatchReport } from "@/lib/match-report";
+import { canCreatePrediction } from "@/lib/match-report";
 import { OperationsPanel } from "@/components/operations-panel";
 import { RecentFormCompare } from "@/components/recent-form-compare";
 import { ModelConfigPanel } from "@/components/model-config-panel";
@@ -159,27 +159,6 @@ const rowResultToneClass: Record<string, string> = {
   draw: "text-slate-400",
   pending: "text-slate-500",
 };
-const factorToneClass: Record<string, string> = {
-  home: "text-rose-400",
-  away: "text-emerald-400",
-  neutral: "text-slate-400",
-  warning: "text-amber-400",
-};
-const riskToneVariant: Record<string, StatusVariant> = {
-  waiting: "neutral",
-  danger: "danger",
-  warning: "partial",
-  ready: "ready",
-};
-// 联赛分组头固定色点（设计稿：epl 蓝 / 西甲 amber / 中超 rose / 其他 slate）。
-const leagueDotClass: Record<string, string> = {
-  epl: "bg-blue-500",
-  laliga: "bg-amber-500",
-  csl: "bg-rose-500",
-};
-const leagueDotFallback = "bg-slate-500";
-const leagueDot = (key: string) => leagueDotClass[key] ?? leagueDotFallback;
-
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 function handicapRecommendation(
   settlement: NonNullable<Prediction["asian_handicap"]>["home_settlement"],
@@ -739,315 +718,91 @@ function QuickResearchPanel({
 }) {
   if (!fixture)
     return (
-      <EmptyState
-        icon={<Database size={22} aria-hidden="true" />}
-        className="min-h-48"
-      >
-        <strong className="text-sm font-semibold text-slate-200">
-          选择一场比赛开始研究
-        </strong>
+      <EmptyState icon={<Database size={22} aria-hidden="true" />} className="min-h-48">
+        <strong className="text-sm font-semibold text-slate-200">选择一场比赛开始研究</strong>
         <span className="text-xs">比赛摘要将在这里显示</span>
       </EmptyState>
     );
   const readyDetail = detail?.fixture.id === fixture.id ? detail : null;
-  const report = readyDetail ? deriveMatchReport(readyDetail) : null;
-  const primaryPrediction =
-    readyDetail?.prediction ??
-    readyDetail?.predictions?.zhipu ??
-    readyDetail?.predictions?.chatgpt ??
-    null;
-  const dualPredictions = readyDetail?.predictions;
-  const evidenceReady =
-    report?.evidenceReady ?? fixture.evidence_summary?.ready_count ?? 0;
-  const evidenceTotal =
-    report?.evidenceTotal ?? fixture.evidence_summary?.total_count ?? 4;
-  const risk = !report
-    ? { label: "读取中", tone: "waiting" }
-    : report.evidenceQuality < 0.67
-      ? { label: "谨慎", tone: "danger" }
-      : report.evidenceQuality < 1 || report.agreement === null
-        ? { label: "需复核", tone: "warning" }
-        : report.agreement < 0.78
-          ? { label: "模型分歧", tone: "danger" }
-          : { label: "可研究", tone: "ready" };
-  const probability = primaryPrediction?.probabilities ?? report?.probabilities;
-  const maxProbability = probability
-    ? Math.max(probability.home, probability.draw, probability.away)
-    : 0;
+  const modelKeys: ModelKey[] = ["chatgpt", "zhipu"];
   return (
-    <Card className="flex flex-col gap-5 p-6" aria-label="快速研究摘要">
-      <header className="space-y-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className={eyebrowClass}>QUICK READOUT</span>
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-300">
-            <i
-              aria-hidden="true"
-              className={`h-1.5 w-1.5 rounded-full ${leagueDot(fixture.league_key)}`}
-            />
-            {fixture.league.name}
-          </span>
+    <Card className="space-y-4 p-5" aria-label="快速研究摘要">
+      <header className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-bold text-white">快速研究</h2>
+          <span className="text-xs text-slate-400">{fixture.league.name}</span>
         </div>
-        <h2 className="text-xl font-bold text-white">快速研究</h2>
-        <h3 className="text-base sm:text-lg font-bold text-white">
-          {fixture.home_team.name}{" "}
-          <i className="px-0.5 text-xs font-normal not-italic text-slate-500">vs</i>{" "}
-          {fixture.away_team.name}
+        <h3 className="text-sm font-bold text-slate-100">
+          {fixture.home_team.name} vs {fixture.away_team.name}
         </h3>
-        <p className="font-mono text-xs tabular-nums text-slate-400">
-          {formatKickoff(fixture.kickoff)} · {fixture.venue || "场地待定"}
+        <p className="text-xs text-slate-500">
+          {fixtureDateLabel(fixtureDateKey(fixture)).label} · {formatKickoff(fixture.kickoff)}
         </p>
       </header>
-      {report ? (
-        <>
-          {/* AI 预测结果核心展示块（不受下注状态限制，只要有预测就如实展现） */}
-          <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-3.5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.6)]" />
-                <span className="text-xs font-bold uppercase tracking-wider text-blue-300">
-                  AI 智能推演预测
-                </span>
-              </div>
-              <span className="inline-flex items-center rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 font-mono text-xs font-semibold text-blue-300">
-                {primaryPrediction?.model_version ||
-                  (primaryPrediction?.model_key === "zhipu"
-                    ? "DeepSeek V3"
-                    : primaryPrediction?.model_key === "chatgpt"
-                      ? "GPT-5.6 Sol"
-                      : "多模型推演")}
-              </span>
-            </div>
-
-            {primaryPrediction ? (
-              <>
-                {/* 预测赛果、进球与置信度 */}
-                <div className="grid grid-cols-3 gap-2 rounded-lg border border-slate-800 bg-pitch-950/80 p-3 text-center">
-                  <div>
-                    <span className="block text-xs text-slate-400">推演预测</span>
-                    <strong className="mt-1 block text-base font-bold text-white">
-                      {outcomeText(
-                        primaryPrediction.forecast?.predicted_outcome ??
-                          primaryPrediction.predicted_outcome ??
-                          report.consensusOutcome,
-                      )}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="block text-xs text-slate-400">预期进球 xG</span>
-                    <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-slate-200">
-                      {primaryPrediction.expected_goals
-                        ? `${primaryPrediction.expected_goals.home.toFixed(2)} : ${primaryPrediction.expected_goals.away.toFixed(2)}`
-                        : "-"}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="block text-xs text-slate-400">置信度</span>
-                    <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-emerald-400">
-                      {primaryPrediction.forecast_confidence
-                        ? percent(primaryPrediction.forecast_confidence)
-                        : primaryPrediction.confidence || "良好"}
-                    </strong>
-                  </div>
+      {readyDetail ? (
+        <div className="space-y-3">
+          {modelKeys.map((key) => {
+            const prediction = readyDetail.predictions?.[key] ??
+              (readyDetail.prediction?.model_key === key ? readyDetail.prediction : null);
+            const linkedBet = readyDetail.bets?.[key] ??
+              (readyDetail.bet?.model_key === key ? readyDetail.bet : null);
+            const bet = linkedBet?.prediction_id === prediction?.id ? linkedBet : null;
+            const forecast = prediction?.asian_handicap_forecast ?? prediction?.forecast?.asian_handicap;
+            const homeCover = forecast?.home_cover_probability;
+            const awayCover = forecast?.away_cover_probability;
+            const handicapAvailable = forecast?.available !== false && forecast?.line != null &&
+              typeof homeCover === "number" && typeof awayCover === "number";
+            const handicapSide = (awayCover ?? 0) > (homeCover ?? 0) ? "away" : "home";
+            const handicapTie = homeCover === awayCover;
+            const execution = prediction?.execution;
+            const unplacedStatus = execution?.status === "bet"
+              ? "candidate"
+              : execution?.status ?? (prediction?.decision?.status === "bet" ? "candidate" : prediction?.decision?.status);
+            const betStatus = bet
+              ? bet.status === "voided" ? "已作废" : bet.status === "settled" ? "已结算" : "已模拟下注 · 未结算"
+              : executionStatusLabel(unplacedStatus, execution?.reason_codes ?? prediction?.decision?.reason_codes ?? [], prediction?.ai?.status, prediction?.decision?.model_recommendation_status);
+            return (
+              <section key={key} className="space-y-2 rounded-xl border border-slate-800 bg-pitch-950 p-3" aria-label={`${key === "chatgpt" ? "GPT" : "智谱GLM"}研究与下注`}>
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <strong className="text-slate-200">{key === "chatgpt" ? "GPT" : "智谱GLM"}</strong>
+                  <span className="font-semibold text-slate-100">
+                    {prediction ? `${prediction.ai?.status === "completed" ? "胜平负" : "基础概率"} · ${outcomeText(prediction.forecast?.predicted_outcome ?? prediction.predicted_outcome)}` : "暂无预测"}
+                  </span>
                 </div>
-
-                {/* 胜平负三项概率条 */}
-                {probability && (
-                  <div className="space-y-1.5">
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
-                      <span className="text-slate-400">胜平负概率</span>
-                      <b className="font-mono font-bold tabular-nums text-slate-200">
-                        主胜 {Math.round(probability.home * 100)}% · 平{" "}
-                        {Math.round(probability.draw * 100)}% · 客胜{" "}
-                        {Math.round(probability.away * 100)}%
-                      </b>
-                    </div>
-                    <div
-                      className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800"
-                      aria-hidden="true"
-                    >
-                      <i
-                        className={`h-full ${probability.home === maxProbability ? "bg-rose-500" : "bg-blue-600"}`}
-                        style={{ width: `${probability.home * 100}%` }}
-                      />
-                      <i
-                        className={`h-full ${probability.draw === maxProbability ? "bg-rose-500" : "bg-slate-600"}`}
-                        style={{ width: `${probability.draw * 100}%` }}
-                      />
-                      <i
-                        className={`h-full ${probability.away === maxProbability ? "bg-rose-500" : "bg-amber-600"}`}
-                        style={{ width: `${probability.away * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* 波胆预测比分 */}
-                {primaryPrediction.top_scores && primaryPrediction.top_scores.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="text-slate-400">比分预测:</span>
-                    {primaryPrediction.top_scores.slice(0, 3).map((item) => (
-                      <span
-                        key={item.score}
-                        className="inline-flex items-center gap-1 rounded bg-pitch-900 border border-slate-800 px-2 py-0.5 font-mono text-xs font-bold text-slate-200"
-                      >
-                        {item.score}
-                        <small className="font-normal text-slate-400">
-                          {percent(item.probability)}
-                        </small>
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* AI 核心研判摘要 */}
-                {(primaryPrediction.analysis_summary ||
-                  primaryPrediction.model_recommendation?.reason ||
-                  primaryPrediction.recommendation?.reason) && (
-                  <div className="rounded-lg bg-pitch-950/90 border border-slate-800/80 p-3 text-xs leading-relaxed text-slate-200">
-                    <span className="block font-semibold text-blue-300 mb-1">
-                      AI 研判要点:
-                    </span>
-                    <p className="line-clamp-4">
-                      {primaryPrediction.analysis_summary ||
-                        primaryPrediction.model_recommendation?.reason ||
-                        primaryPrediction.recommendation?.reason}
+                <p className="text-xs text-slate-400">
+                  让球：{handicapAvailable
+                    ? handicapTie ? "双方覆盖概率相同"
+                      : `${formatHandicapSide(forecast!.line!, handicapSide, fixture[`${handicapSide}_team`].name)} · 覆盖 ${percent(handicapSide === "home" ? homeCover! : awayCover!)}`
+                    : "暂无可用判断"}
+                </p>
+                <div className="border-t border-slate-800 pt-2 text-xs" aria-label="模拟下注情况">
+                  <strong className={bet && bet.status !== "voided" ? "text-emerald-400" : "text-slate-400"}>{betStatus}</strong>
+                  {bet ? (
+                    <p className="mt-1 text-slate-200">
+                      {betSelectionText(bet.market, bet.selection, bet.handicap_line)} · 金额 {bet.stake.toFixed(2)} · 赔率 {bet.odds.toFixed(2)}
                     </p>
-                  </div>
-                )}
-
-                {/* 双模型并列对比（若同时包含智谱GLM和chatgpt） */}
-                {dualPredictions?.chatgpt && dualPredictions?.zhipu && (
-                  <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-800/80 pt-2.5">
-                    <div className="rounded bg-pitch-950/70 p-2.5 border border-slate-800/60">
-                      <span className="font-semibold text-sky-400 block mb-0.5">GPT-5.6 Sol</span>
-                      <span className="font-mono text-slate-200 text-xs">
-                        {outcomeText(dualPredictions.chatgpt.predicted_outcome ?? dualPredictions.chatgpt.forecast?.predicted_outcome)} · 主{Math.round(dualPredictions.chatgpt.probabilities.home * 100)}% 平{Math.round(dualPredictions.chatgpt.probabilities.draw * 100)}% 客{Math.round(dualPredictions.chatgpt.probabilities.away * 100)}%
-                      </span>
-                    </div>
-                    <div className="rounded bg-pitch-950/70 p-2.5 border border-slate-800/60">
-                      <span className="font-semibold text-purple-400 block mb-0.5">DeepSeek V3</span>
-                      <span className="font-mono text-slate-200 text-xs">
-                        {outcomeText(dualPredictions.zhipu.predicted_outcome ?? dualPredictions.zhipu.forecast?.predicted_outcome)} · 主{Math.round(dualPredictions.zhipu.probabilities.home * 100)}% 平{Math.round(dualPredictions.zhipu.probabilities.draw * 100)}% 客{Math.round(dualPredictions.zhipu.probabilities.away * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="rounded-lg bg-pitch-950/60 border border-slate-800/60 p-3 text-center text-xs text-slate-400">
-                <p>当前比赛尚未生成详细 AI 推演</p>
-                <Link
-                  href={`/matches/${encodeURIComponent(fixture.id)}`}
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-400 hover:text-blue-300"
-                >
-                  进入比赛详情一键推演
-                  <ChevronRight size={14} aria-hidden="true" />
-                </Link>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-3 gap-3 rounded-xl border border-slate-800 bg-pitch-950 p-3.5">
-            <div className="min-w-0 text-center">
-              <small className="block text-xs text-slate-400">模型共识</small>
-              <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
-                {report.consensusOutcome === "home"
-                  ? "主胜"
-                  : report.consensusOutcome === "draw"
-                    ? "平局"
-                    : report.consensusOutcome === "away"
-                      ? "客胜"
-                      : "待生成"}
-              </strong>
-              <span className="mt-0.5 block text-xs text-slate-400">
-                {report.models.length > 1
-                  ? report.consensus.includes("一致")
-                    ? "双模型同向"
-                    : "方向分歧"
-                  : report.models.length
-                    ? "单模型"
-                    : "无模型结果"}
-              </span>
-            </div>
-            <div className="min-w-0 text-center">
-              <small className="block text-xs text-slate-400">一致度</small>
-              <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
-                {report.agreement === null ? "-" : percent(report.agreement)}
-              </strong>
-              <span className="mt-0.5 block text-xs text-slate-400">模型概率差</span>
-            </div>
-            <div className="min-w-0 text-center">
-              <small className="block text-xs text-slate-400">证据质量</small>
-              <strong className="mt-1 block font-mono text-base font-bold tabular-nums text-white">
-                {evidenceReady}/{evidenceTotal}
-              </strong>
-              <span className="mt-0.5 block text-xs text-slate-400">
-                {percent(report.evidenceQuality)} 已就绪
-              </span>
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {report.factors.slice(0, 3).map((factor) => (
-              <div key={factor.label} className="min-w-0">
-                <small className="block text-xs text-slate-400">{factor.label}</small>
-                <strong className="mt-0.5 block truncate text-sm font-semibold text-white">
-                  {factor.value}
-                </strong>
-                <span className={`mt-0.5 block text-xs ${factorToneClass[factor.tone]}`}>
-                  {factor.conclusion}
-                </span>
-              </div>
-            ))}
-            <div className="min-w-0">
-              <small className="block text-xs text-slate-400">市场观察</small>
-              <strong className="mt-0.5 block text-sm font-semibold text-white">
-                {report.marketWatch}
-              </strong>
-              <span
-                className={`mt-0.5 block text-xs ${readyDetail?.context.odds ? "text-slate-300" : "text-amber-400"}`}
-              >
-                {readyDetail?.context.odds ? "已纳入判断" : "不使用估算"}
-              </span>
-            </div>
-          </div>
-          <div
-            className={`flex items-center justify-center rounded-xl border p-4 ${
-              risk.tone === "danger"
-                ? "border-rose-500/20 bg-rose-500/10"
-                : risk.tone === "warning"
-                  ? "border-amber-500/20 bg-amber-500/10"
-                  : risk.tone === "ready"
-                    ? "border-emerald-500/20 bg-emerald-500/10"
-                    : "border-slate-700 bg-slate-800/30"
-            }`}
-          >
-            <StatusBadge variant={riskToneVariant[risk.tone]}>{risk.label}</StatusBadge>
-          </div>
-        </>
-      ) : (
-        <div className="grid grid-cols-2 gap-2" aria-label="正在读取比赛摘要">
-          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
-          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
-          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
-          <i className="h-14 animate-pulse rounded-lg bg-pitch-800" />
+                  ) : (
+                    <p className="mt-1 truncate text-slate-500" title={execution?.reason ?? prediction?.decision?.reason}>
+                      {execution?.reason ?? prediction?.decision?.reason ?? "尚无实际下注记录"}
+                    </p>
+                  )}
+                </div>
+              </section>
+            );
+          })}
         </div>
+      ) : (
+        <LoadingState className="border-0 bg-transparent">正在读取研究摘要</LoadingState>
       )}
-      <footer className="mt-auto space-y-3 border-t border-slate-800 pt-4">
-        <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
-          <Database size={13} aria-hidden="true" />
-          TheSportsDB · 懂球帝
-        </span>
-        <Link
-          href={`/matches/${encodeURIComponent(fixture.id)}`}
-          className={ctaButtonClass}
-        >
-          打开完整分析
-          <ChevronRight size={16} aria-hidden="true" />
+      <footer className="border-t border-slate-800 pt-3">
+        <Link href={`/matches/${encodeURIComponent(fixture.id)}`} className={ctaButtonClass}>
+          查看比赛详情 <ChevronRight size={16} aria-hidden="true" />
         </Link>
       </footer>
     </Card>
   );
 }
+
 
 function ScoreCenterHome({
   fixtures,
@@ -2477,15 +2232,26 @@ export function ProbabilityPanel({
       row.market === decision?.considered_market &&
       row.selection === decision?.considered_selection,
   );
-  const executionStatus =
-    execution?.status ?? (currentBet ? "bet" : decision?.status);
+  const reportedStatus = execution?.status ?? decision?.status;
+  const executionStatus = currentBet
+    ? "bet"
+    : reportedStatus === "bet" ? "candidate" : reportedStatus;
   const executionReasons =
     execution?.reason_codes ?? decision?.reason_codes ?? [];
-  const executionLabel = executionStatusLabel(
-    executionStatus,
-    executionReasons,
-    prediction.ai?.status,
-    decision?.model_recommendation_status,
+  const executionLabel = currentBet?.status === "voided"
+    ? "模拟单已作废"
+    : currentBet?.status === "settled"
+      ? "模拟单已结算"
+      : executionStatusLabel(
+          executionStatus,
+          executionReasons,
+          prediction.ai?.status,
+          decision?.model_recommendation_status,
+        );
+  const candidateChanged = currentBet && decision?.status === "bet" && (
+    currentBet.market !== decision.market ||
+    currentBet.selection !== decision.selection ||
+    currentBet.odds !== decision.price
   );
   return (
     <Card className="space-y-4 p-4" aria-labelledby={headingId}>
@@ -2864,7 +2630,7 @@ export function ProbabilityPanel({
               </dd>
             </div>
             <div>
-              <dt className="text-[11px] text-slate-500">赔率候选</dt>
+              <dt className="text-[11px] text-slate-500">当前赔率候选</dt>
               <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
                 {advisedMarket
                   ? `${marketText(advisedMarket.market)} · ${selectionWithHandicap(advisedMarket.selection, advisedMarket.line)}`
@@ -2898,7 +2664,7 @@ export function ProbabilityPanel({
       {currentBet && (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
           <span className="block text-[11px] font-medium text-emerald-400/90">
-            本次模拟仓位
+            实际模拟下注
           </span>
           <strong className="mt-0.5 block font-mono text-sm font-bold tabular-nums text-emerald-300">
             {betSelectionText(
@@ -2916,6 +2682,11 @@ export function ProbabilityPanel({
                 ? "未结算"
                 : `${currentBet.settlement_result ?? "已结算"} · 盈亏 ${currentBet.net_profit?.toFixed(2) ?? "-"}`}
           </small>
+          {candidateChanged && (
+            <p className="mt-2 text-xs text-amber-400">
+              当前赔率候选已变化，实际下注以这笔模拟单为准。
+            </p>
+          )}
         </div>
       )}
       {prediction.asian_handicap && (
@@ -3633,10 +3404,8 @@ function modelTabInvestmentLabel(
   prediction: Prediction,
   bet: SimulatedBet | null,
 ) {
-  if (prediction.execution?.status === "bet")
-    return bet
-      ? `已执行 ${betSelectionText(bet.market, bet.selection, bet.handicap_line)}`
-      : `已执行 ${marketText(prediction.decision?.market)} · ${selectionText(prediction.decision?.selection)}`;
+  if (bet?.prediction_id === prediction.id)
+    return `${bet.status === "voided" ? "已作废" : "已执行"} ${betSelectionText(bet.market, bet.selection, bet.handicap_line)}`;
   if (prediction.model_recommendation?.status === "bet")
     return `模型建议 ${marketText(prediction.model_recommendation.market)} · ${selectionText(prediction.model_recommendation.selection)}`;
   if (prediction.model_recommendation?.status === "no_bet") return "模型不下注";

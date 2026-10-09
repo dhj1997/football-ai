@@ -119,7 +119,7 @@ export function PerformanceDashboard() {
       const [summary, betData, decisionData, strategyData, metricData] =
         await Promise.all([
           fetchBankroll(),
-          fetchBets(selectedModel),
+          fetchBets(),
           fetchDecisionAudits(query, "all"),
           fetchStrategyPerformance(query),
           fetchPredictionMetrics(query, selectedModel),
@@ -144,7 +144,7 @@ export function PerformanceDashboard() {
     const query = metricQuery(filters);
     void Promise.all([
       fetchBankroll(),
-      fetchBets(selectedModel),
+      fetchBets(),
       fetchDecisionAudits(query, "all"),
       fetchStrategyPerformance(query),
       fetchPredictionMetrics(query, selectedModel),
@@ -368,7 +368,9 @@ export function PerformanceDashboard() {
           />
           <DecisionAuditTable decisions={visibleDecisions} />
           <DualDisagreement decisions={dualDecisions} />
-          <ClvTracker bets={visibleBets} />
+          <ClvTracker
+            bets={visibleBets.filter((bet) => bet.model_key === selectedModel)}
+          />
           <BetHistory bets={visibleBets} />
           <SettlementHistory metrics={metrics} />
         </>
@@ -1334,15 +1336,35 @@ function EquityCurve({ points }: { points: BankrollSummary["equity_curve"] }) {
   );
 }
 
-function BetHistory({ bets }: { bets: SimulatedBet[] }) {
+function BetHistory({ bets: allBets }: { bets: SimulatedBet[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [modelFilter, setModelFilter] = useState<ModelKey | "all">("all");
+  const bets = allBets.filter(
+    (bet) => modelFilter === "all" || bet.model_key === modelFilter,
+  );
   return (
-    <section className={tableSectionClasses}>
+    <section className={tableSectionClasses} aria-label="模拟下注明细">
       <SectionHeader
         eyebrow="SIMULATED LEDGER"
         title="模拟下注明细"
-        meta={`${bets.length} 笔`}
+        meta={`${modelFilter === "all" ? "全部模型" : modelLabel(modelFilter)} · ${bets.length} 笔`}
       />
+      <label className="flex items-center gap-2 text-xs text-slate-400">
+        下注模型
+        <select
+          aria-label="下注明细模型筛选"
+          className="rounded-lg border border-slate-700 bg-pitch-950 px-3 py-2 text-slate-200"
+          value={modelFilter}
+          onChange={(event) => {
+            setModelFilter(event.target.value as ModelKey | "all");
+            setExpandedId(null);
+          }}
+        >
+          <option value="all">全部模型</option>
+          <option value="chatgpt">GPT</option>
+          <option value="zhipu">智谱GLM</option>
+        </select>
+      </label>
       <ExportButton
         filename="模拟下注.csv"
         label="下注"
@@ -1350,6 +1372,8 @@ function BetHistory({ bets }: { bets: SimulatedBet[] }) {
           比赛: `${bet.home_team} vs ${bet.away_team}`,
           日期: bet.fixture_date,
           联赛: bet.league_key,
+          下注模型: modelLabel(bet.model_key, bet.model_version),
+          模型版本: bet.model_version,
           市场: bet.market,
           选择: bet.selection,
           让球线: bet.handicap_line ?? "",
@@ -1984,7 +2008,7 @@ function modelLabel(
 ) {
   const key = value || version?.split(":", 1)[0];
   return key === "chatgpt"
-    ? "GPT-5.6 Sol"
+    ? "GPT"
     : key === "zhipu"
       ? "智谱GLM"
       : key || "模型未知";
@@ -1992,11 +2016,13 @@ function modelLabel(
 function executionLabel(value: DecisionAudit["execution_status"]) {
   return value === "bet"
     ? "已下注"
-    : value === "no_bet"
-      ? "未下注"
-      : value === "insufficient_data"
-        ? "数据不足"
-        : "历史未记录";
+    : value === "candidate"
+      ? "等待模拟执行"
+      : value === "no_bet"
+        ? "未下注"
+        : value === "insufficient_data"
+          ? "数据不足"
+          : "历史未记录";
 }
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {

@@ -591,7 +591,7 @@ export interface Prediction {
     real_money_execution: false;
   };
   execution?: {
-    status: "bet" | "no_bet" | "insufficient_data";
+    status: "bet" | "candidate" | "no_bet" | "insufficient_data";
     reason_codes: string[];
     reason: string;
     bet_id: string | null;
@@ -685,7 +685,7 @@ export interface DecisionAudit {
   stake_fraction: number;
   reason_codes: string[];
   reason: string;
-  execution_status: "bet" | "no_bet" | "insufficient_data" | "unknown";
+  execution_status: "bet" | "candidate" | "no_bet" | "insufficient_data" | "unknown";
   execution_reason: string;
   bet_id: string | null;
   model_recommendation_status: "bet" | "no_bet" | null;
