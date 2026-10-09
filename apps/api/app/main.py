@@ -250,6 +250,7 @@ request_metrics = MetricsRegistry(window_size=500)
 # 30 秒内重复打开同一比赛直接命中，避免重复全表扫描与重算。
 _fixture_detail_cache: dict[str, tuple[float, dict]] = {}
 FIXTURE_DETAIL_CACHE_TTL_SECONDS = 30.0
+FIXTURE_TEAM_DATA_TIMEOUT_SECONDS = 2.0
 
 
 def _invalidate_fixture_detail_cache(fixture_id: str | None = None) -> None:
@@ -714,7 +715,11 @@ async def _ensure_fixture_team_data(fixture: dict) -> dict:
     if not callable(enrich):
         return fixture
     try:
-        enriched_rows = await enrich([fixture], max_teams=2)
+        # Optional provider data must not hold up the quick research view.
+        enriched_rows = await asyncio.wait_for(
+            enrich([fixture], max_teams=2),
+            timeout=FIXTURE_TEAM_DATA_TIMEOUT_SECONDS,
+        )
     except Exception:
         return fixture
     enriched = enriched_rows[0] if enriched_rows else fixture

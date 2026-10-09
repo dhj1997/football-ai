@@ -17,8 +17,7 @@ import type { DateFilter, FixtureLeagueFilter } from "@/lib/types";
 import { forwardUpstream, gatewayError, webDemoModeEnabled } from "@/lib/server-proxy";
 
 const apiBase = (process.env.API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
-// These read-only reports scan settlement/prediction tables and can take
-// longer than the short 4s budget used by interactive fixture mutations.
+// Reports and fixture detail can take longer than the short default budget.
 const reportReadPaths = new Set([
   "api/bankroll",
   "api/bets",
@@ -109,6 +108,12 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const { path } = await context.params;
   const pathStr = path.join("/");
   const target = `${apiBase}/${pathStr}${request.nextUrl.search}`;
+  const fixtureDetailRead =
+    path.length === 3 && path[0] === "api" && path[1] === "fixtures" && path[2] !== "history";
+  const timeoutMs =
+    request.method === "GET" && (reportReadPaths.has(pathStr) || fixtureDetailRead)
+      ? 30_000
+      : 4000;
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("content-length");
@@ -120,9 +125,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       headers,
       body,
       cache: "no-store",
-      signal: AbortSignal.timeout(
-        request.method === "GET" && reportReadPaths.has(pathStr) ? 30_000 : 4000,
-      ),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     return forwardUpstream(response);

@@ -813,6 +813,51 @@ def test_fixture_detail_only_applies_cached_player_names(monkeypatch) -> None:
     assert "Unknown Forward" not in str(payload)
 
 
+def test_quick_research_survives_slow_optional_team_data(monkeypatch) -> None:
+    import asyncio
+
+    fixture = seed_real_fixture("api-slow-team-data", 132)
+    cancelled = False
+
+    async def slow_enrich(_fixtures, max_teams=10):
+        nonlocal cancelled
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled = True
+
+    monkeypatch.setattr(schedule_provider, "enrich_fixtures", slow_enrich)
+    monkeypatch.setattr(main_module, "FIXTURE_TEAM_DATA_TIMEOUT_SECONDS", 0.01)
+
+    response = client.get(f"/api/fixtures/{fixture['id']}")
+
+    assert response.status_code == 200
+    assert cancelled
+    assert response.json()["fixture"]["id"] == fixture["id"]
+    assert response.json()["context"]["teams"]["home"]["name"] == fixture["home_team"]["name"]
+    assert not repository.fixture(fixture["id"]).get("free_team_data")
+
+
+def test_quick_research_persists_timely_optional_team_data(monkeypatch) -> None:
+    fixture = seed_real_fixture("api-ready-team-data", 133)
+    team_data = {
+        side: {"profile": {"name": fixture[f"{side}_team"]["name"], "city": "测试城市"}, "squad": []}
+        for side in ("home", "away")
+    }
+
+    async def ready_enrich(fixtures, max_teams=10):
+        assert max_teams == 2
+        return [{**fixtures[0], "free_team_data": team_data}]
+
+    monkeypatch.setattr(schedule_provider, "enrich_fixtures", ready_enrich)
+
+    response = client.get(f"/api/fixtures/{fixture['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["context"]["teams"]["home"]["city"] == "测试城市"
+    assert repository.fixture(fixture["id"])["free_team_data"] == team_data
+
+
 def test_fixture_detail_does_not_sync_missing_evidence(monkeypatch) -> None:
     fixture = seed_real_fixture("api-auto-evidence", 125)
     fixture["status"] = "scheduled"
