@@ -94,8 +94,8 @@ Copy-Item .env.example .env
 - `ZHIPU_MODEL`：默认 `glm-5.3-flash`。
 - `ZHIPU_BASE_URL`：默认 `https://open.bigmodel.cn/api/coding/paas/v4`（智谱 OpenAI 兼容端点）。
 - `ZHIPU_TIMEOUT_SECONDS`、`ZHIPU_MAX_RETRIES`、`ZHIPU_MAX_TOKENS`：模型超时、重试和输出预算。
-- `API_CHATGPT_KEY`：GPT 服务端密钥，不得使用 `NEXT_PUBLIC_` 前缀。
-- `CHATGPT_MODEL`、`CHATGPT_BASE_URL`：默认分别为 `gpt-5.6-sol` 和 `https://api.quya.org/v1`。
+- `API_CHATGPT_KEY`：LLMP 的 GPT 服务端密钥，在项目根目录 `.env` 中替换，重启 API 服务后生效，不得使用 `NEXT_PUBLIC_` 前缀。页面“模型与下注配置”也可临时替换 Key，仅当前 API 进程生效。
+- `CHATGPT_MODEL`、`CHATGPT_BASE_URL`：默认分别为 `gpt-6.1-sol` 和 `https://llmp.org/v1`。
 - `SIMULATION_COMPETITION_ID`：当前双模型模拟竞赛标识；更换标识可开始一轮新的独立模拟对比，旧记录继续保留。
 - `SIMULATION_INITIAL_BANKROLL`：每个模拟模型账户的初始资金，默认 `5000`；已有 1000 账户首次升级时自动补足差额。
 - `GET /api/decisions`：返回每个模型每场比赛的最新策略决策、赔率优势、理论仓位、执行状态和不下注原因；赔率快照超过 12 小时未刷新时不进入模拟下注；`GET /api/metrics/predictions` 额外返回 proper score、市场对照、组合摘要和质量门禁。

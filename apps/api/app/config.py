@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     zhipu_max_tokens: int = 3000
     api_chatgpt_key: str = ""
     chatgpt_execution_mode: Literal["active", "shadow"] = "active"
-    chatgpt_model: str = "gpt-5.6-sol"
-    chatgpt_base_url: str = "https://api.quya.org/v1"
+    chatgpt_model: str = "gpt-6.1-sol"
+    chatgpt_base_url: str = "https://llmp.org/v1"
     chatgpt_timeout_seconds: float = 180
     # Used as a one-shot retry when the primary model times out or returns
     # invalid output. Must be a model the same relay actually serves.
