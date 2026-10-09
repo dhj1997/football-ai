@@ -632,7 +632,10 @@ function chinaTodayDate(): string {
 }
 
 function fixtureDateKey(fixture: Fixture): string {
-  return fixture.fixture_date || fixture.kickoff.slice(0, 10);
+  return fixture.fixture_date ||
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+    }).format(new Date(fixture.kickoff));
 }
 
 function fixtureDateLabel(date: string): { label: string; badge: string | null } {
@@ -1101,7 +1104,7 @@ function ScoreCenterHome({
         <SectionHeader
           eyebrow="FIXTURE QUEUE"
           title="比赛列表"
-          meta={`${visibleFixtures.length} 场 · 按状态与时间排序`}
+          meta={`${visibleFixtures.length} 场 · 按日期、状态与时间排序`}
         />
         <button
           type="button"
@@ -1122,16 +1125,38 @@ function ScoreCenterHome({
         ) : orderedFixtures.length ? (
           <Card className="overflow-hidden">
             <div className="divide-y divide-slate-800/60">
-              {orderedFixtures.map((fixture) => (
-                <FixtureRow
-                  key={fixture.id}
-                  fixture={fixture}
-                  selected={fixture.id === selectedFixture?.id}
-                  onSelect={() => onSelect(fixture.id)}
-                  isFavorite={favorites.includes(fixture.id)}
-                  onToggleFavorite={() => onToggleFavorite(fixture.id)}
-                />
-              ))}
+              {groupFixturesByDate(orderedFixtures).map(({ date, fixtures: dayFixtures }) => {
+                const { label, badge } = fixtureDateLabel(date);
+                return (
+                  <section key={date} aria-label={`${label}赛程`}>
+                    <header className="flex items-center gap-2 border-b border-slate-800/60 bg-slate-900 px-4 py-2.5">
+                      {badge && (
+                        <span className="rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                          {badge}
+                        </span>
+                      )}
+                      <h3 className="text-xs font-semibold text-slate-200">
+                        <time dateTime={date}>{label}</time>
+                      </h3>
+                      <span className="ml-auto font-mono text-[11px] tabular-nums text-slate-500">
+                        {dayFixtures.length} 场
+                      </span>
+                    </header>
+                    <div className="divide-y divide-slate-800/60">
+                      {dayFixtures.map((fixture) => (
+                        <FixtureRow
+                          key={fixture.id}
+                          fixture={fixture}
+                          selected={fixture.id === selectedFixture?.id}
+                          onSelect={() => onSelect(fixture.id)}
+                          isFavorite={favorites.includes(fixture.id)}
+                          onToggleFavorite={() => onToggleFavorite(fixture.id)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </Card>
         ) : (
@@ -1140,9 +1165,13 @@ function ScoreCenterHome({
           </EmptyState>
         )}
       </section>
-      <div className="lg:col-span-5 xl:col-span-4 sticky top-6">
+      <aside
+        className="lg:col-span-5 xl:col-span-4 lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:overscroll-y-contain"
+        aria-label="快速研究滚动区域"
+        tabIndex={0}
+      >
         <QuickResearchPanel fixture={selectedFixture} detail={detail} />
-      </div>
+      </aside>
     </div>
   );
 }
