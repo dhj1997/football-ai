@@ -37,6 +37,12 @@ def test_probability_policy_selects_one_handicap_bet_for_same_fixture(tmp_path) 
     assert bets[0]["market"] == "asian_handicap"
     assert bets[0]["handicap_line"] == -0.5
     assert rows == original
+    match = {**fixture(), "evidence": ctx}
+    assert services["chatgpt"].execution_for_prediction(rows[1], match)["status"] == "bet"
+    unselected = services["zhipu"].execution_for_prediction(rows[0], match)
+    assert unselected["status"] == "no_bet"
+    assert unselected["reason_codes"] == ["fixture_correlation"]
+    assert unselected["bet_id"] is None
 
 
 class FakePredictionService:

@@ -354,6 +354,17 @@ class BankrollService:
         if self.portfolio_config.min_win_probability is not None and _prediction_allows_execution(prediction, self.portfolio_config):
             candidate = self.candidate_for_prediction(prediction, fixture, fixture.get("evidence") or {})
             if candidate is not None:
+                existing_fixture_bet = next((
+                    bet for bet in self.repository.bets(competition_id=self.competition_id)
+                    if bet.get("fixture_id") == fixture.get("id") and is_active_bet(bet.get("status"))
+                ), None)
+                if existing_fixture_bet is not None:
+                    return {
+                        "status": "no_bet", "reason_codes": ["fixture_correlation"],
+                        "reason": "同场比赛已有模拟下注，不重复执行",
+                        "bet_id": None, "execution_id": None, "execution_status": "REJECTED",
+                        "portfolio_candidate": candidate.to_dict(),
+                    }
                 return {
                     "status": "candidate", "reason_codes": [],
                     "reason": f"赢盘概率 {candidate.raw_model_probability * 100:g}% 严格超过 {self.portfolio_config.min_win_probability * 100:g}%，等待模拟执行窗口",

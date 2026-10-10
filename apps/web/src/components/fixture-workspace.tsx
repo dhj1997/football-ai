@@ -1972,6 +1972,7 @@ const decisionReasonLabels: Record<string, string> = {
   negative_edge: "赔率优势不足",
   win_probability_below_threshold: "赢盘概率未严格超过门槛",
   fixture_started: "比赛已开始或结束",
+  fixture_correlation: "同场已有模拟下注",
   implausible_market: "概率与赔率偏差异常",
   implausible_edge: "优势超出合理上限",
   implausible_ev: "期望值超出合理上限",
@@ -3112,6 +3113,7 @@ function executionStatusLabel(
   if (reasonCodes.includes("risk_limit")) return "风控拦截";
   if (reasonCodes.includes("negative_edge")) return "赔率优势不足";
   if (reasonCodes.includes("win_probability_below_threshold")) return "赢盘概率未达标";
+  if (reasonCodes.includes("fixture_correlation")) return "同场已有下注";
   if (
     reasonCodes.includes("implausible_market") ||
     reasonCodes.includes("implausible_edge") ||
