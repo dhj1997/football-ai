@@ -95,6 +95,7 @@ function moneyClass(value: number) {
 export function PerformanceDashboard() {
   const [bankroll, setBankroll] = useState<BankrollSummary | null>(null);
   const [bets, setBets] = useState<SimulatedBet[]>([]);
+  const [betsLoaded, setBetsLoaded] = useState(false);
   const [decisions, setDecisions] = useState<DecisionAudit[]>([]);
   const [strategies, setStrategies] = useState<StrategyPerformance[]>([]);
   const [metrics, setMetrics] = useState<PredictionMetrics | null>(null);
@@ -117,21 +118,27 @@ export function PerformanceDashboard() {
     try {
       const query = metricQuery(filters);
       const [summary, betData, decisionData, strategyData, metricData] =
-        await Promise.all([
+        await Promise.allSettled([
           fetchBankroll(),
-          fetchBets(),
+          fetchBets().then((data) => {
+            setBets(data.items);
+            setBetsLoaded(true);
+            return data;
+          }),
           fetchDecisionAudits(query, "all"),
           fetchStrategyPerformance(query),
           fetchPredictionMetrics(query, selectedModel),
         ]);
-      setBankroll(summary);
-      setBets(betData.items);
-      setDecisions(
-        decisionData.items.filter((item) => item.model_key === selectedModel),
-      );
-      setDualDecisions(decisionData.items);
-      setStrategies(strategyData.items);
-      setMetrics(metricData);
+      if (summary.status === "fulfilled") setBankroll(summary.value);
+      if (betData.status === "fulfilled") setBets(betData.value.items);
+      if (decisionData.status === "fulfilled") {
+        setDecisions(decisionData.value.items.filter((item) => item.model_key === selectedModel));
+        setDualDecisions(decisionData.value.items);
+      }
+      if (strategyData.status === "fulfilled") setStrategies(strategyData.value.items);
+      if (metricData.status === "fulfilled") setMetrics(metricData.value);
+      const failed = [summary, betData, decisionData, strategyData, metricData].find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") setError(`部分${summary.status === "rejected" || betData.status === "rejected" ? "账本数据" : "复盘统计"}读取失败：${failed.reason instanceof Error ? failed.reason.message : "请稍后刷新"}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "绩效数据请求失败");
     } finally {
@@ -142,23 +149,31 @@ export function PerformanceDashboard() {
   useEffect(() => {
     let active = true;
     const query = metricQuery(filters);
-    void Promise.all([
+    void Promise.allSettled([
       fetchBankroll(),
-      fetchBets(),
+      fetchBets().then((data) => {
+        if (active) {
+          setBets(data.items);
+          setBetsLoaded(true);
+        }
+        return data;
+      }),
       fetchDecisionAudits(query, "all"),
       fetchStrategyPerformance(query),
       fetchPredictionMetrics(query, selectedModel),
     ])
       .then(([summary, betData, decisionData, strategyData, metricData]) => {
         if (!active) return;
-        setBankroll(summary);
-        setBets(betData.items);
-        setDecisions(
-          decisionData.items.filter((item) => item.model_key === selectedModel),
-        );
-        setDualDecisions(decisionData.items);
-        setStrategies(strategyData.items);
-        setMetrics(metricData);
+        if (summary.status === "fulfilled") setBankroll(summary.value);
+        if (betData.status === "fulfilled") setBets(betData.value.items);
+        if (decisionData.status === "fulfilled") {
+          setDecisions(decisionData.value.items.filter((item) => item.model_key === selectedModel));
+          setDualDecisions(decisionData.value.items);
+        }
+        if (strategyData.status === "fulfilled") setStrategies(strategyData.value.items);
+        if (metricData.status === "fulfilled") setMetrics(metricData.value);
+        const failed = [summary, betData, decisionData, strategyData, metricData].find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") setError(`部分${summary.status === "rejected" || betData.status === "rejected" ? "账本数据" : "复盘统计"}读取失败：${failed.reason instanceof Error ? failed.reason.message : "请稍后刷新"}`);
       })
       .catch((reason: unknown) => {
         if (active)
@@ -332,7 +347,7 @@ export function PerformanceDashboard() {
       </Card>
       {error && <ErrorState>{error}</ErrorState>}
       {loading && !bankroll ? (
-        <LoadingState>正在读取模拟账本</LoadingState>
+        <LoadingState>{betsLoaded ? "正在读取复盘统计" : "正在读取模拟账本"}</LoadingState>
       ) : bankroll && metrics ? (
         <>
           <div
@@ -371,10 +386,10 @@ export function PerformanceDashboard() {
           <ClvTracker
             bets={visibleBets.filter((bet) => bet.model_key === selectedModel)}
           />
-          <BetHistory bets={visibleBets} />
           <SettlementHistory metrics={metrics} />
         </>
       ) : null}
+      {betsLoaded && <BetHistory bets={visibleBets} />}
     </main>
   );
 }
