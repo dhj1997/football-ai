@@ -1280,7 +1280,10 @@ function VerdictStrip({
   detail: FixtureDetail;
   ranks: { home: string; away: string } | null;
 }) {
-  const prediction = detail.prediction;
+  const actualBet = Object.values(detail.bets ?? {}).find(
+    (bet) => bet?.status === "placed" || bet?.status === "settled",
+  ) ?? (detail.bet?.status === "placed" || detail.bet?.status === "settled" ? detail.bet : null);
+  const prediction = (actualBet?.model_key ? detail.predictions?.[actualBet.model_key] : null) ?? detail.prediction;
   const report = deriveMatchReport(detail);
   const probabilities: Record<"home" | "draw" | "away", number | undefined> =
     prediction?.probabilities ?? { home: undefined, draw: undefined, away: undefined };
@@ -1295,8 +1298,10 @@ function VerdictStrip({
     ["odds_pending", "stale_odds", "odds_age_missing", "odds_age_stale"].includes(code),
   );
   const executionText =
-    execution?.status === "bet"
-      ? "执行模拟下注"
+    actualBet
+      ? actualBet.status === "settled" ? "模拟单已结算" : "已执行模拟下注"
+      : execution?.status === "candidate" || execution?.status === "bet"
+        ? "等待模拟执行"
       : waitingForOdds
         ? "等待赔率刷新"
         : execution?.reason
@@ -1330,7 +1335,7 @@ function VerdictStrip({
         <small className={labelClass}>执行决定</small>
         <strong
           className={`mt-1.5 block text-lg font-bold ${
-            execution?.status === "bet" ? "text-rose-400" : "text-slate-400"
+            actualBet ? "text-emerald-400" : "text-slate-400"
           }`}
         >
           {executionText}
