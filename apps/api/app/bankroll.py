@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Iterable
 
 from .market_decision import assess_markets
+from .prompt_contract import EVIDENCE_CONTRACT_VERSION
 from .portfolio import (
     BetCandidate,
     PortfolioConfig,
@@ -100,14 +101,27 @@ def _fixed_stake(value: Any) -> float | None:
     return round(amount, 2) if amount > 0 else None
 
 
-def _prediction_allows_execution(prediction: Mapping[str, Any]) -> bool:
+def _prediction_allows_execution(prediction: Mapping[str, Any], config: PortfolioConfig | None = None) -> bool:
     """Fail closed when the immutable prediction did not pass its data gates."""
 
     decision = prediction.get("decision")
-    if not isinstance(decision, Mapping) or decision.get("status") != "bet":
+    if not isinstance(decision, Mapping):
         return False
     reason_codes = {str(code) for code in decision.get("reason_codes") or []}
-    return not bool(reason_codes & FROZEN_EXECUTION_BLOCKERS)
+    if reason_codes & FROZEN_EXECUTION_BLOCKERS:
+        return False
+    if decision.get("status") == "bet":
+        return True
+    # Re-evaluate policy-only historical rejections under the active threshold.
+    # Data/AI blockers and the persisted forecast remain authoritative.
+    return bool(
+        config is not None and config.min_win_probability is not None
+        and decision.get("status") == "no_bet"
+        and bool(reason_codes)
+        and reason_codes <= {"negative_edge", "win_probability_below_threshold"}
+        and (prediction.get("ai") or {}).get("status") == "completed"
+        and (prediction.get("ai") or {}).get("evidence_version") == EVIDENCE_CONTRACT_VERSION
+    )
 
 
 class BankrollService:
@@ -206,7 +220,7 @@ class BankrollService:
     ) -> Any | None:
         """Build one derived Portfolio candidate without persisting or mutating prediction."""
 
-        if not _prediction_allows_execution(prediction):
+        if not _prediction_allows_execution(prediction, self.portfolio_config):
             return None
         working_prediction = deepcopy(prediction)
         _complete_candidate_decision(working_prediction, context, self.repository)
@@ -226,7 +240,7 @@ class BankrollService:
     ) -> Any | None:
         """Build the existing Poisson baseline as a candidate-only input."""
 
-        if not _prediction_allows_execution(prediction):
+        if not _prediction_allows_execution(prediction, self.portfolio_config):
             return None
         baseline = prediction.get("baseline") or {}
         probabilities = baseline.get("probabilities") or {}
@@ -270,7 +284,7 @@ class BankrollService:
             self.execution_mode != "active"
             or fixture.get("status") != "scheduled"
             or _fixture_started(fixture)
-            or not _prediction_allows_execution(prediction)
+            or not _prediction_allows_execution(prediction, self.portfolio_config)
         ):
             return None
         payload = candidate.to_dict() if hasattr(candidate, "to_dict") else dict(candidate)
@@ -337,6 +351,22 @@ class BankrollService:
                 "execution_id": None,
                 "execution_status": "REJECTED",
             }
+        if self.portfolio_config.min_win_probability is not None and _prediction_allows_execution(prediction, self.portfolio_config):
+            candidate = self.candidate_for_prediction(prediction, fixture, fixture.get("evidence") or {})
+            if candidate is not None:
+                return {
+                    "status": "candidate", "reason_codes": [],
+                    "reason": f"赢盘概率 {candidate.raw_model_probability * 100:g}% 严格超过 {self.portfolio_config.min_win_probability * 100:g}%，等待模拟执行窗口",
+                    "bet_id": None, "execution_id": None, "execution_status": "PENDING",
+                    "portfolio_candidate": candidate.to_dict(),
+                }
+            diagnosis = _candidate_gate_diagnosis(prediction, fixture, self.portfolio_config, self.repository)
+            if _fixture_started(fixture):
+                diagnosis = {"reason_codes": ["fixture_started"], "reason": "比赛已开始或结束，关闭模拟执行窗口"}
+            return {
+                "status": "no_bet", **diagnosis,
+                "bet_id": None, "execution_id": None, "execution_status": "REJECTED",
+            }
         if decision.get("status") != "bet":
             return {
                 "status": decision.get("status") or "insufficient_data",
@@ -385,7 +415,7 @@ class BankrollService:
                 )
                 current = deepcopy(current)
                 _complete_candidate_decision(current, candidate_context, self.repository)
-            if not current or not _prediction_allows_execution(current):
+            if not current or not _prediction_allows_execution(current, self.portfolio_config):
                 continue
             candidates = build_candidates(
                 current,
@@ -395,6 +425,11 @@ class BankrollService:
             )
             if candidates:
                 current["portfolio_candidate"] = candidates[0].to_dict()
+                current["decision"] = {
+                    **(current.get("decision") or {}),
+                    "status": "bet", "market": candidates[0].market,
+                    "selection": candidates[0].selection,
+                }
                 rows.append((current, grouped_fixture))
         return sorted(
             rows,
@@ -471,7 +506,7 @@ class BankrollService:
         prediction: dict[str, Any],
         fixture: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if self.execution_mode != "active" or not _prediction_allows_execution(prediction):
+        if self.execution_mode != "active" or not _prediction_allows_execution(prediction, self.portfolio_config):
             return None
         candidate = prediction.get("portfolio_candidate")
         if not isinstance(candidate, dict):
@@ -552,9 +587,13 @@ class BankrollService:
             "bookmaker": selected_candidate.get("bookmaker"),
             "odds_snapshot_id": selected_candidate.get("odds_snapshot_id") or prediction.get("odds_snapshot_id"),
             "portfolio_selection": "selected",
+            "portfolio_candidate": selected_candidate,
             "risk_gate": selected_candidate.get("risk_gate"),
-            "reason": decision.get("reason"),
-            "reason_codes": decision.get("reason_codes") or [],
+            "reason": (
+                f"赢盘概率严格超过 {self.portfolio_config.min_win_probability * 100:g}%，通过资金限制，执行模拟下注"
+                if self.portfolio_config.min_win_probability is not None else decision.get("reason")
+            ),
+            "reason_codes": [] if self.portfolio_config.min_win_probability is not None else decision.get("reason_codes") or [],
             "prediction_phase": prediction.get("phase") or "preliminary",
             "is_simulated": True,
         }
@@ -624,6 +663,8 @@ class BankrollService:
             "portfolio_policy": {
                 "min_edge": self.portfolio_config.min_edge,
                 "min_ev": self.portfolio_config.min_ev,
+                "selection_basis": "win_probability" if self.portfolio_config.min_win_probability is not None else "expected_value",
+                "min_win_probability": self.portfolio_config.min_win_probability,
                 "stake_fraction": self.portfolio_config.stake_fraction,
                 "max_single_bet_fraction": self.portfolio_config.max_single_bet_fraction,
                 "max_daily_exposure": self.portfolio_config.max_daily_exposure,
@@ -829,7 +870,7 @@ def _candidate_gate_diagnosis(
 
     generic = {
         "reason_codes": ["portfolio_filter"],
-        "reason": "候选未同时满足 Portfolio 的 Edge、EV、数据质量或赔率新鲜度门槛",
+        "reason": "候选未满足赢盘概率、数据质量或赔率新鲜度门槛" if config.min_win_probability is not None else "候选未同时满足 Portfolio 的 Edge、EV、数据质量或赔率新鲜度门槛",
     }
     working = deepcopy(prediction)
     _complete_candidate_decision(working, fixture.get("evidence") or {}, repository)
@@ -851,6 +892,9 @@ def _candidate_gate_diagnosis(
 
 
 def _gate_detail(code: str, candidate: BetCandidate, config: PortfolioConfig) -> str:
+    if code == "win_probability_below_threshold":
+        probability = candidate.raw_model_probability if candidate.raw_model_probability is not None else candidate.model_probability
+        return f"赢盘概率 {probability * 100:g}% 未严格超过门槛 {config.min_win_probability * 100:g}%"
     if code == "edge_below_threshold":
         return f"Edge {candidate.edge * 100:.1f}% 低于门槛 {config.min_edge * 100:.0f}%"
     if code == "implausible_edge":

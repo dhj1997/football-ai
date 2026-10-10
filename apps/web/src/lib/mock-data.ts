@@ -922,6 +922,7 @@ export function getMockRuntimeConfig(): RuntimeConfigResponse {
     portfolio: {
       min_edge: 0.03,
       min_ev: 0.05,
+      min_win_probability: 0.5,
       stake_fraction: 0.15,
       max_total_exposure: 0.5,
       max_drawdown: 0.2,

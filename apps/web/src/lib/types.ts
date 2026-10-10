@@ -577,6 +577,9 @@ export interface Prediction {
     considered_selection: string | null;
     price: number | null;
     expected_edge: number | null;
+    selection_basis?: "win_probability" | "expected_value";
+    min_win_probability?: number | null;
+    win_probability?: number | null;
     model_confidence: number;
     uncertainty: number;
     stake_fraction: number;
@@ -595,6 +598,7 @@ export interface Prediction {
     reason_codes: string[];
     reason: string;
     bet_id: string | null;
+    portfolio_candidate?: PortfolioCandidateSummary | null;
   };
   player_analysis?: {
     key_available_players: string[];
@@ -622,6 +626,17 @@ export interface Prediction {
     error: string | null;
     provider_failures?: Array<{ provider: string; error: string }>;
   };
+}
+
+export interface PortfolioCandidateSummary {
+  market: string;
+  selection: string;
+  line: number | null;
+  raw_model_probability?: number | null;
+  model_probability: number;
+  selection_basis?: "win_probability" | "expected_value";
+  min_win_probability?: number | null;
+  stake_fraction?: number;
 }
 
 export interface SimulatedBet {
@@ -656,6 +671,7 @@ export interface SimulatedBet {
   clv?: number | null;
   closing_odds?: number | null;
   closing_odds_captured_at?: string | null;
+  portfolio_candidate?: PortfolioCandidateSummary | null;
 }
 
 export interface DecisionAudit {
@@ -725,6 +741,7 @@ export interface RuntimeModelConfig {
 export interface RuntimePortfolioConfig {
   min_edge: number;
   min_ev: number;
+  min_win_probability: number;
   stake_fraction: number;
   max_total_exposure: number;
   max_drawdown: number;

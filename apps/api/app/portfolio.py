@@ -139,6 +139,8 @@ class PortfolioConfig:
 
     min_edge: float = 0.05
     min_ev: float = 0.05
+    # None preserves the historical value policy for backtests and older callers.
+    min_win_probability: float | None = None
     max_plausible_edge: float = 0.60
     max_plausible_ev: float = 1.50
     max_odds_age_minutes: float = 720.0
@@ -214,6 +216,8 @@ class BetCandidate:
     market_prior_probability: float | None = None
     llm_keep_weight: float | None = None
     shrinkage_status: str = "not_applicable"
+    selection_basis: str = "expected_value"
+    min_win_probability: float | None = None
 
     @property
     def expected_edge(self) -> float:
@@ -293,6 +297,8 @@ def candidate_from_market_row(
         risk_score,
         config,
     )
+    if config.min_win_probability is not None:
+        score = raw_model_probability
     stake_fraction = _candidate_stake_fraction(prediction, config)
     return BetCandidate(
         fixture_id=str(fixture.get("id") or ""),
@@ -319,11 +325,13 @@ def candidate_from_market_row(
         bookmaker=market_row.get("bookmaker"),
         odds_snapshot_id=prediction.get("odds_snapshot_id"),
         stake_fraction=stake_fraction,
-        raw_model_probability=round(raw_model_probability, 6),
+        raw_model_probability=raw_model_probability,
         probability_source=shrinkage["probability_source"],
         market_prior_probability=shrinkage["market_prior_probability"],
         llm_keep_weight=shrinkage["llm_keep_weight"],
         shrinkage_status=shrinkage["status"],
+        selection_basis="win_probability" if config.min_win_probability is not None else "expected_value",
+        min_win_probability=config.min_win_probability,
     )
 
 
@@ -442,13 +450,20 @@ def candidate_gate_reasons(
     quality = _number(_value(candidate, "data_quality"), 0) or 0
     age = _number(_value(candidate, "odds_age_minutes"))
     reasons: list[str] = []
-    if edge < config.min_edge:
-        reasons.append("edge_below_threshold")
-    elif edge > config.max_plausible_edge:
+    if config.min_win_probability is not None:
+        probability = _probability(_value(candidate, "raw_model_probability"))
+        if probability is None:
+            probability = _probability(_value(candidate, "model_probability"))
+        if probability is None or probability <= config.min_win_probability:
+            reasons.append("win_probability_below_threshold")
+    else:
+        if edge < config.min_edge:
+            reasons.append("edge_below_threshold")
+        if ev < config.min_ev:
+            reasons.append("ev_below_threshold")
+    if edge > config.max_plausible_edge:
         reasons.append("implausible_edge")
-    if ev < config.min_ev:
-        reasons.append("ev_below_threshold")
-    elif ev > config.max_plausible_ev:
+    if ev > config.max_plausible_ev:
         reasons.append("implausible_ev")
     if quality < config.min_data_completeness:
         reasons.append("data_quality_below_threshold")
@@ -470,6 +485,9 @@ def is_candidate_eligible(candidate: BetCandidate | Mapping[str, Any], config: P
 
 def score_candidate(candidate: BetCandidate | Mapping[str, Any], config: PortfolioConfig | None = None) -> float:
     config = config or PortfolioConfig()
+    if config.min_win_probability is not None:
+        raw = _probability(_value(candidate, "raw_model_probability"))
+        return raw if raw is not None else (_probability(_value(candidate, "model_probability")) or 0.0)
     return score_candidate_values(
         _number(_value(candidate, "ev"), 0) or 0,
         _number(_value(candidate, "edge"), 0) or 0,
@@ -756,7 +774,7 @@ def _candidate_stake_fraction(
 ) -> float:
     """Return a valid model-requested fraction, falling back for old predictions."""
 
-    requested = _number(_value(candidate, "stake_fraction"))
+    requested = config.stake_fraction if config.min_win_probability is not None else _number(_value(candidate, "stake_fraction"))
     if requested is None or requested <= 0:
         requested = config.stake_fraction
     return max(0.0, min(float(config.max_single_bet_fraction), SHORT_TERM_MAX_SINGLE_BET_FRACTION, requested))

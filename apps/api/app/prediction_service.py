@@ -46,6 +46,7 @@ class PredictionService:
         player_value_service: Any | None = None,
         initial_bankroll: float = 1000.0,
         player_stats_service: Any | None = None,
+        min_win_probability: float | None = None,
     ) -> None:
         self.model_provider = model_provider
         self.repository = repository
@@ -54,6 +55,7 @@ class PredictionService:
         self.player_value_service = player_value_service
         self.player_stats_service = player_stats_service
         self.initial_bankroll = max(0.0, float(initial_bankroll))
+        self.min_win_probability = min_win_probability
 
     def _elo_ratings(self, prediction_timestamp: Any | None = None) -> dict[str, Any]:
         """Elo ratings: ClubElo snapshot (professional, cross-season) overrides
@@ -299,8 +301,8 @@ class PredictionService:
             "error": None,
             "provider_failures": response.get("provider_failures") or [],
         }
-        _attach_experiment_metadata(baseline, self.model_key)
-        baseline = apply_market_decision(baseline, safe_context)
+        _attach_experiment_metadata(baseline, self.model_key, self.min_win_probability)
+        baseline = apply_market_decision(baseline, safe_context, min_win_probability=self.min_win_probability)
         self._save_current(
             baseline,
             kickoff=kickoff,
@@ -361,8 +363,8 @@ class PredictionService:
         prediction["forecast_confidence"] = 0.0
         prediction["model_probabilities"] = deepcopy(prediction.get("probabilities") or {})
         prediction["prompt_version"] = DEFAULT_PROMPT_CONTRACT.version
-        _attach_experiment_metadata(prediction, self.model_key)
-        prediction = apply_market_decision(prediction, context)
+        _attach_experiment_metadata(prediction, self.model_key, self.min_win_probability)
+        prediction = apply_market_decision(prediction, context, min_win_probability=self.min_win_probability)
         prediction["model_key"] = self.model_key
         prediction["competition_id"] = self.competition_id
         self._save_current(
@@ -750,7 +752,7 @@ def _odds_snapshot(
     }
 
 
-def _attach_experiment_metadata(prediction: dict[str, Any], model_key: str) -> None:
+def _attach_experiment_metadata(prediction: dict[str, Any], model_key: str, min_win_probability: float | None = None) -> None:
     """Identify the model/policy combination as a reproducible experiment."""
 
     ai = prediction.get("ai") or {}
@@ -760,7 +762,7 @@ def _attach_experiment_metadata(prediction: dict[str, Any], model_key: str) -> N
         "strategy_version": STRATEGY_VERSION,
         "strategy_name": "基准",
         "prompt_version": ai.get("prompt_version") or DEFAULT_PROMPT_CONTRACT.version,
-        "decision_policy_version": DECISION_POLICY_VERSION,
+        "decision_policy_version": f"football-sim-probability-v1:gt-{min_win_probability:g}" if min_win_probability is not None else DECISION_POLICY_VERSION,
         "ai_view_version": AI_VIEW_VERSION,
         "execution_config_version": f"{model_key}:{STRATEGY_ID}:{STRATEGY_VERSION}",
     }

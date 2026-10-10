@@ -295,14 +295,43 @@ def test_handicap_priority_requires_existing_value_gate(handicap_price, expected
         "asian_handicap_home_odd": handicap_price,
         "asian_handicap_away_odd": 2.0,
     }
-
     result = apply_market_decision(item, context(odds))
-
     assert result["decision"]["status"] == "bet"
     assert result["decision"]["market"] == expected_market
     assert result["decision"]["selection"] == ("home_handicap" if expected_market == "asian_handicap" else "home")
     assert result["forecast"]["predicted_outcome"] == "home"
     assert result["decision"]["expected_edge"] == pytest.approx(0.08 if expected_market == "asian_handicap" else 0.2)
+
+
+@pytest.mark.parametrize("probability,expected", [(0.49, "no_bet"), (0.50, "no_bet"), (0.500001, "bet"), (0.54, "bet")])
+def test_probability_policy_has_strict_boundary_and_ignores_negative_ev(probability, expected) -> None:
+    result = apply_market_decision(
+        prediction({"home": probability, "draw": 0.25, "away": 0.75 - probability}),
+        context(fresh_odds(home=1.8)), min_win_probability=0.5,
+    )
+    assert result["decision"]["status"] == expected
+    assert result["decision"]["expected_edge"] < 0
+    assert "negative_edge" not in result["decision"]["reason_codes"]
+    assert ("win_probability_below_threshold" in result["decision"]["reason_codes"]) == (expected == "no_bet")
+    assert result["decision"]["stake_fraction"] == (0.01 if expected == "bet" else 0)
+
+
+@pytest.mark.parametrize("cover,market", [(0.54, "asian_handicap"), (0.50, "1x2")])
+def test_probability_policy_prefers_qualified_handicap_then_falls_back(cover, market) -> None:
+    item = prediction({"home": 0.6, "draw": 0.25, "away": 0.15})
+    item["asian_handicap"] = {"line": -0.5, "home_settlement": {"full_win": cover, "half_win": 0, "push": 0, "half_loss": 0, "full_loss": 1 - cover}}
+    odds = {**fresh_odds(home=2.0), "asian_handicap": -0.5, "asian_handicap_home_odd": 1.8, "asian_handicap_away_odd": 2.0}
+    result = apply_market_decision(item, context(odds), min_win_probability=0.5)
+    assert result["decision"]["status"] == "bet"
+    assert result["decision"]["market"] == market
+
+
+def test_probability_policy_keeps_ai_and_evidence_blockers() -> None:
+    item = prediction()
+    item["ai"]["status"] = "failed"
+    result = apply_market_decision(item, context(fresh_odds(), player_status="insufficient"), min_win_probability=0.5)
+    assert result["decision"]["status"] == "no_bet"
+    assert {"ai_unavailable", "missing_player_data"} <= set(result["decision"]["reason_codes"])
 
 
 def test_chengdu_half_goal_does_not_bypass_ev_gate() -> None:

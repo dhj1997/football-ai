@@ -23,6 +23,7 @@ REASON_TEXT = {
     "ai_unavailable": "AI服务不可用，未完成模型分析",
     "ai_no_bet": "AI基于当前证据不建议下注",
     "negative_edge": "模型概率未超过当前赔率所需的最低优势",
+    "win_probability_below_threshold": "赢盘概率未严格超过设定门槛",
     "implausible_market": "模型概率与赔率的偏差超出合理范围，疑似数据异常，已拦截",
     "low_confidence": "预测置信度不足",
     "lineup_unconfirmed": "首发阵容尚未确认",
@@ -45,6 +46,7 @@ def apply_market_decision(
     context: dict[str, Any],
     model_disagreement: float | None = None,
     risk_limited: bool = False,
+    min_win_probability: float | None = None,
 ) -> dict[str, Any]:
     """Attach forecast, market assessment, and execution decision layers."""
 
@@ -55,16 +57,22 @@ def apply_market_decision(
     assessment = assess_markets(prediction, context.get("odds"))
     assessment["odds_snapshot_id"] = prediction.get("odds_snapshot_id")
     model_recommendation = prediction.get("model_recommendation") or {}
-    # Prefer an executable handicap market; 1X2 remains the fallback when
-    # handicap value is below the existing gate or its math is implausible.
+    probability_policy = min_win_probability is not None
+    ranking_key = "model_probability" if probability_policy else "expected_edge"
+    # Eligibility comes before handicap preference in either policy.
     qualified_handicaps = [
         row for row in assessment["markets"]
         if row["market"] == "asian_handicap"
-        and row["expected_edge"] >= MIN_EXPECTED_EDGE
+        and (row["model_probability"] > min_win_probability if probability_policy else row["expected_edge"] >= MIN_EXPECTED_EDGE)
         and row["edge"] <= MAX_PLAUSIBLE_EDGE
         and row["ev"] <= MAX_PLAUSIBLE_EV
     ]
-    candidate = max(qualified_handicaps or assessment["markets"], key=lambda item: item["expected_edge"], default=None)
+    qualified_markets = [
+        row for row in assessment["markets"]
+        if probability_policy and row["model_probability"] > min_win_probability
+        and row["edge"] <= MAX_PLAUSIBLE_EDGE and row["ev"] <= MAX_PLAUSIBLE_EV
+    ]
+    candidate = max(qualified_handicaps or qualified_markets or assessment["markets"], key=lambda item: item[ranking_key], default=None)
     confidence = _forecast_confidence(prediction)
     reason_codes: list[str] = []
     ai_completed = (prediction.get("ai") or {}).get("status") == "completed"
@@ -94,7 +102,9 @@ def apply_market_decision(
         reason_codes.append("low_confidence")
     elif confidence < MIN_FORECAST_CONFIDENCE:
         warning_codes.append("low_confidence")
-    if candidate and candidate["expected_edge"] < MIN_EXPECTED_EDGE:
+    if candidate and probability_policy and candidate["model_probability"] <= min_win_probability:
+        reason_codes.append("win_probability_below_threshold")
+    if candidate and not probability_policy and candidate["expected_edge"] < MIN_EXPECTED_EDGE:
         reason_codes.append("negative_edge")
     if candidate and (
         candidate["edge"] > MAX_PLAUSIBLE_EDGE or candidate["ev"] > MAX_PLAUSIBLE_EV
@@ -107,7 +117,7 @@ def apply_market_decision(
 
     insufficient = "no_matching_market" in reason_codes
     status = "insufficient_data" if insufficient else "no_bet" if reason_codes else "bet"
-    stake_fraction = _stake_fraction(candidate) if ai_completed and candidate else 0.0
+    stake_fraction = _stake_fraction(candidate, min_win_probability) if ai_completed and candidate else 0.0
     uncertainty = _uncertainty(
         confidence,
         lineup_confirmed,
@@ -128,11 +138,17 @@ def apply_market_decision(
         ),
         "ev": candidate.get("ev") if candidate else None,
         "expected_edge": candidate["expected_edge"] if candidate else None,
+        "selection_basis": "win_probability" if probability_policy else "expected_value",
+        "min_win_probability": min_win_probability,
+        "win_probability": candidate["model_probability"] if candidate else None,
         "model_confidence": round(confidence, 4),
         "uncertainty": uncertainty,
         "stake_fraction": stake_fraction,
         "reason_codes": reason_codes,
-        "reason": "；".join(REASON_TEXT[code] for code in reason_codes) if reason_codes else "赔率优势和证据质量达到模拟执行标准",
+        "reason": "；".join(REASON_TEXT[code] for code in reason_codes) if reason_codes else (
+            f"赢盘概率严格超过 {min_win_probability * 100:g}%，证据质量达到模拟执行标准"
+            if probability_policy else "赔率优势和证据质量达到模拟执行标准"
+        ),
         "warning_codes": warning_codes,
         "warning": "；".join(WARNING_TEXT[code] for code in warning_codes) if warning_codes else None,
         "model_recommendation_status": model_recommendation.get("status") or "no_bet",
@@ -306,7 +322,7 @@ def _market_row(
         "break_even_probability": round(1 / price, 4),
         "de_vig_probability": round(de_vig_probability, 4),
         "market_probability": round(de_vig_probability, 4),
-        "model_probability": round(model_probability, 4),
+        "model_probability": model_probability,
         "edge": round(model_probability - de_vig_probability, 4),
         "ev": round(expected_edge, 4),
         "expected_edge": round(expected_edge, 4),
@@ -482,7 +498,9 @@ def _settlement_edge(weights: dict[str, float], price: float) -> float:
     return expected_return - 1
 
 
-def _stake_fraction(candidate: dict[str, Any]) -> float:
+def _stake_fraction(candidate: dict[str, Any], min_win_probability: float | None = None) -> float:
+    if min_win_probability is not None:
+        return MIN_STAKE_FRACTION if candidate["model_probability"] > min_win_probability else 0.0
     edge = float(candidate["expected_edge"])
     if edge < MIN_EXPECTED_EDGE:
         return 0.0

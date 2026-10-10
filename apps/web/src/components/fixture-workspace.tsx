@@ -1970,6 +1970,8 @@ const decisionReasonLabels: Record<string, string> = {
   ai_unavailable: "AI 服务不可用",
   ai_no_bet: "AI 不建议下注",
   negative_edge: "赔率优势不足",
+  win_probability_below_threshold: "赢盘概率未严格超过门槛",
+  fixture_started: "比赛已开始或结束",
   implausible_market: "概率与赔率偏差异常",
   implausible_edge: "优势超出合理上限",
   implausible_ev: "期望值超出合理上限",
@@ -2227,10 +2229,12 @@ export function ProbabilityPanel({
   const decision = prediction.decision;
   const execution = prediction.execution;
   const modelRecommendation = prediction.model_recommendation;
+  const policyCandidate = execution?.portfolio_candidate ?? currentBet?.portfolio_candidate;
+  const probabilityPolicy = policyCandidate?.selection_basis === "win_probability" || decision?.selection_basis === "win_probability";
   const advisedMarket = marketRows.find(
     (row) =>
-      row.market === decision?.considered_market &&
-      row.selection === decision?.considered_selection,
+      row.market === (policyCandidate?.market ?? decision?.considered_market) &&
+      row.selection === (policyCandidate?.selection ?? decision?.considered_selection),
   );
   const reportedStatus = execution?.status ?? decision?.status;
   const executionStatus = currentBet
@@ -2638,9 +2642,11 @@ export function ProbabilityPanel({
               </dd>
             </div>
             <div>
-              <dt className="text-[11px] text-slate-500">预期优势</dt>
+              <dt className="text-[11px] text-slate-500">{probabilityPolicy ? "赢盘概率" : "预期优势"}</dt>
               <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
-                {decision?.expected_edge !== null &&
+                {probabilityPolicy
+                  ? percent(policyCandidate?.raw_model_probability ?? decision?.win_probability ?? advisedMarket?.model_probability ?? 0)
+                  : decision?.expected_edge !== null &&
                 decision?.expected_edge !== undefined
                   ? `${decision.expected_edge > 0 ? "+" : ""}${(decision.expected_edge * 100).toFixed(1)}%`
                   : "-"}
@@ -2655,7 +2661,7 @@ export function ProbabilityPanel({
             <div>
               <dt className="text-[11px] text-slate-500">理论仓位</dt>
               <dd className="mt-0.5 font-mono font-bold tabular-nums text-slate-200">
-                {percent(decision?.stake_fraction ?? 0)}
+                {percent(policyCandidate?.stake_fraction ?? decision?.stake_fraction ?? 0)}
               </dd>
             </div>
           </dl>
@@ -3105,6 +3111,7 @@ function executionStatusLabel(
     return "等待赔率刷新";
   if (reasonCodes.includes("risk_limit")) return "风控拦截";
   if (reasonCodes.includes("negative_edge")) return "赔率优势不足";
+  if (reasonCodes.includes("win_probability_below_threshold")) return "赢盘概率未达标";
   if (
     reasonCodes.includes("implausible_market") ||
     reasonCodes.includes("implausible_edge") ||

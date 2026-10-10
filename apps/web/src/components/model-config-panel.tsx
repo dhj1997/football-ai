@@ -124,9 +124,9 @@ export function ModelConfigPanel() {
           </div>
           <small className="text-[11px] text-slate-500">比例按账户权益计算</small>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <PercentField label="最小优势" value={draft.portfolio.min_edge} onChange={(value) => updatePercent("min_edge", value)} />
-          <PercentField label="最小 EV" value={draft.portfolio.min_ev} onChange={(value) => updatePercent("min_ev", value)} />
+        <p className="mb-3 text-xs text-slate-400">赢盘概率必须严格超过门槛；优先让球，不满足时再选胜平负。EV 仅供参考。</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <PercentField label="赢盘概率门槛（严格超过）" value={draft.portfolio.min_win_probability} onChange={(value) => updatePercent("min_win_probability", value)} />
           <PercentField label="单笔下注比例" value={draft.portfolio.stake_fraction} onChange={(value) => updatePercent("stake_fraction", value)} />
           <PercentField label="总敞口上限" value={draft.portfolio.max_total_exposure} onChange={(value) => updatePercent("max_total_exposure", value)} />
           <PercentField label="最大回撤" value={draft.portfolio.max_drawdown} onChange={(value) => updatePercent("max_drawdown", value)} />

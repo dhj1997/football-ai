@@ -238,6 +238,19 @@ async def test_successful_ai_prediction_links_immutable_evidence() -> None:
     assert repository.retention_calls == []
 
 
+@pytest.mark.parametrize("threshold,expected", [(0.5, "bet"), (0.56, "no_bet")])
+async def test_prediction_service_persists_active_probability_policy(threshold, expected) -> None:
+    fixture, context = real_fixture_and_context()
+    context["squads"] = {"home": [{"name": "测试球员甲"}], "away": [{"name": "测试球员乙"}]}
+    context["odds"] = {"home": 1.8, "draw": 3.9, "away": 3.9, "updated_at": datetime.now(UTC).isoformat()}
+    repository = FakeRepository()
+    result = await PredictionService(FakeDeepSeek(), repository, min_win_probability=threshold).create(fixture, context)
+    assert result["decision"]["status"] == expected
+    assert result["decision"]["min_win_probability"] == threshold
+    assert result["experiment"]["decision_policy_version"] == f"football-sim-probability-v1:gt-{threshold:g}"
+    assert repository.predictions[0]["decision"] == result["decision"]
+
+
 async def test_unconfigured_ai_saves_explicit_degraded_prediction() -> None:
     fixture, context = real_fixture_and_context()
     repository = FakeRepository()

@@ -3,6 +3,8 @@ import pytest
 
 from app.bankroll import BankrollService
 from app.database import PredictionRepository
+from app.portfolio import PortfolioConfig
+from copy import deepcopy
 
 
 def fixture() -> dict:
@@ -45,6 +47,72 @@ def context() -> dict:
             "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         }
     }
+
+
+def probability_prediction() -> dict:
+    item = prediction()
+    item["ai"]["evidence_version"] = "fixture-evidence-v4"
+    item["probabilities"] = {"home": 0.54, "draw": 0.25, "away": 0.21}
+    item["decision"].update(status="no_bet", market="no_bet", selection="none", reason_codes=["negative_edge"])
+    return item
+
+
+def test_new_policy_rechecks_value_only_rejections_without_changing_forecast(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "probability.db"))
+    repository.initialize()
+    service = BankrollService(repository, PortfolioConfig(min_win_probability=0.5))
+    item = probability_prediction()
+    original = deepcopy(item)
+    ctx = context()
+    ctx["odds"]["home"] = 1.8
+    match = {**fixture(), "evidence": ctx}
+    execution = service.execution_for_prediction(item, match)
+    assert execution["status"] == "candidate"
+    assert execution["bet_id"] is None
+    placed = service.place_for_prediction(item, match, ctx)
+    assert placed is not None
+    assert placed["ev"] < 0
+    assert placed["reason_codes"] == []
+    assert placed["portfolio_candidate"]["selection_basis"] == "win_probability"
+    duplicate = service.place_for_prediction(item, match, ctx)
+    assert duplicate["id"] == placed["id"]
+    assert item == original
+    assert service.execution_for_prediction(item, match)["bet_id"] == placed["id"]
+
+
+@pytest.mark.parametrize("blocker", ["ai_unavailable", "missing_player_data", "stale_odds", "risk_limit", "implausible_market"])
+def test_new_policy_preserves_frozen_blockers(tmp_path, blocker) -> None:
+    repository = PredictionRepository(str(tmp_path / "blocked.db"))
+    repository.initialize()
+    service = BankrollService(repository, PortfolioConfig(min_win_probability=0.5))
+    item = probability_prediction()
+    item["decision"]["reason_codes"].append(blocker)
+    assert service.candidate_for_prediction(item, fixture(), context()) is None
+    assert service.place_for_prediction(item, fixture(), context()) is None
+
+
+def test_old_bet_decision_at_fifty_percent_cannot_execute_under_new_policy(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "boundary.db"))
+    repository.initialize()
+    service = BankrollService(repository, PortfolioConfig(min_win_probability=0.5))
+    item = prediction()
+    item["probabilities"] = {"home": 0.5, "draw": 0.25, "away": 0.25}
+    match = {**fixture(), "evidence": context()}
+    assert service.place_for_prediction(item, match, context()) is None
+    execution = service.execution_for_prediction(item, match)
+    assert execution["status"] == "no_bet"
+    assert execution["reason_codes"] == ["win_probability_below_threshold"]
+
+
+def test_probability_threshold_update_rechecks_only_policy_rejection(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "threshold-update.db"))
+    repository.initialize()
+    service = BankrollService(repository, PortfolioConfig(min_win_probability=0.5))
+    item = probability_prediction()
+    item["decision"]["reason_codes"] = ["win_probability_below_threshold"]
+    item["decision"]["min_win_probability"] = 0.6
+    assert service.candidate_for_prediction(item, fixture(), context()) is not None
+    assert item["decision"]["status"] == "no_bet"
 
 
 def league_fixture(fixture_id: str, kickoff: str, status: str = "scheduled") -> dict:

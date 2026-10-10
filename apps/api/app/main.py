@@ -159,6 +159,7 @@ class RuntimePortfolioConfigUpdate(BaseModel):
 
     min_edge: float | None = Field(default=None, ge=0, le=1)
     min_ev: float | None = Field(default=None, ge=0, le=1)
+    min_win_probability: float | None = Field(default=None, ge=0, lt=1)
     stake_fraction: float | None = Field(default=None, ge=0, le=1)
     max_total_exposure: float | None = Field(default=None, ge=0, le=1)
     max_drawdown: float | None = Field(default=None, ge=0, le=1)
@@ -357,6 +358,7 @@ zhipu_prediction_service = PredictionService(
     player_value_service,
     settings.simulation_initial_bankroll,
     player_stats_service=player_stats_service,
+    min_win_probability=settings.portfolio_min_win_probability,
 )
 chatgpt_prediction_service = PredictionService(
     chatgpt_provider,
@@ -366,6 +368,7 @@ chatgpt_prediction_service = PredictionService(
     player_value_service,
     settings.simulation_initial_bankroll,
     player_stats_service=player_stats_service,
+    min_win_probability=settings.portfolio_min_win_probability,
 )
 model_registry_service = ModelRegistry(repository)
 active_prediction_services = {
@@ -481,6 +484,7 @@ def _runtime_portfolio_config() -> dict:
     return {
         "min_edge": policy.min_edge,
         "min_ev": policy.min_ev,
+        "min_win_probability": policy.min_win_probability,
         "stake_fraction": policy.stake_fraction,
         "max_total_exposure": policy.max_total_exposure,
         "max_drawdown": policy.max_drawdown,
@@ -1384,7 +1388,7 @@ async def fixture_detail(fixture_id: str) -> dict:
         if item and not item.get("decision"):
             # 决策在预测生成时已持久化并随版本冻结；只有缺失决策快照的
             # 历史行才回填，避免每次打开页面用实时数据重算。
-            predictions[key] = apply_market_decision(item, context)
+            predictions[key] = apply_market_decision(item, context, min_win_probability=settings.portfolio_min_win_probability)
     prediction = predictions.get("zhipu") or next((item for item in predictions.values() if item), None)
     model_bets = {}
     for key, item in predictions.items():
@@ -2781,6 +2785,8 @@ def update_admin_model_config(payload: RuntimeConfigUpdate) -> dict:
             setattr(settings, f"portfolio_{field}", value)
         for service in bankroll_service.services.values():
             service.portfolio_config = replace(service.portfolio_config, **policy_updates)
+        for service in (zhipu_prediction_service, chatgpt_prediction_service):
+            service.min_win_probability = settings.portfolio_min_win_probability
     runtime_config_updated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     return _runtime_config_payload()
 
@@ -2814,7 +2820,7 @@ def latest_prediction(fixture_id: str) -> dict:
     context = demo_context(fixture_id) if fixture["is_demo"] else fixture.get("evidence", unavailable_context())
     apply_player_impact(context)
     if not result.get("decision"):
-        result = apply_market_decision(result, context)
+        result = apply_market_decision(result, context, min_win_probability=settings.portfolio_min_win_probability)
     result["execution"] = bankroll_service.execution_for_prediction(result, fixture)
     return public_payload(result)
 

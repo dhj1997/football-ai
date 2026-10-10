@@ -72,6 +72,33 @@ def test_edge_and_ev_use_decimal_formulas() -> None:
     assert calculate_ev(0.60, 2.00) == pytest.approx(0.20)
 
 
+@pytest.mark.parametrize("probability,eligible", [(0.49, False), (0.5, False), (0.500001, True), (0.54, True)])
+def test_probability_gate_uses_raw_probability_and_drops_value_minimums(probability, eligible) -> None:
+    config = PortfolioConfig(min_win_probability=0.5)
+    row = replace(candidate(edge=-0.01, ev=-0.1), raw_model_probability=probability, model_probability=0.49)
+    assert is_candidate_eligible(row, config) is eligible
+    assert candidate_gate_reasons(row, config) == ([] if eligible else ["win_probability_below_threshold"])
+
+
+def test_probability_policy_keeps_quality_freshness_and_funds_gates() -> None:
+    config = PortfolioConfig(min_win_probability=0.5)
+    assert candidate_gate_reasons(candidate(data_quality=0.5, odds_age_minutes=800), config) == ["data_quality_below_threshold", "odds_age_stale"]
+    assert risk_gate(candidate(), 1000, drawdown=0.31, config=config)["status"] == "FAIL"
+
+
+def test_probability_ranking_uses_probability_instead_of_ev() -> None:
+    config = PortfolioConfig(min_win_probability=0.5)
+    item = {"id": "p1", "model_key": "chatgpt", "ai": {"status": "completed"}, "data_completeness": 0.9,
+            "market_assessment": {"odds_status": "fresh", "odds_updated_at": datetime.now(UTC).isoformat(), "markets": [
+                {"market": "1x2", "selection": "home", "price": 1.4, "model_probability": 0.65, "market_probability": 0.6},
+                {"market": "1x2", "selection": "away", "price": 3, "model_probability": 0.55, "market_probability": 0.3},
+            ]}}
+    rows = build_candidates(item, {"id": "f1", "status": "scheduled"}, config)
+    assert rows[0].selection == "home"
+    assert rows[0].ev < 0
+    assert rows[0].candidate_score == 0.65
+
+
 def test_account_snapshot_uses_one_ledger_and_active_status_set() -> None:
     transactions = [
         {"amount": 1000},

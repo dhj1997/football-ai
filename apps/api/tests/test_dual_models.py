@@ -13,6 +13,32 @@ class FakeProvider:
     configured = True
 
 
+def test_probability_policy_selects_one_handicap_bet_for_same_fixture(tmp_path) -> None:
+    repository = PredictionRepository(str(tmp_path / "probability-dual.db"), "dual", ("zhipu", "chatgpt"))
+    repository.initialize()
+    config = PortfolioConfig(min_win_probability=0.5)
+    services = {key: BankrollService(repository, config).configure(key, "dual") for key in ("zhipu", "chatgpt")}
+    dual = DualBankrollService(services, "dual")
+    ctx = {"odds": {"home": 1.8, "draw": 3.9, "away": 3.9, "asian_handicap": -0.5,
+                    "asian_handicap_home_odd": 1.8, "asian_handicap_away_odd": 2,
+                    "updated_at": datetime.now(UTC).isoformat()}}
+    rows = []
+    for key, probability in (("zhipu", 0.54), ("chatgpt", 0.57)):
+        item = prediction(key, f"probability-{key}")
+        item["ai"]["evidence_version"] = "fixture-evidence-v4"
+        item["probabilities"] = {"home": probability, "draw": 0.24, "away": 0.76 - probability}
+        item["decision"].update(status="no_bet", market="no_bet", selection="none", reason_codes=["negative_edge"])
+        item["asian_handicap"] = {"line": -0.5, "home_settlement": {"full_win": probability, "half_win": 0, "push": 0, "half_loss": 0, "full_loss": 1 - probability}}
+        rows.append(item)
+    original = deepcopy(rows)
+    bets = dual.place_for_predictions(rows, fixture(), ctx)
+    assert len(bets) == 1
+    assert bets[0]["model_key"] == "chatgpt"
+    assert bets[0]["market"] == "asian_handicap"
+    assert bets[0]["handicap_line"] == -0.5
+    assert rows == original
+
+
 class FakePredictionService:
     def __init__(self, model_key: str, started: list[str]) -> None:
         self.model_key = model_key

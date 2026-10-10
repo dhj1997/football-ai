@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -140,6 +141,7 @@ class Settings(BaseSettings):
     automation_notify_interval_minutes: int = 5
     portfolio_min_edge: float = 0.05
     portfolio_min_ev: float = 0.05
+    portfolio_min_win_probability: float = Field(default=0.50, ge=0, lt=1)
     portfolio_max_plausible_edge: float = 0.60
     portfolio_max_plausible_ev: float = 1.50
     portfolio_max_odds_age_minutes: float = 720.0

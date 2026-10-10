@@ -181,11 +181,12 @@ def test_runtime_model_config_requires_admin_and_updates_in_process() -> None:
     assert client.get("/api/admin/model-config").status_code == 401
     original_model = zhipu_provider.model
     original_min_edge = settings.portfolio_min_edge
+    original_probability = settings.portfolio_min_win_probability
     try:
         response = client.put(
             "/api/admin/model-config",
             headers={"x-admin-key": "dev-admin-key"},
-            json={"models": {"zhipu": {"model": "deepseek-test-model"}}, "portfolio": {"min_edge": 0.12}},
+            json={"models": {"zhipu": {"model": "deepseek-test-model"}}, "portfolio": {"min_edge": 0.12, "min_win_probability": 0.61}},
         )
         assert response.status_code == 200
         payload = response.json()
@@ -195,11 +196,16 @@ def test_runtime_model_config_requires_admin_and_updates_in_process() -> None:
         assert payload["portfolio"]["min_edge"] == 0.12
         assert zhipu_provider.model == "deepseek-test-model"
         assert settings.portfolio_min_edge == 0.12
+        assert payload["portfolio"]["min_win_probability"] == 0.61
+        assert all(service.portfolio_config.min_win_probability == 0.61 for service in main_module.bankroll_service.services.values())
+        assert main_module.chatgpt_prediction_service.min_win_probability == 0.61
+        assert main_module.zhipu_prediction_service.min_win_probability == 0.61
+        assert client.put("/api/admin/model-config", headers={"x-admin-key": "dev-admin-key"}, json={"portfolio": {"min_win_probability": 1}}).status_code == 422
     finally:
         client.put(
             "/api/admin/model-config",
             headers={"x-admin-key": "dev-admin-key"},
-            json={"models": {"zhipu": {"model": original_model}}, "portfolio": {"min_edge": original_min_edge}},
+            json={"models": {"zhipu": {"model": original_model}}, "portfolio": {"min_edge": original_min_edge, "min_win_probability": original_probability}},
         )
 
 

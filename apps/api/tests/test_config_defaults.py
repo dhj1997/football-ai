@@ -29,6 +29,13 @@ def test_zhipu_defaults_to_active_execution() -> None:
     assert settings.chatgpt_execution_mode == "active"
 
 
+def test_production_policy_defaults_to_strict_fifty_percent_probability() -> None:
+    from app.portfolio import PortfolioConfig
+    settings = Settings(_env_file=None)
+    assert settings.portfolio_min_win_probability == 0.5
+    assert PortfolioConfig.from_settings(settings).min_win_probability == 0.5
+
+
 def test_league_exposure_cap_allows_two_league_day_bets() -> None:
     """单联赛 = 2 x 权益 x 2% = 4%,即同联赛当日可容纳两注。"""
 
