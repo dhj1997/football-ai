@@ -282,6 +282,50 @@ def test_backend_selects_the_highest_edge_market_across_all_prices() -> None:
     assert result["decision"]["expected_edge"] == pytest.approx(0.4)
 
 
+@pytest.mark.parametrize("handicap_price, expected_market", [(1.8, "asian_handicap"), (1.6, "1x2")])
+def test_handicap_priority_requires_existing_value_gate(handicap_price, expected_market) -> None:
+    item = prediction({"home": 0.6, "draw": 0.25, "away": 0.15})
+    item["asian_handicap"] = {
+        "line": -0.5,
+        "home_settlement": {"full_win": 0.6, "half_win": 0, "push": 0, "half_loss": 0, "full_loss": 0.4},
+    }
+    odds = {
+        **fresh_odds(home=2.0, draw=3.5, away=5.0),
+        "asian_handicap": -0.5,
+        "asian_handicap_home_odd": handicap_price,
+        "asian_handicap_away_odd": 2.0,
+    }
+
+    result = apply_market_decision(item, context(odds))
+
+    assert result["decision"]["status"] == "bet"
+    assert result["decision"]["market"] == expected_market
+    assert result["decision"]["selection"] == ("home_handicap" if expected_market == "asian_handicap" else "home")
+    assert result["forecast"]["predicted_outcome"] == "home"
+    assert result["decision"]["expected_edge"] == pytest.approx(0.08 if expected_market == "asian_handicap" else 0.2)
+
+
+def test_chengdu_half_goal_does_not_bypass_ev_gate() -> None:
+    item = prediction({"home": 0.57, "draw": 0.24, "away": 0.19})
+    item["asian_handicap"] = {
+        "line": -0.5,
+        "home_settlement": {"full_win": 0.57, "half_win": 0, "push": 0, "half_loss": 0, "full_loss": 0.43},
+    }
+    item["model_recommendation"] = {"status": "bet", "market": "asian_handicap", "selection": "home_handicap"}
+    odds = {
+        **fresh_odds(home=1.8, draw=3.9, away=3.9),
+        "asian_handicap": -0.5,
+        "asian_handicap_home_odd": 1.8,
+        "asian_handicap_away_odd": 2.0,
+    }
+
+    result = apply_market_decision(item, context(odds))
+
+    assert result["decision"]["status"] == "no_bet"
+    assert result["decision"]["reason_codes"] == ["negative_edge"]
+    assert result["decision"]["expected_edge"] == pytest.approx(0.026)
+
+
 def test_legacy_prompt_evidence_cannot_create_a_new_bet() -> None:
     item = prediction()
     item["ai"]["evidence_version"] = None

@@ -426,7 +426,8 @@ def build_candidates(
         if (candidate := candidate_from_market_row(prediction, fixture, row, config, now=now, historical_clv=historical_clv))
         and is_candidate_eligible(candidate, config)
     ]
-    return sorted(candidates, key=candidate_sort_key)
+    handicaps = [candidate for candidate in candidates if candidate.market == "asian_handicap"]
+    return sorted(handicaps or candidates, key=candidate_sort_key)
 
 
 def candidate_gate_reasons(
@@ -533,8 +534,19 @@ def _selection_priority(fixture: Mapping[str, Any], config: PortfolioConfig) -> 
 def select_best_candidates(
     candidates: Iterable[BetCandidate | Mapping[str, Any]],
 ) -> list[BetCandidate | Mapping[str, Any]]:
-    """Select one highest-ranked candidate for each fixture correlation group."""
+    """Prefer handicap among eligible peers, then rank distinct fixtures by score."""
 
+    candidates = list(candidates)
+    handicap_fixtures = {
+        str(_value(candidate, "fixture_id"))
+        for candidate in candidates
+        if _value(candidate, "fixture_id") and _value(candidate, "market") == "asian_handicap"
+    }
+    candidates = [
+        candidate for candidate in candidates
+        if str(_value(candidate, "fixture_id")) not in handicap_fixtures
+        or _value(candidate, "market") == "asian_handicap"
+    ]
     selected: list[BetCandidate | Mapping[str, Any]] = []
     groups: set[str] = set()
     for candidate in sorted(candidates, key=candidate_sort_key):
@@ -688,7 +700,9 @@ def select_portfolio(
     for bet in active:
         key = (str(bet.get("league_key") or ""), bet.get("fixture_date"))
         league_counts[key] = league_counts.get(key, 0) + 1
-    candidates = select_best_candidates(candidates)
+    candidates = select_best_candidates(
+        candidate for candidate in candidates if is_candidate_eligible(candidate, config)
+    )
     for candidate in candidates:
         candidate_groups = _correlation_keys(candidate)
         group = str(_value(candidate, "correlation_group") or _value(candidate, "fixture_id") or "")

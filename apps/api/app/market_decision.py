@@ -55,7 +55,16 @@ def apply_market_decision(
     assessment = assess_markets(prediction, context.get("odds"))
     assessment["odds_snapshot_id"] = prediction.get("odds_snapshot_id")
     model_recommendation = prediction.get("model_recommendation") or {}
-    candidate = max(assessment["markets"], key=lambda item: item["expected_edge"], default=None)
+    # Prefer an executable handicap market; 1X2 remains the fallback when
+    # handicap value is below the existing gate or its math is implausible.
+    qualified_handicaps = [
+        row for row in assessment["markets"]
+        if row["market"] == "asian_handicap"
+        and row["expected_edge"] >= MIN_EXPECTED_EDGE
+        and row["edge"] <= MAX_PLAUSIBLE_EDGE
+        and row["ev"] <= MAX_PLAUSIBLE_EV
+    ]
+    candidate = max(qualified_handicaps or assessment["markets"], key=lambda item: item["expected_edge"], default=None)
     confidence = _forecast_confidence(prediction)
     reason_codes: list[str] = []
     ai_completed = (prediction.get("ai") or {}).get("status") == "completed"

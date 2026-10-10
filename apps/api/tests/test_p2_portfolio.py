@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -290,6 +291,48 @@ def test_fixture_correlation_keeps_only_highest_ranked_candidate() -> None:
     )
     assert len(selected) == 1
     assert selected[0]["prediction_id"] == "p1"
+
+
+def test_handicap_priority_applies_within_fixture_across_models() -> None:
+    home_win = candidate(score=0.9, prediction_id="gpt", model_key="chatgpt")
+    handicap = replace(candidate(score=0.7, prediction_id="glm"), market="asian_handicap", selection="home_handicap", line=-0.5)
+    other = candidate(fixture_id="fixture-2", score=0.8, prediction_id="other")
+
+    selected = select_portfolio([home_win, handicap, other], 10_000, config=PortfolioConfig())
+
+    assert [row["prediction_id"] for row in selected] == ["other", "glm"]
+    assert selected[1]["market"] == "asian_handicap"
+
+
+@pytest.mark.parametrize("invalid", [{"ev": 0.026}, {"edge": 0.02}, {"odds_age_minutes": 800}, {"data_quality": 0.5}])
+def test_ineligible_handicap_does_not_hide_qualified_home_win(invalid) -> None:
+    home_win = candidate(score=0.8, prediction_id="home")
+    handicap = replace(candidate(score=0.9, prediction_id="handicap"), market="asian_handicap", selection="home_handicap", line=-0.5, **invalid)
+
+    selected = select_portfolio([home_win, handicap], 10_000, config=PortfolioConfig())
+
+    assert [row["prediction_id"] for row in selected] == ["home"]
+
+
+@pytest.mark.parametrize("handicap_probability, expected_market", [(0.6, "asian_handicap"), (0.52, "1x2")])
+def test_build_candidates_prefers_only_qualified_handicap(handicap_probability, expected_market) -> None:
+    fixture = {"id": "f1", "status": "scheduled", "league_key": "csl"}
+    prediction = {
+        "id": "p1", "model_key": "chatgpt", "data_completeness": 0.9,
+        "forecast_confidence": 0.8, "ai": {"status": "completed"},
+        "market_assessment": {
+            "odds_status": "fresh", "odds_updated_at": datetime.now(UTC).isoformat(),
+            "markets": [
+                {"market": "1x2", "selection": "home", "price": 2.0, "model_probability": 0.6, "market_probability": 0.5},
+                {"market": "asian_handicap", "selection": "home_handicap", "line": -0.5, "price": 1.8, "model_probability": handicap_probability, "market_probability": 0.5},
+            ],
+        },
+    }
+
+    candidates = build_candidates(prediction, fixture)
+
+    assert len(candidates) == 1
+    assert candidates[0].market == expected_market
 
 
 def test_drawdown_at_limit_blocks_new_execution() -> None:

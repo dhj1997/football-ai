@@ -16,6 +16,7 @@ from .portfolio import (
     candidate_gate_reasons,
     exposure_snapshot,
     is_active_bet,
+    is_candidate_eligible,
     risk_gate,
     select_best_candidates,
     select_portfolio,
@@ -759,6 +760,8 @@ class DualBankrollService:
         for candidate in additional_candidates or []:
             service = self.services.get(str(_candidate_value(candidate, "model_key"))) or fallback_service
             if service is None or getattr(service, "execution_mode", "active") != "active":
+                continue
+            if not is_candidate_eligible(candidate, service.portfolio_config):
                 continue
             prediction = by_prediction_id.get(
                 str(_candidate_value(candidate, "prediction_id")),
